@@ -29,6 +29,19 @@ let AOT = false;
 ipcMain.handle('vf:alwaysOnTop', (e, v) => { AOT = !!v; return AOT; });
 ipcMain.handle('vf:getAlwaysOnTop', () => AOT);
 
+/* 版本更新检测（v1.14.0）。
+   这里刻意回一个"有新版本"的**假响应** —— 要验的是「发现新版本」这条路径
+   在界面上的渲染（文案 + 「查看」外链），而不是网络本身。
+   若桩返回 {ok:false}，渲染层会走"检查失败"分支，那条路径就永远测不到。 */
+ipcMain.handle('vf:checkUpdate', () => ({
+  ok: true, current: '1.13.0', latest: '9.9.9', hasUpdate: true,
+  url: 'https://github.com/jhlxlml/Atrium/releases/tag/v9.9.9',
+}));
+/* 外链打开：记录**每一次**调用（而不是只留最后一次）——
+   「关于」里有两条外链（仓库首页 + 更新详情），只留最后一次就分不清是哪条被点了。 */
+let externalCalls = [];
+ipcMain.handle('vf:openExternal', (e, url) => { externalCalls.push(String(url || '')); return true; });
+
 async function run() {
   protocol.handle('vf', async (req) => {
     const u = new URL(req.url);
@@ -175,6 +188,12 @@ async function run() {
     lab('记住上次位置').querySelector('.sp-switch').click();
     out.rememberLast = S.settings.rememberLast;
 
+    /* 「检查更新」（v1.14.0）：按能力探测出现在「隐私与安全」组里。
+       这里**只读不点** —— 点它会真的发起一次检查（探针里虽被桩接住，
+       但会把"发现新版本"的提示弹出来，干扰后面的步骤）。 */
+    out.updRowExists = !!lab('检查更新');
+    out.updDefaultOff = S.defaults.updateCheck === false;
+
     return out;
   })()`);
   console.log('S2 ' + JSON.stringify(step2));
@@ -301,7 +320,11 @@ async function run() {
        曾出现"缓存真的清了、但反馈还没弹出来"就被断言判死的情况。
        改成轮询等它出现，并记下实际等了多久（超时仍未出现才算真失败）。 */
     let toastText = '', toastWaitMs = 0;
-    for (let i = 0; i < 40; i++) {
+    /* 轮询预算给到 8 秒。原先是 4 秒（40×100ms），在探针分区里缓存条数累积到
+       几千条、又碰上磁盘忙的时候会**偶发假失败**（清真的清了，反馈只是还没弹）。
+       这条断言测的是"有没有反馈"，不是"反馈有多快" —— 预算给宽一点，
+       让偶发变成必然通过，而不是把偶发当失败。 */
+    for (let i = 0; i < 80; i++) {
       await wait(100);
       toastWaitMs = (i + 1) * 100;
       toastText = [...document.querySelectorAll('.toast span')].map(e => e.textContent).join(' | ');
@@ -328,13 +351,47 @@ async function run() {
     out.aboutBullets = c2 ? c2.querySelectorAll('.vf-about-ul li').length : 0;
     out.aboutActionBtns = c2 ? c2.querySelectorAll('.vf-modal-acts .btn').length : 0;
     out.aboutText = c2 ? c2.querySelector('.vf-about').textContent.replace(/\\s+/g, ' ').slice(0, 240) : '';
+    /* 全文（只折叠空白，不截断）：关于面板有好几段，按 240 字截断只够看前两段 ——
+       想断言"数据放在哪"那一段的措辞就必须拿全文（否则断言会假失败）。 */
+    out.aboutTextAll = c2 ? c2.querySelector('.vf-about').textContent.replace(/\\s+/g, ' ') : '';
     out.aboutHasPlaceholder = c2 ? /undefined|\\[object|NaN/.test(c2.querySelector('.vf-about').textContent) : false;
     out.aboutFitsViewport = c2 ? (() => { const r = c2.getBoundingClientRect();
       return r.top >= 0 && r.bottom <= innerHeight + 1; })() : false;
+
+    /* —— v1.14.0：「关于」里的 GitHub 链接 + 检查更新
+         两条外链都必须走主进程白名单 IPC 打开（不能让窗口自己导航 ——
+         主窗口的 will-navigate 会拦掉外链，不接管的话点了就是"没反应"）。 */
+    const repoLink = c2 ? c2.querySelector('.vf-about-p a[data-ext]') : null;
+    out.repoLinkHref = repoLink ? repoLink.getAttribute('href') : null;
+    if (repoLink) repoLink.click();
+
+    const updBtn = c2 ? c2.querySelector('[data-act="checkUpdate"]') : null;
+    out.updBtnExists = !!updBtn;
+    if (updBtn) {
+      updBtn.click();
+      // 请求是异步的：轮询等结果文本落地（"正在访问…"是初始态）
+      let utxt = '';
+      for (let i = 0; i < 40; i++) {
+        await wait(60);
+        const rEl = c2.querySelector('[data-role="updResult"]');
+        utxt = rEl ? rEl.textContent : '';
+        if (utxt && utxt.indexOf('正在访问') < 0) break;
+      }
+      out.updResultText = utxt;
+      out.updBtnReEnabled = updBtn.disabled === false;
+      const ua = c2.querySelector('.vf-about-upd-r a[data-ext]');
+      out.updLinkHref = ua ? ua.getAttribute('href') : null;
+      out.updLinkText = ua ? ua.textContent : null;
+      if (ua) ua.click();
+    }
+    await wait(200);   // 等两次 openExternal 的 IPC 都落到主进程侧
+
     // 先不关闭：Node 端会趁「关于」开着截图，之后由 S7 关闭
     out.aboutStillOpen = !!document.querySelector('.vf-modal-card');
     return out;
   })()`);
+  await new Promise((r) => setTimeout(r, 260));
+  step6.extCalls = externalCalls.slice();
   console.log('S6 ' + JSON.stringify(step6));
   // 弹层有 160ms 淡入过渡；无 GPU 的探针环境里合成偏慢，多等一会儿再截图，免得拍到半透明帧
   await new Promise((r) => setTimeout(r, 520));

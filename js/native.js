@@ -28,16 +28,24 @@
   /* ------------------------------------------------------------
      失败留痕策略（本文件的核心取舍，改这里之前先读完）
      ------------------------------------------------------------
-     本文件有 26 处 `catch → false / null / []`。它们的失败与"合法的否定结果"
+     本文件里绝大多数 `catch` 都吞成 `false / null / []`（另有一小撮走下面的
+     warnOnce）。它们的失败与"合法的否定结果"
      **同形**："IPC 挂了"和"用户点了取消"、"这张图没有 EXIF"、"窗口本来就没置顶"
      看起来一模一样。这是刻意的 —— 调用方（App / Lightbox / Frame）本来就接受"空"，
      若这里改成抛错，反而会让"取消选择文件夹"变成一条错误。
+
+     ⚠️ 这个数字刻意不写死：上一版写的是"26 处"，而它当时就已经对不上了
+     （判据不同会数出 25 / 26 / 32 三个数）。与其留一个会烂掉的数字，
+     不如把**判据**写清楚 —— 下面两类才是真正需要读的人注意的。
 
      但有两类不能这么处理：
 
      ① **写操作**（exportFiles / deleteFile(s) / restoreFile(s) / frameOpen / trashPreview）
         一律返回 `{ok:false, reason, message}`，把原因带到用户面前。
         绝不允许把"删除失败"吞成"什么都没发生"。
+        （v1.14.0 的 checkUpdate 也归这一类的**语义**：它返回
+         `{ok:false, reason}`，因为"检查失败"与"没有新版本"对用户是两句话，
+         合并成 false 就等于把"没连上网"说成"已是最新"。）
 
      ② **状态对齐类**（setAlwaysOnTop / getAlwaysOnTop / setTray / setHotkey / frameInfo）
         用下面的 warnOnce 留一次痕。为什么：它们的失败症状是"**开关自己弹回去了**"，
@@ -45,6 +53,7 @@
         探针缺 handler → invoke reject → `.catch` 吞成 false → applySetting 判"没生效"
         → 回滚 + urgent 播报 → 播报区被永久改成 assertive。
         用 Set 去重，避免轮询式调用刷屏（与项目"响了比静默好"的取舍一致）。
+        openExternal 也走 warnOnce：它同样是"用户按了、什么都没发生"的那类失败。
 
      其余查询类维持吞值 —— 调用方必须能接受"空"。
      ------------------------------------------------------------ */
@@ -225,6 +234,36 @@
     openPath(p) {
       if (!bridge || typeof bridge.openPath !== 'function' || !p) return Promise.resolve(false);
       return bridge.openPath(p).catch(() => false);
+    },
+
+    /* ---------- 版本更新检测（v1.14.0，仅桌面版） ----------
+       这是本应用**唯一**会联网的功能，所以入口按能力探测开关：
+       拿不到该能力的运行环境里，设置面板上不会出现「检查更新」这一行，
+       「关于」里也不会出现那个按钮（本项目对死开关零容忍）。 */
+    /** 是否支持检查更新（决定「关于」里的按钮与设置里的开关出不出现） */
+    get canUpdate() { return !!(bridge && typeof bridge.checkUpdate === 'function'); },
+
+    /**
+     * 查最新版本。current 传 App.VERSION —— 主进程只用它做版本比较与 User-Agent，
+     * 不自己读 package.json（避免"界面显示的版本"与"检测用的版本"两处不同源）。
+     * 返回 { ok:true, current, latest, hasUpdate, url } 或 { ok:false, reason }。
+     * **失败不抛**：调用方要能区分"检查失败"与"没有新版本"，这两句话对用户不是一回事。
+     */
+    checkUpdate(current) {
+      if (!bridge || typeof bridge.checkUpdate !== 'function') {
+        return Promise.resolve({ ok: false, reason: 'unsupported' });
+      }
+      return bridge.checkUpdate(current || '')
+        .catch((e) => ({ ok: false, reason: 'failed', message: String((e && e.message) || e) }));
+    },
+
+    /**
+     * 打开官方仓库 / Releases 页面（系统默认浏览器）。
+     * 真正的白名单校验在主进程 —— 这里返回 false 表示"没打开"（含被白名单拒绝）。
+     */
+    openExternal(url) {
+      if (!bridge || typeof bridge.openExternal !== 'function') return Promise.resolve(false);
+      return bridge.openExternal(url).catch((e) => { warnOnce('openExternal', e); return false; });
     },
 
     /* ---------- 窗口置顶（仅桌面版） ---------- */

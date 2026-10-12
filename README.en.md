@@ -6,7 +6,9 @@ Downloads and version-specific release notes are available on [GitHub Releases](
 
 Atrium is a local image browser for Windows: pick a folder and browse your photos the way you would flip through a portfolio. The name means *atrium* — the place where daylight falls from above and lights up the whole display space, and a photo wall is exactly that.
 
-It does one thing: open a local folder and let you look at, and tidy up, your pictures comfortably. No account, no cloud sync, no telemetry, **zero runtime third-party dependencies**, and identical behaviour with the network unplugged.
+It does one thing: open a local folder and let you look at, and tidy up, your pictures comfortably. No account, no cloud sync, no telemetry, **zero runtime third-party dependencies**, and identical behaviour with the network unplugged (the app stays **completely offline by default**; the only feature that ever goes online is an opt-in "check for updates").
+
+Data is self-contained too: settings, favourites, rotation records and the thumbnail cache all live in **`data/` inside the app folder** — copy that folder elsewhere and you carry your whole configuration with you.
 
 ![Atrium grid view: four layouts, filename search, favourites-only, privacy mode and multi-select](docs/images/grid.png)
 
@@ -60,6 +62,12 @@ One deliberate rule: **a menu item's id is the internal command id**, so a regre
 
 Four layers are in place: screen-reader announcements (all 52 user-facing actions are announced, destructive ones use `assertive`), semantics with `aria-modal`, a focus trap shared by four containers, and full keyboard reachability plus reduced-motion and visible focus rings.
 
+### About and updates
+
+"Settings → About" shows the version, the privacy statement, **where your data lives** and a **link to the GitHub repository**, and can **check for updates in place** (one read of GitHub's public version number).
+
+Update checking is **off by default** — it is the only feature in the whole app that touches the network, so it is opt-in: turn it on and the app checks quietly at startup, telling you only when a new version really exists; no update, or no connection, stays out of your way. When you click "Check for updates" manually, all three outcomes are stated plainly (**"check failed" is never reported as "up to date"**).
+
 ## Getting started
 
 ### Using the portable build
@@ -71,6 +79,10 @@ Four layers are in place: screen-reader announcements (all 52 user-facing action
 > **Why a `.cmd` and not the exe**: WorkBuddy and some Node environments inject `NODE_OPTIONS`, which makes a packaged Electron app **exit immediately on launch**. The launcher clears that variable first, then starts the app. It looks for `Atrium.exe` by name and only falls back to "the first exe in the folder" if it is missing.
 
 > The downloadable asset is named `Atrium_Electron_v1.13.0.zip` in ASCII — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so an ASCII name was used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the contents are identical.
+
+> **Where your data lives**: a `data/` folder appears automatically next to the app (settings / favourites / rotation records / thumbnail cache).
+> It is **portable** — copy the whole folder and you take your entire configuration with you, no re-configuring on another machine.
+> To wipe it, just delete the folder (or use "Settings → Data → Clear cache").
 
 > The application UI is currently Chinese. This English README does not imply an English UI.
 
@@ -99,8 +111,8 @@ npm test
 
 | Command | Purpose |
 |---|---|
-| `npm test` | Full regression: **28 suites / 346 assertions**, roughly 150–190 s |
-| `npm run test:fast` | Quick pass: 11 suites / 51 assertions, ~8 s (**includes `tf`, which needs electron**) |
+| `npm test` | Full regression: **29 suites / 355 assertions**, roughly 175 s |
+| `npm run test:fast` | Quick pass: 12 suites / 54 assertions, ~8 s (**includes `tf`, which needs electron**) |
 | `npm run build` | Build the portable Electron package |
 | `npm run pack` | Produce the release ZIP |
 | `npm run verify:zip` | Independent ZIP verification (CRC / structure / third-party re-check) |
@@ -153,9 +165,9 @@ platform      native.js (renderer-side adapter) ──IPC──▶ preload.js (a
 
 A few deliberate decisions:
 
-- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation) is factored into DOM-free pure functions, so **807** fine-grained assertions run in milliseconds under Node without opening a window.
+- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation) and the update-check rules (version comparison, URL allow-list) are factored into pure functions that depend on neither the DOM nor Electron, so **872** fine-grained assertions run in milliseconds under Node without opening a window.
 - **`desktop-spec.js` is pure data** (menu template, accelerators, command vocabulary) and is **not allowed to `require('electron')`** — which is why 76 assertions can test it directly under Node.
-- **Security baseline**: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, a custom privileged `vf://` protocol, a preload allow-list, and new windows / external navigation refused. Every desktop-integration IPC channel **verifies the sender**, and untrusted calls are rejected.
+- **Security baseline**: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, a custom privileged `vf://` protocol, a preload allow-list, and new windows / external navigation refused. Every desktop-integration IPC channel **verifies the sender**, and untrusted calls are rejected. **Opening external links also goes through an allow-list** — only the official repository is let through, locked down by 21 reverse cases.
 
 ## Engineering and regression
 
@@ -163,9 +175,9 @@ The project tries hard to turn "potholes we fell into" into **mechanisms**. Curr
 
 | Metric | Value |
 |---|---|
-| Regression | **28 suites / 346 assertions**, non-zero exit on any failure |
-| Source size | `js/` 9,361 lines across 15 modules · `css/` 1,788 lines across 3 files · `index.html` 373 lines · main-process side 2,782 lines |
-| IPC | 33 invoke + 1 renderer→main + 3 main→renderer = **37 unique channel names** |
+| Regression | **29 suites / 355 assertions**, non-zero exit on any failure |
+| Source size | `js/` 9,584 lines across 15 modules · `css/` 1,805 lines across 3 files · `index.html` 373 lines · main-process side 2,993 lines |
+| IPC | 35 invoke + 1 renderer→main + 3 main→renderer = **39 unique channel names** |
 | Runtime dependencies | **0** (`electron` and `rcedit` are build-time only) |
 
 Several layers of the regression are **mutually independent lines of defence**:
@@ -173,10 +185,11 @@ Several layers of the regression are **mutually independent lines of defence**:
 - **Runs the real artefact**: `appself` launches the **exe that was packaged into the build** and walks the whole chain — boot, index, decode, delete, restore, batch, marquee, lightbox, EXIF, always-on-top.
 - **Verifiers ship with reverse gates**: the ZIP CRC check uses Node's native `zlib.crc32` as its reference (**a different source from the writer under test**) and deliberately constructs corrupt archives to prove it really rejects them. The icon verifier **does not reuse the generation code** — verifying yourself against yourself proves nothing.
 - **Byte-level evidence**: verifying the exe icon is not "the build didn't error", it is taking the bytes of the 7 embedded PNGs inside the `.ico` and looking each one up with `exe.indexOf` — all 7 hit, and the same 16 px PNG is `-1` in the stock `electron.exe`.
-- **Source-level invariants**: the `frozen` suite pins strings that would **wipe user data if changed** (`vf://app`, three `localStorage` keys, `viewfinder-db`, `com.atrium.app`, `productName`); the `ipcchain` suite checks that every channel exposed by the preload has a handler — miss one and you get a **silent degradation**.
+- **Source-level invariants**: the `frozen` suite pins strings that would **wipe user data if changed** (`vf://app`, three `localStorage` keys, `viewfinder-db`, `com.atrium.app`, `productName`), plus **the two branches of the data directory** (`VF_USERDATA` takes priority / `data/` under the app folder); the `ipcchain` suite checks that every channel exposed by the preload has a handler — miss one and you get a **silent degradation**.
+- **Security criteria go into the regression too**: the `update` suite locks the `openExternal` URL allow-list with **21 reverse cases** (subdomain spoofing, userinfo spoofing, non-default port, path traversal, `file://`, `javascript:` …) — testing only that "the official link passes" would be an always-true gate.
 - **Failures explain themselves**: assertion messages carry field evidence such as "how many announcements fired, and what the last one said", instead of just `false`.
 
-> **On the number**: `346` counts **suite-level entries**. Six pure-function suites expand into far more fine-grained assertions internally (807 in total) but are counted as one entry each — so **do not add them up**.
+> **On the number**: `355` counts **suite-level entries**. Seven pure-function suites expand into far more fine-grained assertions internally (872 in total) but are counted as one entry each — so **do not add them up**.
 
 ## Repository layout
 
@@ -202,10 +215,11 @@ Atrium/
 ├─ css/                  3 stylesheets
 ├─ brand/                Brand assets (hand-written SVG + 7-size .ico)
 ├─ docs/                 README screenshots and documentation images
+├─ data/                 App data (settings / favourites / cache; **not committed**)
 ├─ test/                 Node pure-function unit tests
 └─ deploy/
-    ├─ electron/         Main-process side: main / preload / desktop / desktop-spec / exportlib
-    ├─ electron-test/    Regression: run_all + 17 Electron probes + gate scripts
+    ├─ electron/         Main-process side: main / preload / desktop / desktop-spec / exportlib / updatelib
+    ├─ electron-test/    Regression: run_all + 18 Electron probes + gate scripts
     ├─ release/          Release process (RELEASE.md)
     ├─ make_icons.js     SVG -> 7-size .ico (uses the project's own Electron as the renderer)
     ├─ verify_clone.js   Fresh-clone buildability gate
@@ -225,7 +239,8 @@ Atrium/
 |---|---|
 | [`Atrium_开发上手手册.md`](Atrium_开发上手手册.md) | **Handbook**: commands, the five layers, landmine list, standard procedures for adding a setting or an IPC channel, frozen identifiers |
 | [`Atrium_现状分析与迭代建议.md`](Atrium_现状分析与迭代建议.md) | In-depth analysis: module maturity, technical debt, roadmap |
-| [`Atrium_v1.13.0_更新说明.md`](Atrium_v1.13.0_更新说明.md) | What changed in this version, and the potholes hit along the way |
+| [`Atrium_v1.14.0_更新说明.md`](Atrium_v1.14.0_更新说明.md) | What changed in this version, and the potholes hit along the way |
+| [`Atrium_v1.13.0_更新说明.md`](Atrium_v1.13.0_更新说明.md) | The previous version (rename to Atrium / desktop integration / Electron only) |
 | [`Atrium_问题清单与修复优先级.md`](Atrium_问题清单与修复优先级.md) | A full-project audit: issue severity, fix records and how each was verified |
 | [`deploy/release/RELEASE.md`](deploy/release/RELEASE.md) | Release process: fixed order, acceptance criteria, packaging landmines |
 

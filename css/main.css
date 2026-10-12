@@ -1004,7 +1004,24 @@ html.snap-single .single-tile {
 .vf-about-ul { margin: 0; padding-left: 17px; }
 .vf-about-ul li { margin: 3px 0; }
 .vf-about-p { margin: 0; }
+.vf-about-p + .vf-about-p { margin-top: 7px; }
 .vf-about strong { color: var(--ink); font-weight: 600; }
+
+/* ---- 「关于」→ 开源与更新（v1.14.0）----
+   外链与「检查更新」按钮。链接**看起来**是链接、也**真的是** <a href>，
+   但点击由脚本接管（preventDefault → 主进程白名单打开系统浏览器）——
+   不让窗口自己导航：主窗口的 will-navigate 会拦掉外链，不接管的话点了就是"没反应"。 */
+.vf-about-link {
+  color: var(--ink); text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: var(--line-2);
+}
+.vf-about-link:hover { text-decoration-color: var(--sel); }
+.vf-about-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 3px; }
+.vf-about-upd { display: flex; align-items: center; gap: 10px; margin-top: 11px; flex-wrap: wrap; }
+.vf-about-upd .btn { padding: 4px 12px; font-size: 12px; }
+.vf-about-upd-r { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.vf-about-upd-r.is-new { color: var(--ink); font-weight: 600; }
+.vf-about-upd-r.is-err { color: var(--danger); }
 
 /* ---- 「快捷键一览」面板（帮助 → F1）----
    与「关于」同款排版，只是主体换成一张两列表。 */

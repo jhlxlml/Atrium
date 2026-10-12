@@ -58,7 +58,7 @@ for (const f of fs.readdirSync(path.join(ROOT, 'css'))) {
 /* 主进程侧的文件全部平铺到 resources/app 根下。
    新增一个主进程模块**必须**加进这个列表 —— 漏了的话构建照样成功、
    exe 也能起，直到运行时 require 失败才炸（而且只在用到那条路径时才炸）。 */
-const MAIN_FILES = ['main.js', 'preload.js', 'exportlib.js', 'desktop.js', 'desktop-spec.js', 'package.json'];
+const MAIN_FILES = ['main.js', 'preload.js', 'exportlib.js', 'updatelib.js', 'desktop.js', 'desktop-spec.js', 'package.json'];
 for (const f of MAIN_FILES) {
   if (!fs.existsSync(path.join(HERE, f))) throw new Error('主进程文件缺失：' + f);
   copy(path.join(HERE, f), path.join(STAGE, 'app', f));

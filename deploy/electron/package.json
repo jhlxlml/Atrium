@@ -1,7 +1,7 @@
 {
   "name": "viewfinder-photos",
   "productName": "Atrium",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Atrium · 独立桌面版（本地照片浏览，无网络依赖）",
   "main": "main.js",
   "license": "GPL-3.0-only",

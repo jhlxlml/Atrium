@@ -135,6 +135,26 @@ const SUITES = [
     },
   },
 
+  /* ---------- 1b3b. 纯函数：更新检测（版本比较 / URL 白名单）（Node） ----------
+     为什么单列一套：updatelib.js 里的三件事**写错了都不报错**，而且症状都"看着正常"——
+       · isNewer 比反了 → 永远"已是最新"或永远"有新版本"；
+       · parseVer 太宽松 → 'nightly' 被当成版本号 → 误报更新；
+       · isAllowedExternal 太宽松 → 主进程的 shell.openExternal 变成一个
+         "打开任意 URL / 执行本地文件"的能力（**安全倒退，且没有任何界面迹象**）。
+     所以这套的重点是**反向用例**（一串必须被拒的 URL）——只测"官方链接能过"
+     等于恒真的门禁。updatelib.js 不依赖 Electron，Node 直接 require。 */
+  {
+    id: 'update',
+    title: '纯函数 · 更新检测：版本号比较 / 接口响应解析 / openExternal URL 白名单（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'updatelib.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('更新检测纯逻辑测试全部通过（65 断言，含 21 条反向用例）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
   /* ---------- 1b4. 纯函数：瀑布流的列分配 / 高度 / 二分代理不变量（Node） ----------
      核心不变量：positions[i].y 单调不减（可安全二分），而 y+h **不单调**
      （同列里后放的矮图底边可能更靠上）→ 网格的可见区裁剪 / 滚动锚定 / 框选
@@ -162,7 +182,9 @@ const SUITES = [
          （设置 / 收藏 / 旋转记录 / 尺寸缓存一起没）；
        · 三个 `viewfinder.*` LS 键改了 → 同上；
        · `viewfinder-db` 改了 → 缩略图与尺寸缓存全丢（可重建，但首屏退化）；
-       · `productName` 改了 → userData 目录名随之改变 → 用户设置"凭空消失"；
+       · `productName` 改了 → 窗口标题 / 任务栏 / 开始菜单里的名字变了
+         （v1.14.0 起 userData 已改为「应用本体所在目录/data」，**不再**由它决定，
+          但它仍是产品身份的一部分，且打包后的 AppData 回落路径仍用它）；
        · `com.atrium.app` 改了 → 任务栏固定 / JumpList 关联错乱。
      成本是一条断言，收益是**永久免疫**。这也是全项目性价比最高的一条门禁。 */
   {
@@ -199,8 +221,22 @@ const SUITES = [
         loader.indexOf("'viewfinder-db'") >= 0, 'loader.js 的 DB_NAME');
       check('任务栏身份仍是 com.atrium.app（任务栏固定 / JumpList 关联）',
         main.indexOf("'com.atrium.app'") >= 0, 'main.js 的 setAppUserModelId');
-      check('productName 仍是 Atrium —— 它决定 userData 目录名',
+      check('productName 仍是 Atrium —— 窗口标题 / 任务栏 / 开始菜单的产品身份',
         el.productName === 'Atrium', 'deploy/electron/package.json 的 productName=' + el.productName);
+      /* 应用数据目录（v1.14.0 便携化）。两条都必须原样在：
+         ① VF_USERDATA 分支优先级最高 —— 探针与 --selftest 靠它把数据指到临时目录；
+            删了它，全量回归会开始往**真实用户数据**里写（而且没人会发现）。
+         ② data/ 分支 —— 删了它便携性就没了（数据重新散落到 %APPDATA%）。
+         源级字符串检查在这里够用：这两条分支都是"一段固定写法"，
+         真正的行为验证由 appself（跑打包后的 exe）承担。 */
+      check('VF_USERDATA 优先级最高（探针/自检靠它隔离数据，删了会污染真实数据）',
+        main.indexOf("process.env.VF_USERDATA") >= 0
+          && main.indexOf("app.setPath('userData', process.env.VF_USERDATA)") >= 0,
+        'main.js 里找不到 VF_USERDATA 分支');
+      check('应用数据目录指向「应用本体目录/data」（便携化：拷走文件夹即带走全部设置）',
+        main.indexOf("path.join(base, 'data')") >= 0
+          && /app\.setPath\('userData',\s*dataDir\)/.test(main),
+        'main.js 里找不到 <base>/data 的 userData 分支');
       check('根 package.json 的 name 仍是 viewfinder（刻意保留，别"顺手改掉"）',
         root.name === 'viewfinder', 'package.json 的 name=' + root.name);
     },
@@ -808,6 +844,11 @@ const SUITES = [
         check('切换动画关闭生效', s2.animOn === false && s2.bodyAnim === '0');
         check('幻灯片间隔生效（6000ms）', s2.slideshowMs === 6000 && s2.lbPlayMs === 6000);
         check('删除二次确认关闭生效', s2.confirmDelete === false);
+        /* v1.14.0：「检查更新」是本应用**唯一**会出网的开关，默认必须是关的
+           （关于面板里写着"默认完全不出网"，这条断言就是那句话的凭据）。 */
+        check('「检查更新」开关就位且默认关闭（默认不出网）',
+          s2.updRowExists === true && s2.updDefaultOff === true,
+          'row=' + s2.updRowExists + ' defaultOff=' + s2.updDefaultOff);
       }
       if (s3) {
         check('设置已持久化到 localStorage', s3.theme === 'dark' && s3.density === 'compact' && s3.slideshowMs === 6000);
@@ -852,6 +893,31 @@ const SUITES = [
         check('关于面板含功能/隐私/数据/技术四段介绍',
           ['能做什么', '隐私', '数据放在哪', '技术'].every(function (t) { return (s6.aboutSections || []).indexOf(t) >= 0; }),
           (s6.aboutSections || []).join('/'));
+        /* v1.14.0：关于面板新增「开源与更新」段（GitHub 信息 + 检查更新入口）。
+           这几条同时钉住两件事：① 关于面板不再说"数据在 %APPDATA%"（那是便携化之前的事实）；
+           ② 两条外链都走主进程白名单 IPC，**不是**让窗口自己导航
+              （主窗口的 will-navigate 会拦外链 —— 不接管的话点了就是"没反应"）。 */
+        check('关于面板有「开源与更新」段（GitHub 信息）',
+          (s6.aboutSections || []).indexOf('开源与更新') >= 0,
+          (s6.aboutSections || []).join('/'));
+        check('关于面板的数据位置说明已随便携化更新（不再写 %APPDATA%）',
+          /应用目录下的 data 子目录/.test(s6.aboutTextAll || '')
+            && (s6.aboutTextAll || '').indexOf('%APPDATA%') < 0,
+          (s6.aboutTextAll || '').slice(0, 200));
+        check('「关于」里的仓库链接指向官方仓库', s6.repoLinkHref === 'https://github.com/jhlxlml/Atrium',
+          s6.repoLinkHref);
+        check('「检查更新」入口就位（能力可用时）', s6.updBtnExists === true);
+        check('检查更新就地出结果，且如实报「发现新版本」（不误报成已是最新）',
+          /发现新版本 v9\.9\.9/.test(s6.updResultText || ''), s6.updResultText);
+        check('发现新版本后给出「查看」外链（指向 Release 详情页）',
+          s6.updLinkHref === 'https://github.com/jhlxlml/Atrium/releases/tag/v9.9.9'
+            && s6.updBtnReEnabled === true,
+          'href=' + s6.updLinkHref + ' reEnabled=' + s6.updBtnReEnabled);
+        check('两条外链都走主进程白名单 IPC 打开（窗口自身不导航）',
+          Array.isArray(s6.extCalls) && s6.extCalls.length === 2
+            && s6.extCalls[0] === 'https://github.com/jhlxlml/Atrium'
+            && s6.extCalls[1] === 'https://github.com/jhlxlml/Atrium/releases/tag/v9.9.9',
+          JSON.stringify(s6.extCalls));
         check('关于面板有能力清单且无占位符残留',
           (s6.aboutBullets || 0) >= 5 && s6.aboutHasPlaceholder === false,
           'bullets=' + s6.aboutBullets + ' placeholder=' + s6.aboutHasPlaceholder);

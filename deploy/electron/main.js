@@ -5,6 +5,7 @@
    - 记住“上次浏览的目录”，启动即自动打开（userData/last-dir.json）
    - IPC：pickFolder / loadDir / autoDir / setLastDir / readHead
          deleteFile / restoreFile（回收站还原=撤销删除） / trashLog / trashForget / trashClear / openRecycleBin
+         checkUpdate（打 GitHub 公开接口）/ openExternal（**白名单**放行官方仓库链接）
    - 桌面集成（desktop.js）：应用菜单 / 原生右键菜单 / 系统托盘 /
          Windows 任务栏（JumpList · 缩略图按钮 · 进度条） / 全局快捷键
    运行前提：Win10/11（目标机无需任何安装，直接跑本目录里的 exe）
@@ -14,6 +15,7 @@ const { app, BrowserWindow, dialog, ipcMain, net, protocol, screen, shell } = re
 const path = require('path');
 const fsx = require('fs');
 const exportLib = require('./exportlib.js');   // 导出落盘（与回归探针共用）
+const updateLib = require('./updatelib.js');   // 更新检测的纯逻辑（版本比较 / URL 白名单）
 const { createDesktop } = require('./desktop.js');   // 桌面集成（菜单/托盘/任务栏）
 const fs = fsx.promises;
 
@@ -52,8 +54,40 @@ const argv = process.argv;
 const SELFTEST = argv.includes('--selftest');
 const extOf = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i + 1).toLowerCase() : ''; };
 
-/* 测试隔离：允许用环境变量改 userData（自测不污染真实记忆） */
-if (process.env.VF_USERDATA) app.setPath('userData', process.env.VF_USERDATA);
+/* ============================================================
+   应用数据目录：放在「应用本体所在目录」的 data/ 下（便携化）
+   ------------------------------------------------------------
+   为什么改：默认 userData 是 %APPDATA%\<productName>，于是"解压即用"的便携包
+   会把设置/收藏/旋转记录/缩略图缓存散落到用户目录里 —— 换台机器或换目录就"丢配置"。
+   放到 exe 旁边的 data/ 之后，整个应用目录就是自包含的：拷走即带走全部数据。
+
+   ⚠️ 这里承载的不只是我们的 JSON（trash-log.json / last-dir.json），
+      还有 Chromium 自己写进 userData 的 **Local Storage 与 IndexedDB** ——
+      渲染层的 localStorage（设置/收藏/旋转记录）与 IDB（尺寸库/缩略图缓存）
+      都在里面。所以**必须整体迁移 userData 这一个路径**，不能只搬我们自己的文件，
+      否则「换目录后设置凭空消失」。
+
+   两条纪律：
+   ① **VF_USERDATA 优先级最高** —— 探针与 --selftest 靠它把数据指到临时目录，
+      绝不能反过来被这里覆盖（那会让回归污染真实数据）。
+   ② 目录不可写（例如被装到 C:\Program Files\）时**回落到系统默认**并留痕，
+      不要因为建不出目录就让应用起不来。
+   ============================================================ */
+if (process.env.VF_USERDATA) {
+  app.setPath('userData', process.env.VF_USERDATA);
+} else {
+  try {
+    /* 打包后 = exe 所在目录；开发时 = 项目根。
+       用 process.execPath 而不是 app.getPath('exe')：前者是纯 Node 属性，
+       在 ready 之前必定可用，而 userData 必须尽早定下来。 */
+    const base = app.isPackaged ? path.dirname(process.execPath) : path.resolve(__dirname, '..', '..');
+    const dataDir = path.join(base, 'data');
+    fsx.mkdirSync(dataDir, { recursive: true });
+    app.setPath('userData', dataDir);
+  } catch (e) {
+    console.warn('[main] 无法在应用目录下创建 data/，回落到系统默认数据目录：' + ((e && e.message) || e));
+  }
+}
 
 let mainWin = null;
 
@@ -489,6 +523,81 @@ function wireIpc() {
       const err = await shell.openPath(target);
       return !err;
     } catch (err) { return false; }
+  });
+
+  /* ============================================================
+     版本更新检测 + 打开外部链接
+     ------------------------------------------------------------
+     为什么这两件事必须放在主进程：渲染层是 sandbox + contextIsolation，
+     既没有网络权限（CSP 的 connect-src 只放行 vf: 与 data:），也不能
+     唤起系统浏览器 —— 两件事都只能由主进程代劳。
+
+     两条纪律：
+     ① **openExternal 必须白名单**。shell.openExternal 能打开任意协议，
+        不校验就等于给渲染层（以及任何注入进来的脚本）一个"打开任意 URL /
+        执行本地文件"的能力，是明确的安全倒退。判定逻辑在 updatelib.js，
+        有独立回归（含反向用例）。
+     ② **checkUpdate 不接受渲染层传 URL**，只打 updatelib.js 里写死的官方接口。
+        渲染层只能传一个"当前版本号"字符串，用来做比较与 User-Agent。
+     ============================================================ */
+
+  /** 打开官方仓库 / Releases 页（系统默认浏览器）。非白名单 URL 一律拒绝并留痕。 */
+  ipcMain.handle('vf:openExternal', async (e, url) => {
+    if (!updateLib.isAllowedExternal(url)) {
+      console.warn('[main] 拒绝打开非白名单外链：' + String(url).slice(0, 200));
+      return false;
+    }
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch (err) {
+      console.warn('[main] openExternal 失败：' + ((err && err.message) || err));
+      return false;
+    }
+  });
+
+  /**
+   * 查最新版本。current 由渲染层传入（App.VERSION 是版本号的唯一来源），
+   * 主进程不自己读 package.json —— 打包后 app.getVersion() 读的是包内
+   * package.json，与渲染层显示的那个版本号未必同源，两处一旦不一致，
+   * 就会出现"界面写着 1.14.0、更新检测却说当前是 1.13.0"的怪事。
+   *
+   * 返回 { ok:true, current, latest, hasUpdate, url }
+   *   或 { ok:false, reason, current }，reason ∈ timeout|network|http-<code>|bad-response。
+   * **失败与"已是最新"必须区分** —— 否则用户会以为"没有更新"，其实是没连上网。
+   */
+  ipcMain.handle('vf:checkUpdate', async (e, current) => {
+    const cur = String(current || '').trim();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const resp = await net.fetch(updateLib.RELEASES_API, {
+        headers: {
+          // GitHub 接口要求带 User-Agent；Accept 固定 API 版本语义
+          'User-Agent': 'Atrium/' + (cur || '0.0.0'),
+          'Accept': 'application/vnd.github+json',
+        },
+        signal: ctrl.signal,
+      });
+      if (!resp || !resp.ok) {
+        return { ok: false, reason: 'http-' + ((resp && resp.status) || 0), current: cur };
+      }
+      const data = await resp.json();
+      const got = updateLib.latestFromRelease(data);
+      if (!got) return { ok: false, reason: 'bad-response', current: cur };
+      return {
+        ok: true,
+        current: cur,
+        latest: got.latest,
+        hasUpdate: updateLib.isNewer(got.latest, cur),
+        url: got.url,
+      };
+    } catch (err) {
+      const aborted = !!(err && (err.name === 'AbortError' || err.code === 'ABORT_ERR'));
+      return { ok: false, reason: aborted ? 'timeout' : 'network', current: cur };
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   ipcMain.handle('vf:readHead', async (e, p, n) => {

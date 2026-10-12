@@ -17,6 +17,11 @@
   // 无障碍共用件（焦点陷阱）。缺失时降级为"不装陷阱"，不影响面板本身可用。
   const A11y = global.A11y;
 
+  /* 官方仓库地址。「关于」面板展示它、更新结果里的「查看新版本」也回落到它。
+     与主进程 deploy/electron/updatelib.js 的 REPO_URL 同值 —— 那一边是
+     openExternal 白名单的唯一前缀，两边写歪了外链就会打不开（有回归锁着）。 */
+  const REPO_URL = 'https://github.com/jhlxlml/Atrium';
+
   const Settings = {
     init(opts) {
       this.el = {
@@ -267,10 +272,7 @@
         },
         {
           title: '隐私与安全',
-          rows: [
-            { key: 'confirmDelete', type: 'switch', name: '删除前确认', desc: '防止误删，建议保持开启' },
-            { key: 'blurPreview', type: 'switch', name: '模糊预览', desc: '所有图片打码，等同顶栏眼睛按钮' },
-          ],
+          rows: privacyRows(),
         },
         {
           title: '数据',
@@ -567,6 +569,8 @@
     async showAbout() {
       const v = (global.App && global.App.VERSION) || '';
       const esc = Util.esc;
+      const N = global.Native;
+      const canUpdate = !!(N && N.canUpdate);
       const body = ''
         + '<div class="vf-about">'
         + '<div class="vf-about-h">'
@@ -590,14 +594,32 @@
 
         + '<div class="vf-about-sec">'
         + '<div class="vf-about-t">隐私</div>'
-        + '<p class="vf-about-p">全部处理都在你的电脑上完成：<strong>不联网、不埋点、不上传任何图片</strong>。'
-        + '没有账号，也不需要登录。</p></div>'
+        + '<p class="vf-about-p">全部处理都在你的电脑上完成：<strong>不埋点、不上传任何图片</strong>。'
+        + '没有账号，也不需要登录。</p>'
+        + '<p class="vf-about-p">默认<strong>完全不出网</strong>。唯一的例外是'
+        + '「设置 → 隐私与安全 → 检查更新」——那是你主动打开的可选项，'
+        + '打开后启动时会读一次 GitHub 的公开版本号（只读，不发送任何本机信息）。</p></div>'
 
         + '<div class="vf-about-sec">'
         + '<div class="vf-about-t">数据放在哪</div>'
-        + '<p class="vf-about-p">缩略图、图片尺寸、设置、收藏与旋转记录都存在本机的应用数据里'
-        + '（Windows 下位于 %APPDATA% 的应用数据目录）。'
+        + '<p class="vf-about-p">缩略图、图片尺寸、设置、收藏与旋转记录都存在'
+        + '<strong>应用目录下的 data 子目录</strong>里 —— 便携版自带数据，'
+        + '把整个文件夹拷走就带走了全部设置（换台机器不必重新配）。'
         + '这些都可以在「设置 → 数据 → 清除缓存」一键清掉。</p></div>'
+
+        + '<div class="vf-about-sec">'
+        + '<div class="vf-about-t">开源与更新</div>'
+        + '<p class="vf-about-p">源码、更新日志与问题反馈都在 GitHub：'
+        + '<a class="vf-about-link" data-ext="1" href="' + REPO_URL + '"'
+        + ' rel="noreferrer noopener">github.com/jhlxlml/Atrium</a>'
+        + '（GPL-3.0 许可）。</p>'
+        + (canUpdate
+          ? '<div class="vf-about-upd">'
+            + '<button type="button" class="btn btn-ghost" data-act="checkUpdate">检查更新</button>'
+            + '<span class="vf-about-upd-r" data-role="updResult">当前 v' + esc(v) + '</span>'
+            + '</div>'
+          : '')
+        + '</div>'
 
         + '<div class="vf-about-sec">'
         + '<div class="vf-about-t">技术</div>'
@@ -610,7 +632,57 @@
         body: body,
         confirmText: '知道了',
         single: true,
+        /* onMount：面板刚插进 DOM 之后接一次线。
+           为什么不能在 body 字符串里写 onclick —— 那要往 HTML 里塞代码，
+           与全项目"事件一律 addEventListener"的写法不一致，也没法传闭包。 */
+        onMount: (bodyEl) => {
+          const btn = bodyEl.querySelector('[data-act="checkUpdate"]');
+          const out = bodyEl.querySelector('[data-role="updResult"]');
+          if (btn) btn.addEventListener('click', () => this.checkUpdateInline(btn, out));
+          /* 外链一律交给主进程（白名单）打开，绝不让窗口自己导航 ——
+             主窗口的 will-navigate 本来就会拦掉外链，不拦的话点了就是"没反应"。 */
+          bodyEl.addEventListener('click', (ev) => {
+            const a = ev.target && ev.target.closest ? ev.target.closest('a[data-ext]') : null;
+            if (!a) return;
+            ev.preventDefault();
+            if (global.App && global.App.openExternal) global.App.openExternal(a.getAttribute('href'));
+          });
+        },
       });
+    },
+
+    /**
+     * 「关于」面板里的「检查更新」按钮：**就地**显示结果，不另开弹层
+     * （弹层套弹层会把两个焦点陷阱叠起来，Esc 归谁管就说不清了）。
+     * 请求期间按钮禁用，避免连点发出一串请求。
+     */
+    async checkUpdateInline(btn, out) {
+      const N = global.Native;
+      const say = (text, cls) => {
+        if (!out) return;
+        out.textContent = text;
+        out.className = 'vf-about-upd-r' + (cls ? ' ' + cls : '');
+      };
+      if (!N || !N.canUpdate) { say('当前环境不支持检查更新', 'is-err'); return; }
+      if (btn && btn.disabled) return;
+      if (btn) btn.disabled = true;
+      say('正在访问 GitHub…');
+      const r = await N.checkUpdate((global.App && global.App.VERSION) || '');
+      if (btn) btn.disabled = false;
+      if (!r || !r.ok) {
+        say('检查失败：' + global.App._updateErrText(r && r.reason), 'is-err');
+        return;
+      }
+      if (!r.hasUpdate) { say('已是最新版本（v' + r.current + '）'); return; }
+      say('发现新版本 v' + r.latest + '（当前 v' + r.current + '）', 'is-new');
+      // 就地补一个「查看」外链：走同一条白名单 IPC，不在窗口内导航
+      const a = document.createElement('a');
+      a.className = 'vf-about-link';
+      a.setAttribute('data-ext', '1');
+      a.href = r.url || (REPO_URL + '/releases');
+      a.textContent = '查看新版本';
+      out.appendChild(document.createTextNode(' '));
+      out.appendChild(a);
     },
 
     resetAll() {
@@ -625,6 +697,29 @@
       for (const k of ALL_KEYS) this.apply(k, State.settings[k]);
     },
   };
+
+  /**
+   * 「隐私与安全」组的行定义。
+   * 前两行是恒定的；「检查更新」按**能力探测**决定出不出现 ——
+   * 它是本应用**唯一**会联网的功能，拿不到该能力的运行环境里
+   * 不该留下一个点了没反应的开关（与 desktopRows() 同一个取舍）。
+   * 注意它是 switch 但**不是**"纯 UI 项"：打开的那一刻就会真的出一次网，
+   * 所以点击后由 App.applySetting 立刻发起一次检查（见那里的 case 'updateCheck'）。
+   */
+  function privacyRows() {
+    const rows = [
+      { key: 'confirmDelete', type: 'switch', name: '删除前确认', desc: '防止误删，建议保持开启' },
+      { key: 'blurPreview', type: 'switch', name: '模糊预览', desc: '所有图片打码，等同顶栏眼睛按钮' },
+    ];
+    const N = global.Native;
+    if (N && N.canUpdate) {
+      rows.push({
+        key: 'updateCheck', type: 'switch', name: '检查更新',
+        desc: '启动时访问 GitHub 的公开版本接口，有新版本就提示（默认关闭；只读取版本号，不上传任何本机信息）',
+      });
+    }
+    return rows;
+  }
 
   /**
    * 「桌面集成」组的行定义。
@@ -661,6 +756,11 @@
     'theme', 'density', 'showNames', 'showCnt', 'alwaysOnTop',
     'wheelMode', 'animOn', 'infoAuto', 'stripAuto', 'slideshowMs',
     'confirmDelete', 'blurPreview', 'rememberLast',
+    /* updateCheck 与上面那些"纯 UI 项"不同：它有真实副作用（出网）。
+       但登记它的理由与相框那组一样 —— 它是面板上真实存在的一行，
+       漏登记就等于"恢复默认后这一项不参与重放"（开关还停在开着的状态，
+       下一次启动照样出网）。通用不变量断言会当场抓到这个遗漏。 */
+    'updateCheck',
     /* 相框组：frameSrc / frameMs / frameFit 与 frameDock 一样，都是"进相框那一刻
        才被 frame.js 读取"的键，主窗口这边**没有活的界面**要刷 —— 但**必须登记**：
        它们是面板上真实存在的行，漏登记就等于"恢复默认后这一项不参与重放"。

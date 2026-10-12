@@ -63,6 +63,18 @@ contextBridge.exposeInMainWorld('vfNative', {
   /** 用系统文件管理器打开某目录（导出完成后的「打开文件夹」） */
   openPath: (p) => ipcRenderer.invoke('vf:openPath', p),
 
+  /* ---------- 版本更新检测（v1.14.0） ---------- */
+  /** 打开官方仓库 / Releases 页面。主进程侧有 **URL 白名单**，
+      只放行 https://github.com/jhlxlml/Atrium 及其子路径；其余一律返回 false。
+      渲染层绝不能自己导航到外链（主窗口的 will-navigate 会拦下来）。 */
+  openExternal: (url) => ipcRenderer.invoke('vf:openExternal', url),
+
+  /** 查是否有新版本。current 传 App.VERSION（版本号的唯一来源）。
+      → {ok:true,current,latest,hasUpdate,url} | {ok:false,reason,current}
+      reason ∈ 'timeout'|'network'|'http-<code>'|'bad-response'。
+      注意：**"检查失败"与"已是最新"是两种结果**，调用方必须分开显示。 */
+  checkUpdate: (current) => ipcRenderer.invoke('vf:checkUpdate', current),
+
   /** 窗口置顶。on=true 置顶。返回「实际生效后」的布尔值（而非请求值） */
   alwaysOnTop: (on) => ipcRenderer.invoke('vf:alwaysOnTop', !!on),
 

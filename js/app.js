@@ -19,7 +19,7 @@
 
   const App = {
     /* 版本号唯一来源：界面（设置面板底部）与构建脚本共用，报障时可一眼确认版本 */
-    VERSION: '1.13.0',
+    VERSION: '1.14.0',
     el: {},
     resizeToken: null,
     /** 弹层标题 id 的自增序号（可及名称用，见 modal()） */
@@ -157,6 +157,11 @@
       // 把界面状态推给主进程，让原生菜单的勾选态与真实状态一致
       this.syncMenu();
 
+      /* 版本更新检测（默认关闭）：开启时才在启动后查一次。
+         刻意 setTimeout 延后、且不 await —— 它是一次纯附加的网络请求，
+         绝不能拖慢首屏或挡住界面；失败时静默（见 runUpdateCheck 的 silent 语义）。 */
+      if (State.settings.updateCheck) setTimeout(() => this.runUpdateCheck(true), 1500);
+
       document.body.dataset.booted = '1';
     },
 
@@ -239,6 +244,14 @@
           break;    // 在 requestDelete 里直接读 State.settings
         case 'blurPreview':
           this.applyBlurUI();
+          break;
+        case 'updateCheck':
+          /* 「启动时检查更新」（v1.14.0）。它不是纯 UI 开关 —— 拨开的那一刻就真的
+             出一次网，所以这里必须有分支：否则用户拨开开关后要等到**下次启动**
+             才知道它有没有用，等于一个"点了没反应"的开关（本项目对死开关零容忍）。
+             启动重放（quiet=true）**不在这里查** —— 那一次由 init() 统一触发，
+             免得每开一次应用就多打一次接口。 */
+          if (val && !quiet) this.runUpdateCheck(false);
           break;
 
         /* --- 数据 --- */
@@ -323,6 +336,65 @@
       }
       // 菜单勾选态与界面状态保持一致（模式 / 收藏筛选 / 隐私模式 / 置顶 / 是否有选中）
       this.syncMenu();
+    },
+
+    /* ================= 版本更新检测（v1.14.0，仅桌面版） ================= */
+    /**
+     * 查有没有新版本。
+     * silent=true 表示"启动时的自动检查"：**没更新、或检查失败，都一声不吭**
+     *   —— 每次开应用都弹一条"检查失败"是纯噪音（与托盘/快捷键启动对齐同一个取舍）。
+     *   只有真的发现新版本才提示，并给一个「查看」的动作。
+     * silent=false（用户刚拨开开关 / 手点按钮）：三种结果都要说话，
+     *   尤其"检查失败"必须与"已是最新"分开说 —— 把"没连上网"说成"已是最新"
+     *   是这类功能最常见的谎报。
+     */
+    runUpdateCheck(silent) {
+      const N = global.Native;
+      if (!N || !N.canUpdate) {
+        if (!silent) this.toast('当前环境不支持检查更新', { urgent: true });
+        return;
+      }
+      return N.checkUpdate(this.VERSION || '').then((r) => {
+        if (!r || !r.ok) {
+          if (!silent) this.toast('检查更新失败：' + this._updateErrText(r && r.reason), { urgent: true });
+          return;
+        }
+        if (r.hasUpdate) {
+          this.toast('发现新版本 v' + r.latest + '（当前 v' + r.current + '）', {
+            duration: 6000,
+            action: { label: '查看', onClick: () => this.openExternal(r.url) },
+          });
+        } else if (!silent) {
+          this.toast('已是最新版本（v' + r.current + '）');
+        }
+      }).catch(() => { /* 已在 Native 侧吞掉；这里只是别让 Promise 漏出去 */ });
+    },
+
+    /**
+     * 打开外部链接（官方仓库 / Releases）。
+     * **只走主进程白名单** —— 渲染层不做任何 URL 判断（判断放主进程，
+     * 才不会被页内注入的脚本绕过）。被拒或打不开时如实告知，不静默。
+     */
+    openExternal(url) {
+      const N = global.Native;
+      if (!N || typeof N.openExternal !== 'function') {
+        this.toast('当前环境不支持打开外部链接', { urgent: true });
+        return;
+      }
+      N.openExternal(url).then((ok) => {
+        if (!ok) this.toast('未能在浏览器中打开该链接', { urgent: true });
+      }).catch(() => {});
+    },
+
+    /** 把 checkUpdate 的 reason 翻成用户看得懂的一句话（各调用点共用，避免两处措辞漂移） */
+    _updateErrText(reason) {
+      const r = String(reason == null ? '' : reason);
+      if (r === 'timeout') return '网络超时（访问 GitHub 不通）';
+      if (r === 'network') return '无法连接网络';
+      if (r === 'unsupported') return '当前环境不支持';
+      if (r === 'bad-response') return '接口返回了无法识别的数据';
+      if (r.indexOf('http-') === 0) return 'GitHub 返回 ' + r.slice(5);
+      return '未知原因';
     },
 
     /* ================= 搜索框展开 / 收起 ================= */
@@ -1757,6 +1829,14 @@
         document.addEventListener('keydown', onKey, true);
         document.body.appendChild(wrap);
         requestAnimationFrame(() => wrap.classList.add('show'));
+        /* onMount(bodyEl, close)：弹层**已经插进文档树**之后回调一次，
+           给调用方一个"就地接线/就地改内容"的钩子（「关于」里的检查更新按钮用它）。
+           为什么必须在这个位置、而不是返回 Promise 之后：Promise 要等弹层关掉才 resolve，
+           那时再挂事件已经晚了。放在 appendChild 之后，querySelector / focus 才有效。 */
+        if (typeof o.onMount === 'function') {
+          try { o.onMount(wrap.querySelector('.vf-modal-body'), () => done(false)); }
+          catch (err) { console.error('[modal] onMount 回调出错：', err); }
+        }
         // 默认落在「取消」：危险的默认值不该是"回车即触发"。
         // trap 自己会完成移焦，后面那行是 A11y 缺失时的兜底。
         const initialBtn = single ? okBtn : noBtn;

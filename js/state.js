@@ -127,6 +127,10 @@
       /* --- 隐私与数据 --- */
       confirmDelete: true,     // 删除前二次确认
       rememberLast: true,      // 记住上次的文件夹与浏览位置
+      /* 启动时检查新版本。**默认关闭** —— 本应用默认不联网，
+         这是唯一一个会主动出网的开关，必须由用户明确打开。
+         打开后启动时会访问 GitHub 的公开版本接口（只读、不带任何本机信息）。 */
+      updateCheck: false,
 
       /* --- 窗口（仅桌面版有效） --- */
       alwaysOnTop: false,      // 窗口置顶：始终浮在其它窗口之上
@@ -159,7 +163,7 @@
 
       if (v.theme === 'light' || v.theme === 'dark' || v.theme === 'auto') d.theme = v.theme;
       if (v.density === 'cozy' || v.density === 'compact') d.density = v.density;
-      for (const k of ['showNames', 'showCnt', 'animOn', 'stripAuto', 'infoAuto', 'confirmDelete', 'rememberLast', 'alwaysOnTop', 'showFrame', 'trayOn', 'trayClose', 'hotkeyOn']) {
+      for (const k of ['showNames', 'showCnt', 'animOn', 'stripAuto', 'infoAuto', 'confirmDelete', 'rememberLast', 'alwaysOnTop', 'showFrame', 'trayOn', 'trayClose', 'hotkeyOn', 'updateCheck']) {
         if (typeof v[k] === 'boolean') d[k] = v[k];
       }
       if (v.wheelMode === 'zoom' || v.wheelMode === 'nav') d.wheelMode = v.wheelMode;

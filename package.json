@@ -1,7 +1,7 @@
 {
   "name": "viewfinder",
   "_nameFrozen": "刻意保留旧包名，别改。产品名已改为 Atrium（见 deploy/electron/package.json 的 productName），但这个名字是历史标识的一部分；改名会牵动任何按包名派生的路径与标识（含 userData 目录名），用户设置会「凭空消失」。JSON 不能写注释，故用这个下划线字段说明 —— npm 会忽略它。",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Atrium · 本地照片浏览器（Electron 便携版）",
   "private": true,
   "scripts": {
