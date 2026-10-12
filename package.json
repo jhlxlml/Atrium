@@ -9,6 +9,7 @@
     "test:fast": "node deploy/electron-test/run_all.js --fast",
     "test:transform": "node test/transform.test.js",
     "probe": "node deploy/electron-test/run_probe.js",
+    "shots": "node deploy/electron-test/run_probe.js make_screenshots.js",
     "clean": "node deploy/clean.js",
     "clean:dry": "node deploy/clean.js --dry",
     "build": "node deploy/electron/assemble.js",
