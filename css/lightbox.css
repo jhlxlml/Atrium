@@ -141,7 +141,14 @@ svg.flip-x { transform: scaleX(-1); }
   cursor: pointer; transition: background .18s;
 }
 .lb-pct:hover { background: rgba(238,233,224,.18); }
-.lb-sep { width: 1px; height: 18px; background: rgba(238,233,224,.16); margin: 0 4px; }
+/* 分组分隔线：实测 alpha .16 时对灯箱底仅 1.47:1，四组几乎糊成一片；
+   提到 .22（约 1.79:1）才真的"看得见分组" —— 分组存在的意义就在于此。 */
+.lb-sep { width: 1px; height: 20px; background: rgba(238,233,224,.22); margin: 0 5px; }
+
+/* 删除（危险操作：悬停显红；来源不支持删除时置灰不可点）。
+   额外左间距 —— 它是 HUD 里唯一不可逆的动作，得和前一组（播放/全屏）拉开距离，
+   不让"手滑"能顺手划过到它。 */
+.lb-actions .ico-btn.lb-del { margin-left: 7px; }
 
 /* 删除（危险操作：悬停显红；来源不支持删除时置灰不可点） */
 .lb-actions .ico-btn.lb-del:hover:not(:disabled) { background: rgba(196,84,66,.24); color: #ffb3a3; }

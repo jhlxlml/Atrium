@@ -49,6 +49,9 @@
       E.pinBtn = $('#pinBtn');
       E.frameBtn = $('#frameBtn');
       E.favOnlyBtn = $('#favOnlyBtn');
+      E.moreWrap = $('#moreWrap');
+      E.moreBtn = $('#moreBtn');
+      E.moreMenu = $('#moreMenu');
       E.srcbar = $('#srcbar');
       E.srcList = $('#srcList');
       E.btnAddFolder = $('#btnAddFolder');
@@ -428,7 +431,7 @@
         E.brandEye.classList.toggle('is-blur', on);
         E.brandEye.innerHTML = Util.icon(on ? 'i-eye-off' : 'i-eye');
         E.brandEye.title = on ? '睁眼：恢复正常显示' : '闭眼：模糊预览（隐私模式）';
-        E.brandEye.setAttribute('aria-pressed', String(on));
+        E.brandEye.setAttribute('aria-checked', String(on));
       }
       // 设置面板里的同名开关同步（顶栏眼睛与设置项是同一个状态的两个入口）
       if (global.Settings && global.Settings.sync) global.Settings.sync();
@@ -453,7 +456,7 @@
       btn.classList.toggle('is-on', on);
       btn.innerHTML = Util.icon(on ? 'i-pin-on' : 'i-pin');
       btn.title = on ? '已置顶：点击取消置顶' : '窗口置顶：让 Atrium 始终浮在其它窗口之上';
-      btn.setAttribute('aria-pressed', String(on));
+      btn.setAttribute('aria-checked', String(on));
       this.syncMenu();
     },
 
@@ -524,14 +527,14 @@
     applyFrameUI() {
       const btn = this.el.frameBtn;
       if (!btn) return;
-      // 用 hidden 属性而不是把节点摘出 DOM —— 顶栏几何断言按 children 下标算
+      // 用 hidden 属性而不是把节点摘出 DOM —— 几何断言按 children 下标算
       // （probe_topbar.js 的 ctrlCount / pinIsLast），摘节点会直接打破它们。
       const shown = !!State.settings.showFrame;
       const on = !!this.frameOn;
       btn.hidden = !shown;
-      // 即使隐藏也继续把外观刷全：避免留下过期的 aria-pressed / is-on（探针会读）
+      // 即使隐藏也继续把外观刷全：避免留下过期的 aria-checked / is-on（探针会读）
       btn.classList.toggle('is-on', on);
-      btn.setAttribute('aria-pressed', String(on));
+      btn.setAttribute('aria-checked', String(on));
       btn.title = on ? '相框模式：正在播放，点击退出' : '相框模式：随机轮播相册里的图片';
       this.syncMenu();
     },
@@ -615,6 +618,7 @@
         State.filterText = '';
         State.favOnly = false;
         E.favOnlyBtn.classList.remove('is-active', 'is-on');
+        E.favOnlyBtn.setAttribute('aria-checked', 'false');
         if (E.searchClear) E.searchClear.hidden = true;
         this.closeSearch();
         this.applyView(true);
@@ -662,25 +666,24 @@
       // 底部状态栏自动隐藏：鼠标移入底部热区 / 状态栏本身，或页面滚到底时才显示
       this.wireViewbarAutoHide();
       // 顶栏控件区横滚提示（窄窗口）：滚到底时去掉右侧渐隐
-      this.wireCtrlScrollHint();
+      this.syncCtrlScrollHint();
+      // 「更多 ⋯」溢出菜单（v1.15.0：低频控件从顶栏下沉到这里）
+      this.wireMoreMenu();
+      // 排序 UI 对齐放在 init() 里统一做（那里已调用 syncSortUI）
     },
 
     /* ================= 顶栏控件区横滚提示 ================= */
-    wireCtrlScrollHint() {
+    syncCtrlScrollHint() {
       const c = this.el.ctrls || Util.$('#ctrls');
       if (!c) return;
       const upd = () => {
-        const scrollable = c.scrollWidth > c.clientWidth + 1;
+        // .ctrls 现在常驻 overflow-x:auto（浮层都已挂到 <body>，不再被裁剪），
+        // 这里只需维护右缘渐隐：滚到右端就撤掉 mask，让最后一颗按钮完整显形。
         const atEnd = c.scrollLeft + c.clientWidth >= c.scrollWidth - 2;
         c.classList.toggle('at-end', atEnd);
-        // 只在「确实需要横滚」时才启用 overflow 裁剪。
-        // 否则 overflow-y:hidden 会把它下方弹出的浮层（如「最近删除」面板）裁成 0 高，
-        // 表现就是点了没反应、点不进去。
-        c.classList.toggle('is-scrollable', scrollable);
       };
       c.addEventListener('scroll', upd, { passive: true });
       global.addEventListener('resize', upd, { passive: true });
-      this._updCtrlScroll = upd;
       requestAnimationFrame(upd);
     },
 
@@ -796,6 +799,10 @@
       this.el.sortDir.classList.toggle('desc', desc);
       this.el.sortDir.setAttribute('aria-label', desc ? '切换为升序' : '切换为降序');
       this.el.sortDir.innerHTML = Util.icon('i-arrow-d');
+      // v1.15.0 排序控件下沉到底栏：select 与持久化值对齐（启动时可能带着旧值）
+      if (this.el.sortKey && this.el.sortKey.value !== State.settings.sortKey) {
+        this.el.sortKey.value = State.settings.sortKey;
+      }
     },
 
     /* ================= 批量选择（框选 / 勾选） ================= */
@@ -1001,6 +1008,86 @@
       setTimeout(() => a.remove(), 0);
     },
 
+    /* ================= 「更多 ⋯」溢出菜单 =================
+       v1.15.0 信息架构重构：只看收藏 / 最近删除 / 隐私模式 / 相框 / 置顶
+       这些"一次性设定或低频动作"从常驻顶栏收进这里，顶栏只剩 6 组常驻控件。
+       菜单本体与「最近删除」「设置」面板同款：挂到 <body> 下 + fixed 定位，
+       按按钮矩形贴右下放置 —— 不受 .ctrls 的 overflow 裁剪与层叠上下文影响。 */
+    wireMoreMenu() {
+      const E = this.el;
+      const wrap = E.moreWrap || Util.$('#moreWrap');
+      const btn = E.moreBtn || Util.$('#moreBtn');
+      const menu = E.moreMenu || Util.$('#moreMenu');
+      if (!btn || !menu) return;
+      E.moreWrap = wrap; E.moreBtn = btn; E.moreMenu = menu;
+
+      if (menu.parentElement !== document.body) document.body.appendChild(menu);
+
+      const place = () => {
+        if (menu.hidden) return;
+        const b = btn.getBoundingClientRect();
+        const m = menu.getBoundingClientRect();
+        const GAP = 8, MARGIN = 12;
+        // 水平：右对齐按钮右缘，越界则贴边
+        let left = b.right - m.width;
+        left = Math.max(MARGIN, Math.min(left, global.innerWidth - m.width - MARGIN));
+        // 垂直：优先按钮下方；空间不足翻到上方
+        let top = b.bottom + GAP;
+        if (top + m.height > global.innerHeight - MARGIN) {
+          const above = b.top - GAP - m.height;
+          top = above >= MARGIN ? above : Math.max(MARGIN, global.innerHeight - m.height - MARGIN);
+        }
+        menu.style.left = Math.round(left) + 'px';
+        menu.style.top = Math.round(top) + 'px';
+      };
+      this._placeMoreMenu = place;
+
+      const toggle = (force) => {
+        const show = force === undefined ? menu.hidden : !!force;
+        if (show) {
+          // 与设置面板、最近删除面板互斥：同时只开一个浮层
+          if (global.Settings && global.Settings.toggle) global.Settings.toggle(false);
+          if (this.el.trashPanel && !this.el.trashPanel.hidden) this.toggleTrash(false);
+        }
+        // 先显隐再测量定位（隐藏时 getBoundingClientRect 恒为 0）
+        menu.hidden = !show;
+        if (show) place();
+        btn.setAttribute('aria-expanded', String(show));
+        btn.classList.toggle('is-on', show);
+        if (show) {
+          // 焦点移入首个可见项，键盘可直接选择
+          const first = menu.querySelector('.mm-item:not([hidden])');
+          if (first) first.focus({ preventScroll: true });
+        }
+      };
+      this._toggleMoreMenu = toggle;
+
+      btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+
+      // 点菜单外部收起（菜单已挂 body，要同时判断 wrap 与 menu）
+      document.addEventListener('click', (e) => {
+        if (menu.hidden) return;
+        if (menu.contains(e.target)) return;
+        if (wrap && wrap.contains(e.target)) return;
+        toggle(false);
+      });
+      // Esc 收起（与灯箱 / 面板的 Esc 语义一致：先收最上层的浮层）
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || menu.hidden) return;
+        toggle(false);
+        btn.focus();
+      });
+      // 点任意菜单项后收起；「最近删除」项自己弹出的是另一个面板，由 toggleTrash 负责互斥
+      menu.addEventListener('click', (e) => {
+        const item = e.target.closest && e.target.closest('.mm-item');
+        if (item) toggle(false);
+      });
+      // 视口变化 / 页面滚动时跟随按钮（fixed 浮层不随文档流走）
+      const follow = () => place();
+      global.addEventListener('resize', Util.rafThrottle(follow), { passive: true });
+      global.addEventListener('scroll', Util.rafThrottle(follow), { passive: true });
+    },
+
     /* ================= 最近删除 / 撤销删除 ================= */
     /** 桌面版专属：工具栏「最近删除」入口 + 面板 + 快捷键 */
     wireTrash() {
@@ -1015,6 +1102,8 @@
 
       // 面板移到 <body> 下：既躲开 .ctrls 的 overflow 裁剪，也不受它建立的
       // 层叠上下文约束（否则窄窗口下 .ctrls 一旦可横滚，面板会被瓦片盖住 → 点不到）。
+      // v1.15.0 起触发器先住在「更多 ⋯」菜单里、菜单随后也会挂到 body 下，
+      // 这一步仍然必要 —— 面板的"祖先是否被裁剪"与它自己挂在哪无关。
       if (E.trashPanel && E.trashPanel.parentElement !== document.body) {
         document.body.appendChild(E.trashPanel);
       }
@@ -1073,6 +1162,8 @@
       const show = force === undefined ? p.hidden : !!force;
       // 与设置面板互斥：同时只开一个浮层
       if (show && global.Settings && global.Settings.toggle) global.Settings.toggle(false);
+      // 触发器在「更多 ⋯」菜单里：开面板前先收菜单，否则两个浮层叠着
+      if (show && this._toggleMoreMenu) this._toggleMoreMenu(false);
       if (show) this.renderTrash();
       p.hidden = !show;          // 先显隐，再测量定位（隐藏时 offsetWidth/Height 恒为 0）
       if (show) this._placeTrashPanel();
@@ -2068,12 +2159,13 @@
       return true;
     },
 
-    /** 只看收藏（顶栏按钮 / 键盘 F / 原生菜单共用） */
+    /** 只看收藏（更多菜单项 / 键盘 F / 原生菜单共用） */
     toggleFavOnly() {
       const E = this.el;
       State.favOnly = !State.favOnly;
       E.favOnlyBtn.classList.toggle('is-active', State.favOnly);
       E.favOnlyBtn.classList.toggle('is-on', State.favOnly);
+      E.favOnlyBtn.setAttribute('aria-checked', String(State.favOnly));
       this.applyView(true);
       this.syncMenu();
     },
