@@ -9,6 +9,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 /* spawnSync 的默认 stdio 会给 stdin 建管道，本机沙箱拒绝（EBUSY，连 cmd.exe
    都起不来）。子进程（robocopy / electron 探针 / 7z / where）没有一个需要
    stdin，所以统一把它设成 ignore；stdout 与 stderr 照常 pipe，调用方无感。
@@ -65,9 +66,11 @@ for (const f of MAIN_FILES) {
 
 /* 窗口 / 任务栏图标。main.js 里两个 BrowserWindow 都用 path.join(__dirname,'icon.ico')，
    而 __dirname 在包里就是 resources/app，所以放这里即可。
-   注意：robocopy 式打包**不改 exe 自身的资源**，资源管理器里 Atrium.exe 的文件图标
-   仍是 Electron 默认的；窗口标题栏与任务栏图标由 BrowserWindow.icon 覆盖 —— 
-   那才是用户日常真正看到的。要连文件图标一起换得上 rcedit，本项目刻意不引依赖。 */
+   ⚠️ 这里放的是 **BrowserWindow.icon 用的**图标（窗口标题栏 / 任务栏 / 托盘）。
+   exe **自身**的文件图标（资源管理器里那个）是另一条通路：由第 5 步
+   stampExeResources() 用 rcedit 写进 PE 资源段（RT_ICON / RT_GROUP_ICON）。
+   两者互不替代 —— 早先这段注释写的是"rcedit 没引、文件图标仍是 Electron 默认"，
+   那是 v1.12.0 之前的事实，**现在为假**，已按现状改写（曾被它误导过一次判断）。 */
 copy(path.join(ROOT, 'brand', 'icon.ico'), path.join(STAGE, 'app', 'icon.ico'));
 
 /* 1b) 反向校验：index.html 引用的每个本地 css / js 都必须真的存在。
@@ -161,6 +164,32 @@ stampExeResources(exeNew)
     const sizeMB = Math.round(fs.statSync(exeNew).size / 1024 / 1024);
     console.log('     exe resources: icon + version ' + v + ' (rcedit)');
     console.log('     exe size: ' + sizeMB + ' MB');
+
+    /* 6) 构建戳（卫生项）：产物目录是**原地覆盖**的（robocopy /MIR），
+       所以光看目录分不出"这一份是哪次构建出来的"，也无法与源码对账。
+       落一个 BUILD-INFO.json，记版本号 / 构建时刻 / exe 的 MD5 ——
+       目的是**可回溯**（这一份对应哪版源码），不是"两版并存"。
+
+       刻意**不**改成"按版本号建目录"：那会让每次构建都多出一份 269MB 的副本，
+       而且 pack.js / run_all.js 的 appself / 全部文档都得跟着改成"找最新目录"，
+       收益（并存两版）远小于成本。 */
+    try {
+      const info = {
+        product: 'Atrium',
+        version: v,
+        builtAt: new Date().toISOString(),
+        exe: {
+          file: path.relative(ROOT, exeNew).replace(/\\/g, '/'),
+          bytes: fs.statSync(exeNew).size,
+          md5: crypto.createHash('md5').update(fs.readFileSync(exeNew)).digest('hex'),
+        },
+        note: '本文件由 deploy/electron/assemble.js 每次构建时覆盖写入。',
+      };
+      fs.writeFileSync(path.join(path.dirname(OUT), 'BUILD-INFO.json'), JSON.stringify(info, null, 2) + '\n');
+      console.log('     build stamp: BUILD-INFO.json (v' + v + ' md5 ' + info.exe.md5.slice(0, 12) + '…)');
+    } catch (e) {
+      console.warn('     BUILD-INFO.json 写入失败（不影响产物）：' + ((e && e.message) || e));
+    }
   })
   .catch((e) => {
     console.error('\n[icon] 写入 exe 资源失败：' + ((e && e.message) || e));

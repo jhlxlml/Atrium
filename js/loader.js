@@ -295,11 +295,24 @@
         if (!en) continue;
         if (en.isDirectory) {
           const sub = [];
+          /* ⚠️ scanEntry(en, '', sub) 产出的 rel **已经带上顶层目录名**了 ——
+             它给子项的前缀是 `rel + entry.name + '/'`，而这里传进去的 rel 是 ''，
+             所以子项是 `照片夹/山景-01.png`、`照片夹/子集/子集-A.png`。
+             因此**不能**再拼一次 en.name：早先那版写成 `en.name + '/' + s.rel`，
+             结果是 `照片夹/照片夹/山景-01.png` —— 顶层目录名重复了一次。
+             它不报错、也不破坏去重（重复得一致），但 rel 同时是**排序键**
+             （state.js 的自然序比较）与**条目 id 的一部分**（Util.itemId），
+             属于"看着没事"的那类错。由 probe_drop.js 抓出（该通路此前零覆盖）。 */
           await scanEntry(en, '', sub);
-          const rel0 = en.name;
-          for (const s of sub) out.push({ file: s.file, rel: rel0 + '/' + s.rel });
+          for (const s of sub) out.push({ file: s.file, rel: s.rel });
         } else if (en.isFile) {
-          out.push({ file: it.getAsFile(), rel: en.name });
+          /* 散文件也必须按扩展名过滤 —— 目录分支（scanEntry）与无 entry API 的
+             兜底分支都过滤了，只有这一支原先漏了。后果：拖一个 .txt/.pdf 进来
+             会凭空多出一个来源，里面是一张永远画不出来的坏图瓦片，而且
+             App.wireDrop 的"未发现可加载的图片"提示**永远不会出现**（fromDrop
+             返回了 true）。由 probe_drop.js 抓出。 */
+          const f = it.getAsFile();
+          if (f && Util.isImageExt(f.name)) out.push({ file: f, rel: en.name });
         }
       }
     } else {

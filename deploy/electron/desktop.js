@@ -383,35 +383,62 @@ function createDesktop(ctx) {
   /* ============================================================
      IPC（与 preload 白名单一一对应）
      ============================================================ */
-  function wireIpc() {
-    ipcMain.handle('vf:menuState', (e, st) => setMenuState(st));
 
-    ipcMain.handle('vf:contextMenu', (e, payload) => {
+  /* 归属校验（纵深防御）。
+     这 7 条通道原先**完全不看 `e`**（全仓 `.sender` 只出现 2 次，且都是功能性
+     用法：main.js 的 winOf(e) 与 alwaysOnTop 用它定位"发起调用的窗口"）。
+     在当前安全基线（contextIsolation + nodeIntegration:false + sandbox + 只加载
+     vf:// 本地内容 + setWindowOpenHandler 拒绝新窗口 + will-navigate 拦外部导航）下，
+     渲染进程里跑的就是自家代码，**这不构成现实漏洞**；它是 Electron 官方安全检查表
+     推荐的纵深防御 —— 万一将来某处引入了一条能加载外部内容的路径，这里是最后一道闸。
+     成本是一个包装函数，收益是"未来免疫"。
+     被拒时返回 null（不是抛错）：这些通道的返回值形状本来就是"值或空"，
+     返回 null 与"查询没结果"同形，调用方的既有降级路径照常工作。 */
+  function trustedIds() {
+    return [ctx.getMainWin && ctx.getMainWin(), ctx.getFrameWin && ctx.getFrameWin()]
+      .filter((w) => w && !w.isDestroyed())
+      .map((w) => w.webContents.id);
+  }
+  function guard(fn) {
+    return (e, ...args) => {
+      const id = e && e.sender && e.sender.id;
+      if (trustedIds().indexOf(id) < 0) {
+        console.warn('[ipc] 拒绝来自非受信 sender 的调用：sender=' + id);
+        return null;
+      }
+      return fn(...args);
+    };
+  }
+
+  function wireIpc() {
+    ipcMain.handle('vf:menuState', guard((st) => setMenuState(st)));
+
+    ipcMain.handle('vf:contextMenu', guard((payload) => {
       const p = payload || {};
       const kind = p.kind === 'lightbox' ? 'lightbox' : 'grid';
       const nodes = spec.contextMenuSpec(kind, p.info || {});
       const win = ctx.getFrameWin && ctx.getFrameWin() && kind === 'lightbox'
         ? ctx.getFrameWin() : ctx.getMainWin();
       return popupContextMenu(nodes, win || ctx.getMainWin());
-    });
+    }));
 
-    ipcMain.handle('vf:showInFolder', (e, p) => {
+    ipcMain.handle('vf:showInFolder', guard((p) => {
       if (!p || typeof p !== 'string') return false;
       try { shell.showItemInFolder(p); return true; }
       catch (err) { return false; }
-    });
+    }));
 
-    ipcMain.handle('vf:setProgress', (e, value, mode) => setProgress(ctx.getMainWin(), value, mode));
+    ipcMain.handle('vf:setProgress', guard((value, mode) => setProgress(ctx.getMainWin(), value, mode)));
 
-    ipcMain.handle('vf:setTray', (e, st) => setTrayState(st));
-    ipcMain.handle('vf:setHotkey', (e, accel) => setGlobalHotkey(accel || ''));
-    ipcMain.handle('vf:desktopInfo', () => ({
+    ipcMain.handle('vf:setTray', guard((st) => setTrayState(st)));
+    ipcMain.handle('vf:setHotkey', guard((accel) => setGlobalHotkey(accel || '')));
+    ipcMain.handle('vf:desktopInfo', guard(() => ({
       platform: process.platform,
       tray: trayAlive(),
       trayCloseOn: D.trayCloseOn,
       hotkey: { accel: D.hotkeyAccel, registered: D.hotkeyOk },
       menu: !!D.menu,
-    }));
+    })));
   }
 
   return {

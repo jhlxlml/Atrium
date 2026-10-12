@@ -25,6 +25,38 @@
     return global.btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
 
+  /* ------------------------------------------------------------
+     失败留痕策略（本文件的核心取舍，改这里之前先读完）
+     ------------------------------------------------------------
+     本文件有 26 处 `catch → false / null / []`。它们的失败与"合法的否定结果"
+     **同形**："IPC 挂了"和"用户点了取消"、"这张图没有 EXIF"、"窗口本来就没置顶"
+     看起来一模一样。这是刻意的 —— 调用方（App / Lightbox / Frame）本来就接受"空"，
+     若这里改成抛错，反而会让"取消选择文件夹"变成一条错误。
+
+     但有两类不能这么处理：
+
+     ① **写操作**（exportFiles / deleteFile(s) / restoreFile(s) / frameOpen / trashPreview）
+        一律返回 `{ok:false, reason, message}`，把原因带到用户面前。
+        绝不允许把"删除失败"吞成"什么都没发生"。
+
+     ② **状态对齐类**（setAlwaysOnTop / getAlwaysOnTop / setTray / setHotkey / frameInfo）
+        用下面的 warnOnce 留一次痕。为什么：它们的失败症状是"**开关自己弹回去了**"，
+        用户与开发者都会误判成"这功能没做"。上一轮 a11yui 的假失败就是这么来的 ——
+        探针缺 handler → invoke reject → `.catch` 吞成 false → applySetting 判"没生效"
+        → 回滚 + urgent 播报 → 播报区被永久改成 assertive。
+        用 Set 去重，避免轮询式调用刷屏（与项目"响了比静默好"的取舍一致）。
+
+     其余查询类维持吞值 —— 调用方必须能接受"空"。
+     ------------------------------------------------------------ */
+  const warned = new Set();
+  function warnOnce(tag, e) {
+    const msg = String((e && e.message) || e);
+    const k = tag + '|' + msg;
+    if (warned.has(k)) return;
+    warned.add(k);
+    console.warn('[native] ' + tag + ' 失败（已回退为空值，可能与"合法空结果"同形）：' + msg);
+  }
+
   const Native = {
     active: !!bridge,
 
@@ -205,13 +237,13 @@
      */
     setAlwaysOnTop(on) {
       if (!bridge || typeof bridge.alwaysOnTop !== 'function') return Promise.resolve(false);
-      return bridge.alwaysOnTop(!!on).catch(() => false);
+      return bridge.alwaysOnTop(!!on).catch((e) => { warnOnce('setAlwaysOnTop', e); return false; });
     },
 
     /** 启动时查询真实置顶状态，让界面与窗口一致 */
     getAlwaysOnTop() {
       if (!bridge || typeof bridge.getAlwaysOnTop !== 'function') return Promise.resolve(false);
-      return bridge.getAlwaysOnTop().catch(() => false);
+      return bridge.getAlwaysOnTop().catch((e) => { warnOnce('getAlwaysOnTop', e); return false; });
     },
 
     /* ---------- 相框模式（仅桌面版能开独立的无边框窗口） ----------
@@ -253,7 +285,7 @@
     /** 相框窗口状态（窗口是否存在 / 是否置顶 / 是否无边框 / 当前矩形）；诊断与回归用 */
     frameInfo() {
       if (!bridge || typeof bridge.frameInfo !== 'function') return Promise.resolve(null);
-      return bridge.frameInfo().catch(() => null);
+      return bridge.frameInfo().catch((e) => { warnOnce('frameInfo', e); return null; });
     },
 
     /**
@@ -350,7 +382,7 @@
     /** 托盘开关 + 关闭行为；返回托盘是否真的活着 */
     setTray(st) {
       if (!bridge || typeof bridge.setTray !== 'function') return Promise.resolve(false);
-      return bridge.setTray(st).catch(() => false);
+      return bridge.setTray(st).catch((e) => { warnOnce('setTray', e); return false; });
     },
 
     /** 注册/注销全局快捷键；返回 {ok, registered, why?} */
@@ -358,7 +390,10 @@
       if (!bridge || typeof bridge.setHotkey !== 'function') {
         return Promise.resolve({ ok: false, registered: false, why: 'unsupported' });
       }
-      return bridge.setHotkey(accel || '').catch((e) => ({ ok: false, registered: false, why: String((e && e.message) || e) }));
+      return bridge.setHotkey(accel || '').catch((e) => {
+        warnOnce('setHotkey', e);
+        return { ok: false, registered: false, why: String((e && e.message) || e) };
+      });
     },
 
     /** 桌面集成状态（诊断用） */

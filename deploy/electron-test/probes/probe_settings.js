@@ -477,6 +477,27 @@ async function run() {
     out.allKeys = (window.Settings && Array.isArray(window.Settings.ALL_KEYS))
       ? window.Settings.ALL_KEYS.slice() : null;
 
+    /* 「面板每一行都必须登记进重放表」这条**通用不变量**的输入。
+       为什么不能直接用当下可见的行：groups() 是**状态相关**的 ——
+       相框组（相框相册 / 更换间隔 / 填充方式 / 窗口停靠边 / 输出屏幕）只在
+       showFrame 开着时出现，「输出屏幕」还要 State.displays 多于一块屏。
+       若按当下状态取键，条件行就漏了，断言退化成"抽样式覆盖"（= 又走回手工清单的老路）。
+       所以这里把两个条件临时置真取一遍，取完**立刻还原**。
+       按钮行（__ 前缀）不是设置项，不参与重放，排除。 */
+    out.rowKeys = (() => {
+      const savedShowFrame = S.settings.showFrame;
+      const savedDisplays = S.displays;
+      S.settings.showFrame = true;
+      S.displays = [{ id: 1, label: '屏1' }, { id: 2, label: '屏2' }];
+      const keys = (window.Settings.groups() || [])
+        .reduce((a, g) => a.concat(g.rows || []), [])
+        .map((d) => d.key)
+        .filter((k) => String(k).indexOf('__') !== 0);
+      S.settings.showFrame = savedShowFrame;
+      S.displays = savedDisplays;
+      return keys;
+    })();
+
     // ③ 关掉开关 → 分组必须收回、图标重新隐藏
     const swRow2 = rowOf('显示相框入口');
     if (swRow2) { swRow2.querySelector('.sp-switch').click(); await wait(260); }

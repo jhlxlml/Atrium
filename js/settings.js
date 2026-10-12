@@ -661,7 +661,14 @@
     'theme', 'density', 'showNames', 'showCnt', 'alwaysOnTop',
     'wheelMode', 'animOn', 'infoAuto', 'stripAuto', 'slideshowMs',
     'confirmDelete', 'blurPreview', 'rememberLast',
-    'showFrame', 'frameDock', 'frameDisplay',
+    /* 相框组：frameSrc / frameMs / frameFit 与 frameDock 一样，都是"进相框那一刻
+       才被 frame.js 读取"的键，主窗口这边**没有活的界面**要刷 —— 但**必须登记**：
+       它们是面板上真实存在的行，漏登记就等于"恢复默认后这一项不参与重放"。
+       （applySetting 对它们没有 case，落到 default: break 是**安全的 no-op**；
+       这里登记的是"重放表完整性"，与"有没有分支"是两件事。）
+       这条不再是靠人记 —— run_all.js 有一条通用不变量断言：
+       面板里的每一行都必须 ∈ ALL_KEYS，缺哪个直接报出来。 */
+    'showFrame', 'frameSrc', 'frameMs', 'frameFit', 'frameDock', 'frameDisplay',
     'mode', 'sortKey', 'sortDir', 'pageSize',
     'trayOn', 'trayClose', 'hotkeyOn',
   ];

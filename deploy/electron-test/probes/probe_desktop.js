@@ -104,7 +104,11 @@ async function main() {
   /* ---------- 3. 一个真窗口 + 桌面集成实例 ---------- */
   const win = new BrowserWindow({
     width: 900, height: 640, show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: {
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
+      // 装真 preload：第 12 步要从页面里调 window.vfNative，验证 IPC 归属校验
+      preload: path.join(ROOT, 'deploy', 'electron', 'preload.js'),
+    },
   });
   await win.loadURL('about:blank');
 
@@ -241,6 +245,62 @@ async function main() {
   } catch (e) {
     R.ctxPopup = { error: String((e && e.message) || e) };
     R.problems.push('ctxPopup: ' + String((e && e.message) || e));
+  }
+
+  /* ---------- 12. IPC 归属校验：非受信 sender 必须被拒 ----------
+     这 7 条通道原先完全不看 `e`（全仓 `.sender` 只出现 2 次，都是功能性用法）。
+     这里建**第二个窗口**，故意不交给 createDesktop 的 ctx —— 从它调同样的 7 条
+     通道，全部必须返回 null（被 guard 挡在 handler **之前**）；再从受信窗口调一次
+     只读通道，证明 guard 没有误伤正常调用方。
+
+     为什么值得单独测：归属校验最容易写成"看着有、其实没接上"——
+     要么漏包一条，要么 trustedIds() 恒为空（把自家调用也一起拒了，症状是
+     "功能全哑"但代码看着完全正常）。这正是本项目栽过五次的同一类病。 */
+  R.ipcGuard = { untrusted: {}, trusted: {} };
+  try {
+    const evil = new BrowserWindow({
+      width: 400, height: 300, show: false,
+      webPreferences: {
+        contextIsolation: true, nodeIntegration: false, sandbox: true,
+        preload: path.join(ROOT, 'deploy', 'electron', 'preload.js'),
+      },
+    });
+    await evil.loadURL('about:blank');
+    desktop.wireIpc();   // 装真 handler（探针此前只直接调函数，没走过 IPC 这条路）
+
+    const callIn = (w, expr) => w.webContents.executeJavaScript(expr);
+    const CH = {
+      menuState: 'window.vfNative.setMenuState({mode:"small"})',
+      contextMenu: 'window.vfNative.contextMenu({kind:"grid",info:{}})',
+      showInFolder: 'window.vfNative.showInFolder("C:/nope/x.jpg")',
+      setProgress: 'window.vfNative.setProgress(0.5,"normal")',
+      setTray: 'window.vfNative.setTray({on:false,closeOn:false})',
+      setHotkey: 'window.vfNative.setHotkey("")',
+      desktopInfo: 'window.vfNative.desktopInfo()',
+    };
+    for (const k of Object.keys(CH)) R.ipcGuard.untrusted[k] = await callIn(evil, CH[k]);
+    // 受信侧只调只读 / 无副作用的通道，别在这里建托盘或注册全局快捷键
+    R.ipcGuard.trusted.desktopInfo = await callIn(win, 'window.vfNative.desktopInfo()');
+    R.ipcGuard.trusted.menuState = await callIn(win, 'window.vfNative.setMenuState({mode:"medium"})');
+    R.ipcGuard.trusted.trayAfter = desktop.trayAlive();
+
+    const leaked = Object.keys(CH).filter((k) => R.ipcGuard.untrusted[k] !== null);
+    R.ipcGuard.rejectedAll = leaked.length === 0;
+    R.ipcGuard.channelCount = Object.keys(CH).length;
+    if (leaked.length) {
+      R.problems.push('ipcGuard: 非受信 sender 竟然拿到了结果：' + leaked.join(','));
+    }
+    if (!R.ipcGuard.trusted.desktopInfo
+      || R.ipcGuard.trusted.desktopInfo.platform !== process.platform) {
+      R.problems.push('ipcGuard: 受信窗口的正常调用被误拒 → '
+        + JSON.stringify(R.ipcGuard.trusted.desktopInfo));
+    }
+    if (R.ipcGuard.trusted.trayAfter) {
+      R.problems.push('ipcGuard: 非受信调用竟然真的把托盘建起来了');
+    }
+    try { evil.destroy(); } catch (e) { /* 忽略 */ }
+  } catch (e) {
+    R.problems.push('ipcGuard: ' + String((e && e.message) || e));
   }
 
   try { win.destroy(); } catch (e) { /* 忽略 */ }

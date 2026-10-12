@@ -11,6 +11,9 @@ const { app, BrowserWindow, protocol, ipcMain } = require('electron');
 
 /* 桌面集成通道桩：缺了它 App.init() 的托盘/快捷键设置重放会"假失败" —— 详见 _desktop_stub.js */
 require('./_desktop_stub').stubDesktop();
+/* 窗口置顶 / 屏幕清单也要补桩：App.init() 启动时会拉，缺了会让探针变成"不完整宿主"
+   —— invoke reject 被 .catch 吞掉，上层判"没生效"，并留下一条 console.warn 假报错。 */
+require('./_desktop_stub').stubWindowChannels();
 const path = require('path'); const fs = require('fs'); const os = require('os');
 const APPDIR = path.resolve(__dirname, '..', '..', '..');
 const OUT = path.resolve(__dirname, '..', 'shots');

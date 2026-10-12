@@ -52,4 +52,31 @@ function stubDesktop() {
   ipcMain.handle('vf:desktopInfo', () => ({ stub: true, menu: true, tray: true, hotkey: true }));
 }
 
-module.exports = { stubDesktop };
+/* ------------------------------------------------------------
+   窗口级通道（窗口置顶 / 屏幕清单）—— 与上面 7 条桌面通道**分开**提供
+   ------------------------------------------------------------
+   为什么不做进 stubDesktop()：有 3 个探针**自己实现了这两条**（要数调用次数
+   或控制返回值：probe_settings / probe_topbar / probe_drop），无条件注册会撞
+   `ipcMain.handle` 的重复注册。所以做成 opt-in，谁缺谁调。
+
+   为什么需要：`App.init()` 启动时会拉一次「窗口置顶」与「屏幕清单」。
+   缺 handler 时 invoke reject → 被 Native 的 .catch 吞成 false/[] →
+   上层判"没生效"。v1.13.0 起 native.js 给这类失败留一条 console.warn，
+   于是"探针是不完整宿主"会以**页面报错**的形式浮出来
+   （probe_masonry 的「探针过程中无页面报错」断言就是这么变红的）。
+   补上桩之后，探针才真的是"像产品的宿主"，测的才是产品。 */
+let winStubbed = false;
+function stubWindowChannels() {
+  if (winStubbed) return;
+  winStubbed = true;
+  let aot = false;
+  ipcMain.handle('vf:alwaysOnTop', (e, v) => { aot = !!v; return aot; });
+  ipcMain.handle('vf:getAlwaysOnTop', () => aot);
+  /* 返回 1 块屏（真实桌面就是这样）。1 块屏时设置面板不会出现「输出屏幕」那一行
+     （它要求 >1 块屏），所以对现有断言是行为中性的。 */
+  ipcMain.handle('vf:listDisplays', () => [
+    { id: 1, label: '主屏', primary: true, workArea: { x: 0, y: 0, width: 1920, height: 1040 } },
+  ]);
+}
+
+module.exports = { stubDesktop, stubWindowChannels };

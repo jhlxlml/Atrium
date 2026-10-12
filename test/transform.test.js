@@ -1,5 +1,5 @@
 /* ============================================================
-   取景 Viewfinder · js/transform.js 单元测试（纯 Node，无需 Electron）
+   Atrium · js/transform.js 单元测试（纯 Node，无需 Electron）
    ------------------------------------------------------------
    要点：不调用任何 DOM。它把 computeTransform 产出的 transform 字符串
    用「CSS 矩阵合成」重新解算一遍（translate/rotate/scale 自右向左作用），

@@ -1,10 +1,14 @@
 # Atrium · 开发上手手册
 
-> **这份文档解决什么问题**：让你在**不读 9000 行源码**的前提下，安全地改这个项目。
+> **这份文档解决什么问题**：让你在**不读 9400 行源码**的前提下，安全地改这个项目。
 >
-> 与《Atrium_现状分析与迭代建议.md》分工不同：那份讲**过去做了什么、为什么这么做**（迭代史 + 成熟度评估）；这份讲**现在怎么动它、动之前必须知道什么**（上手路径 + 雷区清单 + 标准动作）。
+> 与另两份文档分工不同：
+> - 《`Atrium_现状分析与迭代建议.md`》讲**过去做了什么、为什么这么做**（迭代史 + 成熟度评估）；
+> - 《`deploy/release/RELEASE.md`》讲**怎么出一版**（固定顺序 + 验收标准 + 打包高危坑）；
+> - **这份**讲**现在怎么动它、动之前必须知道什么**（上手路径 + 雷区清单 + 标准动作）。
 >
 > 生成日期：2026-10-12 ｜ 对应版本：**v1.13.0**（`App.VERSION`）
+> **本文所有数字都是实测的**（`wc -l` / `run_all.js` 末行 / `grep -c`）。改完代码顺手复核一遍。
 
 ---
 
@@ -13,15 +17,16 @@
 | 维度    | 事实                                                                                |
 | ----- | --------------------------------------------------------------------------------- |
 | 是什么   | **纯本地图片浏览器**。选文件夹 → 像翻作品集一样看图。全程不联网、不上传、不复制。                                      |
-| 交付形态  | ① 离线单文件 HTML（约 474 KB，双击即用）② Electron 便携版（解压即用，双击 `Atrium.cmd`）                   |
-| 源码规模  | JS **8858 行 / 15 模块**；CSS 1764 行 / 3 文件；`index.html` 375 行；主进程+preload+导出库 1780 行 |
-| 运行时依赖 | **0**（无框架、无打包器、无第三方库）。构建期仅 Node 标准库 + Electron                                    |
+| 交付形态  | **只有一种：Electron 便携包**（解压即用，双击 `Atrium.cmd`）。离线单文件 HTML 版在 v1.13.0 已退役                |
+| 源码规模  | JS **9361 行 / 15 模块**；CSS 1788 行 / 3 文件；`index.html` 373 行；主进程侧 2782 行                  |
+| 运行时依赖 | **0**（无框架、无打包器、无第三方库）。构建期仅 Node 标准库 + Electron + rcedit                                 |
 | 语言/风格 | vanilla JS + IIFE 挂 `window` + `'use strict'`；中文注释、英文标识符；**注释写"为什么"不写"做什么"**      |
-| 数据存储  | localStorage（设置/收藏/旋转）+ IndexedDB（目录句柄/图片尺寸/缩略图落盘）+ 主进程 JSON（删除日志）                |
-| 回归防线  | **24 套件 / 341 项断言**（`npm test`，约 183 秒）；含产物自检与校验器的反向门禁                            |
+| 数据存储  | localStorage（设置/收藏/旋转）+ IndexedDB（图片尺寸/缩略图落盘）+ 主进程 JSON（删除日志）                      |
+| 加载入口  | **2 个**：原生目录选择框（`Ctrl+O`）、拖拽（唯一"条目没有磁盘路径"的通路）                                     |
+| 回归防线  | **28 套件 / 346 项断言**（`run_all.js`，约 150～190 秒，视机器负载）；含产物自检、校验器的反向门禁、**源级不变量** |
 | 当前状态  | 功能完成度高、无障碍四层补齐、相框已转正、四种浏览排布；**没有模块还停在 ★★☆☆☆**                                     |
 
-**一句话**：这是一个"工程纪律极好、防御性断言很密"的小工具项目。它的**风险不在代码质量，而在"改动的接线是否完整"**——历史上栽过 6 次的都是同一类病：**功能写好了，但没接到调用链上**（见 §6.1）。
+**一句话**：这是一个"工程纪律极好、防御性断言很密"的小工具项目。它的**风险不在代码质量，而在"改动的接线是否完整"** —— 历史上栽过 6 次的都是同一类病：**功能写好了，但没接到调用链上**（见 §6.1）。
 
 ---
 
@@ -29,48 +34,50 @@
 
 > ⚠️ **本机 bash 没有 coreutils（`wc`/`tail`/`dirname` 常缺），`npm` 也常不在 PATH** —— **优先直接 `node <script>`**，别依赖 `npm`/`npx`。
 
-| 目的         | 命令                                                                  | 说明                                                            |
-| ---------- | ------------------------------------------------------------------- | ------------------------------------------------------------- |
-| 跑全量回归      | `node deploy/electron-test/run_all.js`                              | 24 套件 / 341 项 / 约 183 秒。任一失败**非零码退出**。可后台跑                    |
-| 快跑（改小东西时）  | `node deploy/electron-test/run_all.js --fast`                       | 7 套件 / 41 项 / 约 7.4 秒                                         |
-| 只跑一个套件     | `node deploy/electron-test/run_all.js masonry`                      | 套件 id 见 §5.2                                                  |
-| 纯函数单测（毫秒级） | `node test/transform.test.js` 等                                     | `transform` / `imageheader` / `frame` / `a11y` / `masonry` 五个 |
-| 构建（两个产物）   | `node deploy/build_offline.js` + `node deploy/electron/assemble.js` | 离线单文件 + Electron 便携包                                          |
-| 打包 ZIP     | `node deploy/pack.js`                                               | 自带强制校验：写 tmp → 全量核验 → 通过才改名                                   |
-| 独立复验 ZIP   | `node deploy/verify_zip.js`                                         | 参照值取自 Node 原生 `zlib.crc32`（与被测写入器**不同源**）                     |
-| 清回归垃圾      | `node deploy/clean.js`（或 `--dry` 预演）                                | 清 `logs/` + `shots/`；**跑完回归必做**，否则无上限膨胀                       |
-| 自检挂住时诊断    | `node deploy/electron-test/manual_appself.js [秒]`                   | 带 trace 跑打包后的 exe 自检                                          |
+| 目的         | 命令                                                    | 说明                                                            |
+| ---------- | ----------------------------------------------------- | ------------------------------------------------------------- |
+| 跑全量回归      | `node deploy/electron-test/run_all.js`                | 28 套件 / 346 项 / 约 150～190 秒。任一失败**非零码退出**。可后台跑               |
+| 快跑（改小东西时）  | `node deploy/electron-test/run_all.js --fast`         | 11 套件 / 51 项 / 约 7.9 秒。**跳过大部分 Electron 探针，但仍含 `tf`（要 electron）** |
+| 只跑一个套件     | `node deploy/electron-test/run_all.js masonry`        | 套件 id 见 §5.2                                                  |
+| 纯函数单测（毫秒级） | `node test/transform.test.js` 等                       | `transform` / `imageheader` / `frame` / `a11y` / `masonry` / `desktop` 六个 |
+| 构建         | `node deploy/electron/assemble.js`                    | 组装 Electron 便携包（**唯一交付物**）                                     |
+| 打包 ZIP     | `node deploy/pack.js`                                 | 自带强制校验：写 tmp → 全量核验 → 通过才改名                                   |
+| 独立复验 ZIP   | `node deploy/verify_zip.js`                           | 参照值取自 Node 原生 `zlib.crc32`（与被测写入器**不同源**）                     |
+| 新克隆可构建性    | `node deploy/verify_clone.js`（加 `--full` 走端到端）        | 静态查"源码有没有被 `.gitignore` 顺手忽略"；`--full` 真克隆+构建+比 exe MD5      |
+| 清回归垃圾      | `node deploy/clean.js`（或 `--dry` 预演）                  | 清 `logs/` + `shots/`；**跑完回归必做**，否则无上限膨胀                       |
+| 自检挂住时诊断    | `node deploy/electron-test/manual_appself.js [秒]`     | 带 trace 跑打包后的 exe 自检                                          |
 
-**`npm` 脚本别名**（`package.json` 里都有）：`test` / `test:fast` / `build` / `build:offline` / `build:electron` / `pack` / `verify:zip` / `release` / `clean` / `clean:dry`。
+**`npm` 脚本别名**（`package.json` 里都有）：`test` / `test:fast` / `build` / `pack` / `verify:zip` / `verify:clone` / `release` / `clean` / `clean:dry`。
+
+> `--fast` **不能脱离 Electron**：它保留的 `tf` 是真实 Electron 探针（贡献 51 项里的 29 项）。
+> 新克隆里没 `npm i` 时它会报"找不到 electron.exe"（11 套件里 10 通过）。
 
 ---
 
-## 2. 架构：五层 + 双目标交付
+## 2. 架构：五层 + 单一交付目标
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ 表现层   index.html(375) · main.css(1230) · lightbox.css(287) │
-│          · frame.css(247) · SVG 图标精灵内联(39 个)             │
+│ 表现层   index.html(373) · main.css · lightbox.css · frame.css │
+│          · SVG 图标精灵内联                                     │
 │          · CSS 自定义属性做主题（JS 只切 body 的 dataset/class）  │
 ├──────────────────────────────────────────────────────────────┤
-│ 交互层   app.js(1991) 总装 · settings.js(611) 设置面板          │
-│          grid.js(856) 网格与虚拟化 · lightbox.js(853) 大图      │
-│          frame.js(1040) 相框 · trash.js(335) 回收站视图          │
+│ 交互层   app.js 总装 · settings.js 设置面板 · grid.js 网格与虚拟化 │
+│          lightbox.js 大图 · frame.js 相框 · trash.js 回收站视图    │
 ├──────────────────────────────────────────────────────────────┤
-│ 状态层   state.js(497) 全局状态 · 事件总线 · viewList 记忆化      │
+│ 状态层   state.js 全局状态 · 事件总线 · viewList 记忆化            │
 ├──────────────────────────────────────────────────────────────┤
-│ 数据层   loader.js(754) 索引 · thumb.js(377) 缩略图管线         │
-│          exif.js(232) 元数据 · util.js(390) 工具                │
-│          transform.js(164) 几何变换 · a11y.js(292) 无障碍共用件  │
-│          masonry.js(148) 瀑布流排布                             │
+│ 数据层   loader.js 索引 · thumb.js 缩略图管线 · exif.js 元数据     │
+│          util.js 工具 · transform.js 几何变换 · a11y.js 无障碍共用件 │
+│          masonry.js 瀑布流排布                                   │
 ├──────────────────────────────────────────────────────────────┤
-│ 平台桥   native.js(318) 适配器 —— 浏览器下全部空操作             │
-│          ↕ contextBridge（26 个 IPC）                           │
-│          preload.js(103) · main.js(1615) · exportlib.js(62)     │
+│ 平台桥   native.js 适配器                                       │
+│          ↕ contextBridge（34 条 render→main 通道）               │
+│          preload.js · main.js · desktop.js · desktop-spec.js    │
 └──────────────────────────────────────────────────────────────┘
-        ↓ 双目标交付（同一份前端源码，两套外壳）
-   ① build_offline.js → 单文件 HTML（内联 JS/CSS + 白名单 + 守卫校验 + 残留引用反向校验）
-   ② assemble.js      → Electron 便携包（robocopy 镜像 + 本地引用存在性校验 + 图标随包）
+        ↓ 单一交付目标
+   assemble.js → Electron 便携包（robocopy 镜像 + 本地引用存在性校验
+                  + 图标随包 + rcedit 写 exe 资源段 + BUILD-INFO.json）
 ```
 
 ### 2.1 模块职责一句话
@@ -79,9 +86,9 @@
 | -------------- | -------------------------------------------------------- | --------------------------- |
 | `util.js`      | `$`/`$$` 选择器、自然序比较、`clamp`、`sizeFromHeader`、`dragSelect` | 无依赖底座                       |
 | `a11y.js`      | 播报区 `live()` + 焦点陷阱 `trap()`                             | **四个容器共用一份**（弹层/设置/灯箱/相框浮层） |
-| `native.js`    | 平台桥适配器；浏览器下**全部空操作**                                     | 能力探测为假即优雅降级                 |
+| `native.js`    | 平台桥适配器                                                   | 见下方"失败留痕策略"                 |
 | `state.js`     | 全局状态、事件总线、`viewList()` 记忆化、收藏/旋转落盘                       | `MODES`/`MODE_ORDER` 定义在这   |
-| `loader.js`    | 四入口索引（文件夹框/FSA/原生目录/拖拽）、去重、分批提交、删除                       | 尺寸从**文件头**读                 |
+| `loader.js`    | **两个**入口的索引（原生目录 / 拖拽）、去重、分批提交、删除                        | 尺寸从**文件头**读                 |
 | `exif.js`      | 自研 EXIF 解析（拍摄时间/机型/光圈/快门/ISO/焦距）                         | 原生走 IPC 只读前 256 KB          |
 | `transform.js` | `computeTransform` 等**纯函数**几何（缩放/旋转/平移）                  | 可 Node 单测                   |
 | `thumb.js`     | `createImageBitmap` 解码 → canvas 降采样 → blob；落盘缓存          | 双层 LRU                      |
@@ -89,9 +96,11 @@
 | `grid.js`      | 网格渲染、虚拟化窗口化、框选、拖拽选择                                      | 四种排布都在这                     |
 | `trash.js`     | 回收站全屏视图                                                  |                             |
 | `lightbox.js`  | 大图查看、缩放/旋转/拖动、幻灯片、缩略条、EXIF 面板                            | 完整对话框语义                     |
-| `settings.js`  | 设置面板（6 组 / 24 行）；`actions` 查表分发；`ALL_KEYS` 重放表           | 状态相关分组                      |
-| `frame.js`     | 相框模式（无边框独立窗 + 按图变形 + 随机轮播）                               | 桌面 `?frame=1` 与离线页内浮层**共用** |
+| `settings.js`  | 设置面板（**7 组** / **23 行**）；`actions` 查表分发；`ALL_KEYS`（**26 键**）重放表       | 状态相关分组                      |
+| `frame.js`     | 相框模式（无边框独立窗 + 按图变形 + 随机轮播）                               | 桌面独立窗口 + 页内浮层兜底            |
 | `app.js`       | 总装：视图切换、来源条、分页、工具栏、键盘、`applySetting` 单一漏斗                | **设置生效的唯一出口**               |
+
+**`native.js` 的失败留痕策略**（改它之前先读文件头那段注释）：26 处 `catch → false/null/[]` 是刻意的（调用方接受"空"），但**写操作**必须把原因带到用户面前，**状态对齐类**（`setAlwaysOnTop` / `getAlwaysOnTop` / `setTray` / `setHotkey` / `frameInfo`）必须用 `warnOnce` 留一次痕 —— 否则"IPC 挂了"与"用户点了取消"完全同形，症状是"开关自己弹回去了"。
 
 ### 2.2 单向数据流（记住这一条，就不会乱）
 
@@ -112,25 +121,41 @@ State.settings ──► App.applySetting(key, val)  ← 唯一漏斗
 | localStorage | `viewfinder.settings.v1` | 全部设置                             | —                     |
 | localStorage | `viewfinder.favs.v1`     | 收藏 id 集合                         | —                     |
 | localStorage | `viewfinder.rot.v1`      | 旋转记录（按文件路径，400ms 合并写 + 关窗 flush） | 4000（Map 插入序 LRU）     |
-| IndexedDB    | `viewfinder-db`          | 目录句柄、原图**真实尺寸**、缩略图 blob         | 缩略图 4000（`at` 索引 LRU） |
+| IndexedDB    | `viewfinder-db`          | 图片**真实尺寸**、缩略图 blob               | 缩略图 4000（`at` 索引 LRU） |
 | 主进程 JSON     | 删除日志                     | 跨启动保留的"最近删除"                     | —                     |
 
 > **口径陷阱**：尺寸库只写**原图真实尺寸**，唯一来源是文件头 `Util.sizeFromHeader`；写错会**悄悄**排错屏。缩略图落盘键用**条目 id**（只留最大档）。
 
+> 🔒 **这些键名一个字都不能改。** 理由与完整清单见 **§7.4 冻结点**。
+> 回归里有一条源级断言（`frozen` 套件）直接锁住它们 —— 改错会当场变红。
+
 ---
 
-## 4. 双目标交付与构建管线
+## 4. 单一交付目标与构建管线
 
-**同一份前端源码，两套外壳**：
+**只有一种产物**：
 
-| 产物           | 构建脚本                                                                     | 特点                                                   |
-| ------------ | ------------------------------------------------------------------------ | ---------------------------------------------------- |
-| 离线单文件 HTML   | `deploy/build_offline.js` → `deploy/dist/Atrium_离线版/index.html`          | 内联 JS/CSS/SVG；`file://` 下 `vfNative` 不存在 → 窗口级能力自动降级 |
-| Electron 便携包 | `deploy/electron/assemble.js` → `deploy/dist-electron/Atrium_Electron版/` | robocopy 镜像运行时；双击 **`Atrium.cmd`**（不是 exe）           |
+| 产物           | 构建脚本                                     | 特点                                                   |
+| ------------ | ---------------------------------------- | ---------------------------------------------------- |
+| Electron 便携包 | `deploy/electron/assemble.js` → `deploy/dist-electron/Atrium_Electron版/` | robocopy 镜像运行时；双击 **`Atrium.cmd`**（不是 exe）；rcedit 写 exe 资源段；同时落一份 `BUILD-INFO.json` 构建戳 |
 
-**Electron 安全基线**（已达标，别破坏）：`contextIsolation:true` / `nodeIntegration:false` / `sandbox:true`，preload 只暴露白名单（26 个 IPC），自定义 `vf://` 特权协议替代 `file://`，`setWindowOpenHandler` 拒绝新窗口，`will-navigate` 拦截外部导航。
+> **离线单文件 HTML 版已在 v1.13.0 退役**，`deploy/build_offline.js` 已删除。
+> 老文档/老记忆里若还提"双目标交付""离线版 ZIP"，那是过期内容。
+> `deploy/` 下现在只有：`assemble.js` / `pack.js` / `verify_zip.js` / `verify_clone.js` / `make_icons.js` / `verify_icon.js` / `clean.js`。
 
-**26 个 IPC 通道**：`pickFolder / pickExportDir / exportFiles / loadDir / autoDir / deleteFile(s) / restoreFile(s) / trashPreview / trashLog / trashForget / trashClear / openRecycleBin / openPath / readHead / alwaysOnTop / getAlwaysOnTop / frameOpen / frameData / frameFit / framePainted / frameClose / frameInfo / listDisplays / frameMove`（另有单向 `vf:frameMoved` 主→渲染，不计入）。
+**Electron 安全基线**（已达标，别破坏）：`contextIsolation:true` / `nodeIntegration:false` / `sandbox:true`，preload 只暴露白名单，自定义 `vf://` 特权协议替代 `file://`，`setWindowOpenHandler` 拒绝新窗口，`will-navigate` 拦截外部导航，**桌面集成 7 条 IPC 有 sender 归属校验**（纵深防御）。
+
+**IPC 口径（实测）**：
+
+```
+render → main : 34 条  （33 条 invoke + 1 条单向 send：vf:setLastDir）
+main → render :  3 条  （vf:frameClosed / vf:frameMoved / vf:cmd）
+唯一通道名合计: 37 个
+```
+
+> 数字来源：`preload.js` 的 `ipcRenderer.invoke|send` 与 `main.js`/`desktop.js` 的 `ipcMain.handle|on`。
+> 回归里有 `ipcchain` 套件做**源级**双向核对（preload 暴露的每条通道都要有 handler；
+> `desktop.js` 的每条通道都要有探针桩），所以这个数字不会悄悄漂。
 
 ---
 
@@ -139,28 +164,39 @@ State.settings ──► App.applySetting(key, val)  ← 唯一漏斗
 ### 5.1 三层测试
 
 | 层               | 位置                                        | 反馈速度 | 覆盖                                                                    |
-| --------------- | ----------------------------------------- | ---- | --------------------------------------------------------------------- |
-| **纯函数单测**       | `test/*.test.js`（Node，`vm` 沙箱）            | 毫秒级  | `transform` 36 · `header` 26 · `frame` 505 · `a11y` 77 · `masonry` 87 |
-| **Electron 探针** | `deploy/electron-test/probes/*.js`（17 个）  | 秒级/个 | 真实渲染、几何、交互、无障碍、相框                                                     |
-| **产物自检**        | `appself` / `offline` / `icon` / `zip` 套件 | 慢    | 跑**装进包里的产物**，不是源码                                                     |
+| -------------- | ----------------------------------------- | ---- | --------------------------------------------------------------------- |
+| **纯函数单测**       | `test/*.test.js`（Node，`vm` 沙箱）            | 毫秒级  | `transform` 36 · `header` 26 · `frame` 505 · `a11y` 77 · `masonry` 87 · `desktop` 76 |
+| **源级不变量**       | `run_all.js` 里的 `frozen` / `ipcchain`      | 毫秒级  | 冻结标识未被改名 / IPC 链路无缺口                                                  |
+| **Electron 探针** | `deploy/electron-test/probes/probe_*.js`（**17 个**） | 秒级/个 | 真实渲染、几何、交互、无障碍、相框、拖拽                                                   |
+| **产物自检**        | `appself` / `icon` / `zip` 套件             | 慢    | 跑**装进包里的产物**，不是源码                                                      |
 
-> **断言数字的口径**：`run_all.js` 汇总的是**套件级条目数**（341），不等于单个 `assert` 总数（纯函数套件内部展开更多细分断言，合计 731，聚合器各按 1 项计入）。**别自己相加。**
+> **断言数字的口径**：`run_all.js` 汇总的是**套件级条目数**（**346**），不等于单个 `assert` 总数
+> （纯函数套件内部展开更多细分断言，合计 **807**，聚合器各按 1 项计入）。**别自己相加。**
 
-### 5.2 24 个套件 id
+### 5.2 28 个套件 id
 
 ```
-a11y  a11yui  appself  center  fileboot  frame  fs  grid  header  heic  icon
-masonry  masonryunit  offline  perf  pinch  rot  rotpersist  settings  tf
-topbar  unit  zip  zoom
+a11y  a11yui  appself  approt  center  desktop  desktopui  drop  frame  frozen
+fs  grid  header  heic  icon  ipcchain  masonry  masonryunit  perf  pinch
+rot  rotpersist  settings  tf  topbar  unit  zip  zoom
 ```
 
 > **id 不能重复**：纯函数套件 `masonry` 曾与探针套件撞名，已改名 `masonryunit`。
+> 实取：`grep -oE "id: '[a-zA-Z0-9_]+'" deploy/electron-test/run_all.js | sort -u | wc -l`
 
-### 5.3 总数会在 339 / 341 之间跳（正常）
+### 5.3 总数会在两个值之间跳（正常）
 
-`zip` 套件按"Electron 大包在不在"跑 7 或 9 条。版本号刚升、`pack.js` 还没跑时大包不存在 → 少 2 条。**这是条件断言，不是静默跳过。**
+`zip` 套件按"Electron 大包在不在"跑不同条数。版本号刚升、`pack.js` 还没跑时大包不存在 → 少几条。**这是条件断言，不是静默跳过。**
 
 > ⚠️ **方向相反要警惕**：断言数**无理由**变少 = 有 `if (sX)` 块被跳过（见 §6.2）。查账方法：看**哪一步没有输出**。
+
+### 5.4 v1.13.0 新加的三条门禁（都是"一条小断言换永久免疫"）
+
+| 套件        | 锁什么                                                                    | 为什么值得 |
+| --------- | ---------------------------------------------------------------------- | ----- |
+| `frozen`  | `vf://app` · 3 个 `viewfinder.*` LS 键 · `viewfinder-db` · `com.atrium.app` · `productName` · 根 `package.json` 的 `name` | 改错任何一个 = **用户数据一次性清空**（见 §7.4） |
+| `ipcchain`| preload 暴露的每条通道都有 handler；`desktop.js` 的每条通道都有探针桩                        | 漏一条就是**静默降级**（`invoke` reject 被 `.catch` 吞掉） |
+| `drop`    | 拖拽通路的 13 项结果断言（索引 / 缩略图 / 灯箱 / 删除拒绝 / 多文件夹分组）                            | 这条通路**此前零覆盖**，而它与主通路的每一条下游路径都不同 |
 
 ---
 
@@ -186,8 +222,15 @@ topbar  unit  zip  zoom
 5. `settings.js` 的 **`ALL_KEYS`**（「恢复默认」重放表）
 6. **【第六问】谁负责让它生效？那个函数挂在这条新通路上吗？**
 
-> **五处缺一即静默失效**；第六问是"登记"之外的**调用链**检查。  
-> 并且**做一次反向实验**证明防线有效：把 `case 'mode'` 改名成 `modeDISABLED`，重跑探针应挂 9/18 项（指纹 `topbar=medium seg=masonry`）。**只测"好样本通过"是不够的。**
+> **五处缺一即静默失效**；第六问是"登记"之外的**调用链**检查。
+> 第 5 处现在有**通用不变量**兜底：`settings` 套件里有一条断言
+> "**面板里的每一行都必须 ∈ `ALL_KEYS`**"，输入取自面板自己的行定义
+> （探针把 `groups()` 在"条件行全展开"状态下取一遍），缺哪个直接报出来。
+> 老写法是手工列 3 个键 —— 而它诞生的原因恰恰是 `frameDisplay` 漏登记；
+> 用手工清单防"漏登记"，等于把同一个病换个位置。
+>
+> 并且**做一次反向实验**证明防线有效：把 `case 'mode'` 改名成 `modeDISABLED`，
+> 重跑探针应挂 9/18 项（指纹 `topbar=medium seg=masonry`）。**只测"好样本通过"是不够的。**
 
 ### 6.2 断言三原则
 
@@ -199,6 +242,9 @@ topbar  unit  zip  zoom
 
 1. **`State.setSetting(k,v)` 不会让界面生效** → 面板是两步：`setSetting` + `Settings.apply(k,v)`。探针要包一个两步帮助函数。
 2. **`executeJavaScript(\`…\`)\` 模板串里不能出现反引号** → 一个反引号就截断字符串，报错行号还指向别处。**注释放模板串外。**
+   > 这条在写 `probe_drop.js` 时**又踩了一次**：在模板串内的注释里给路径加了反引号，
+   > 结果是"App threw an error during load … SyntaxError: missing ) after argument list"，
+   > 而行号指向模板串**之后**的那一行 —— 症状与原因完全对不上。
 3. **别在无关通路上调带副作用的函数** → `Settings.sync()` 看着像纯刷新，实际对 `frameSrc` 有**回落副作用**（选中项不在列表就写回 `'all'`）。**接线前先确认对方是不是纯函数。**
 4. **别断言用户观察不到的中间态** → 面板是浮层，点顶栏时它本就不该开着。断言"**重开面板后选中项正确**"，而不是"关着的 DOM 被提前改好"。
 5. **异步反馈要轮询等待，别固定 `sleep`** → 固定 sleep 会**同时**产出假失败（读早了）与假通过（还没清完但读数恰好对了）。
@@ -210,6 +256,9 @@ topbar  unit  zip  zoom
 - **改默认值 = 改语义**：`showFrame` 翻 `true` 时，四处"默认隐藏"断言必须**反向**（不是删掉）。
 - **凡吞异常处，都要有另一条通路把失败说出来**。
 - 根目录历史版本解压目录必须清掉（全仓 `grep` 会命中陈旧副本、真源码命中被淹没）。
+- **`.cmd` / `.bat` 文件必须纯 ASCII + CRLF**。`cmd.exe` 按 OEM 码页读批处理，
+  UTF-8 的中文注释会被解成乱码**并当成命令执行**（v1.13.0 改 `launcher.cmd` 时实测到）。
+  `.gitattributes` 是 `* -text`，不会帮你转换，得自己保证。
 
 ### 6.5 "测量工具本身会说谎"（已发生 4 次）
 
@@ -226,43 +275,75 @@ topbar  unit  zip  zoom
 
 ### 7.1 新增一个 JS 模块
 
-**四处同步**（缺一即构建失败或漏文件）：
+**三处同步**（缺一即构建失败或死链）：
 
-1. `build_offline.js` 的 `FILES` 映射
-2. 同文件的 `GUARDS` 条目（**guard token 每 token 恰 1 次**）
-3. `index.html` 加 `<script src="js/x.js">`，**位置必须在使用者之前**（如 `masonry.js` 在 `grid.js` 前）
-4. 确认 `index.html` 的引用顺序与 `FILES` 的枚举顺序一致（内联按 `FILES` **保序**）
+1. `index.html` 加 `<script src="js/x.js">`，**位置必须在使用者之前**（如 `masonry.js` 在 `grid.js` 前）
+2. `deploy/electron/assemble.js` 的 `MAIN_FILES`（**只针对主进程侧**平铺到 `resources/app` 根的文件）
+3. 跑一次构建 —— `assemble.js` 会校验 `index.html` 引用的本地文件是否都存在，死链会被拦下
 
-> `assemble.js` **不需要加清单**——它 `readdirSync(ROOT/js)` 扫目录全量复制，结构上不会漏；它另校验 `index.html` 引用的本地文件是否都存在。
+> `js/` 与 `css/` 目录**不需要加清单**：`assemble.js` 是 `fs.readdirSync` **扫目录全量复制**，
+> 结构上不会漏。起因是 v1.9.0 的白名单漏了 `css/frame.css`，产物留了一条**死链**，
+> 相框浮层无样式运行且已随 ZIP 发出去 —— 而所有断言都是绿的。
 
 ### 7.2 新增一个设置项
 
 走 §6.1 的**五处 + 第六问**。若是 `type:'button'` 行，还要在 `Settings.actions` 加一条实现（否则按钮静默失效，回归有断言锁 `buttonKeys ⊆ actionKeys`）。
 
+> 忘了第 5 处（`ALL_KEYS`）不用怕 —— `settings` 套件的通用不变量会当场报出是哪个键。
+
 ### 7.3 新增一个 IPC 通道
 
-`preload.js` 白名单 + `native.js` 适配器 + `main.js` 的 `ipcMain.handle`（**主进程返回真实值**）。浏览器侧 `native.js` 对应方法要**空操作降级**。
+`preload.js` 白名单 + `native.js` 适配器 + `main.js` 的 `ipcMain.handle`（**主进程返回真实值**）。
+若是桌面集成类，还要加进 `desktop.js` 的 `wireIpc()` 并用 `guard()` 包一层（归属校验），
+以及 `probes/_desktop_stub.js` 的桩。
 
+> `ipcchain` 套件会**源级**核对这三处是否对齐，漏一处直接变红。
 
 ### 7.4 改品牌 / 图标（`brand/`）
+
+> ### 🔒 冻结点（禁止重命名）—— 改错一个 = 用户数据一次性清空
+>
+> v1.13.0 把产品改名 Atrium，但**刻意保留**了下面这些标识。它们**不是笔误**：
+>
+> | 标识 | 位置 | 改了的后果 |
+> |---|---|---|
+> | `vf://app` | `main.js` 特权协议 + `loadURL` | **源（origin）变了 → localStorage + IndexedDB 全部失效**：设置、收藏、旋转记录、尺寸缓存**一次性清空** |
+> | `viewfinder.settings.v1` / `.favs.v1` / `.rot.v1` | `state.js` | 同上（设置 / 收藏 / 旋转全丢） |
+> | `viewfinder-db` | `loader.js` | 缩略图与尺寸缓存全丢（可重建，但首屏退化） |
+> | `com.atrium.app` | `main.js` `setAppUserModelId` | 任务栏固定、JumpList 关联错乱（可能出现重复图标） |
+> | `productName: "Atrium"` | `deploy/electron/package.json` | **`userData` 目录名随之改变** → 用户设置全部"消失" |
+> | `name: "viewfinder"` | 根 `package.json` | 历史包名，`_nameFrozen` 字段里写了原因 |
+> | `launcher.cmd` 的名字（包里叫 `Atrium.cmd`） | 手册明确"双击 `Atrium.cmd`，不是 exe" | 用户的快捷方式 / 说明全部失效 |
+>
+> **回归已锁**：`frozen` 套件逐条断言上面这些字符串还在。**看到它红，先想"我是不是改了不该改的东西"，别急着改断言。**
 
 ```
 node deploy/make_icons.js     # SVG → 多尺寸 PNG → 手写 ICO 容器
 node deploy/verify_icon.js    # 独立校验（不复用生成代码）+ 3 条反向用例
 ```
 
-图标接线**四处**：`index.html` 内联 favicon（小尺寸加粗稿）+ `main.js` **两个** `BrowserWindow` 的 `icon` + `assemble.js` 复制 `icon.ico` 进包 + `settings.js` 关于面板署名。
+图标接线**四处**：`index.html` 内联 favicon（小尺寸加粗稿）+ `main.js` **两个** `BrowserWindow` 的 `icon` + `assemble.js` 复制 `icon.ico` 进包（`resources/app/icon.ico`）+ `settings.js` 关于面板署名。
+
+> 另有**第五处**：exe **自身**的文件图标由 `assemble.js` 的 `stampExeResources()` 用 rcedit 写进 PE 资源段
+> （RT_ICON / RT_GROUP_ICON）。它与 `BrowserWindow.icon` 是两条独立通路，互不替代。
+> ⚠️ rcedit 的键名是 **`InternalName`** —— 写成 `InternalFilename` 会**静默保留** `electron.exe`。
+> `appself` 有一条**字节级**断言（把 `icon.ico` 里 7 张内嵌 PNG 拿去 `exe.indexOf` 全中），
+> 且做了反向实验（同一判据指向原始 `electron.exe` 命中 0/7）。
 
 > 更名/改品牌 = **改结果**，写在结果上的断言必须同步（`aboutBrand` / 面板标题 / 设置行名 / 探针产物路径）。做法：一次性脚本 **dry-run 先行**，**每条规则必须至少命中一次**。
 
 ### 7.5 出一个新版本
 
-完整流程见 `.workbuddy/skills/viewfinder-release/SKILL.md`。**顺序本身是纪律**：  
-改版本号(3 处) → 构建 → **校验产物 MD5 与源码一致** → 全量回归 → `pack` → `verify:zip` → `7z t`（第三方复验，两个包都要）→ 更新说明 → 现状分析 → 记忆日志 → 交付 → `clean`。
+**完整流程见 `deploy/release/RELEASE.md`**（随源码入库）。顺序本身是纪律：
 
-**验收标准**：`npm test` 末行 `通过 N，失败 0`；`verify:zip` 末行"全部 ZIP 校验通过"；`7z t` 两个包都 `Everything is Ok`。
+```
+改版本号(3 处) → 构建 → 校验产物 MD5 与源码一致 → 全量回归 → pack → verify:zip
+→ 7z t（第三方复验）→ 更新说明 → 现状分析 → 记忆日志 → 交付 → clean
+```
 
-> 回归跑完后若**又动了源码（哪怕一行文案）**，必须**重新构建并复跑受影响套件**——`appself`/`offline` 跑的是产物，不是源码。
+**验收标准**：`run_all.js` 末行 `通过 N，失败 0`；`verify_zip.js` 末行"全部 ZIP 校验通过"；`7z t` 的包 `Everything is Ok`。
+
+> 回归跑完后若**又动了源码（哪怕一行文案）**，必须**重新构建并复跑受影响套件** —— `appself` 跑的是产物，不是源码。
 
 ---
 
@@ -272,16 +353,18 @@ node deploy/verify_icon.js    # 独立校验（不复用生成代码）+ 3 条�
 
 | 模块       | 完成度   | 说明                             |
 | -------- | ----- | ------------------------------ |
-| 加载/索引    | ★★★★★ | 四入口齐备，去重、缓存、进度事件完整             |
+| 加载/索引    | ★★★★★ | 两入口齐备，去重、缓存、进度事件完整             |
 | 网格渲染     | ★★★★★ | 四种排布（小图/中图/瀑布流/单列），虚拟化 + 行内自适应 |
 | Lightbox | ★★★★★ | 功能全 + 对话框语义 + 焦点陷阱             |
 | 相框       | ★★★★★ | 无边框独立窗 + 按图变形 + 拖动/多屏/崩溃兜底     |
 | 组织检索     | ★★★★☆ | 齐全；**搜索仅限文件名**（未做 EXIF 检索）     |
 | 删除/找回    | ★★★★★ | 差异化亮点：三档能力 + Ctrl+Z + 回收站视图    |
-| 设置       | ★★★★★ | 24 项全部真实生效，无"假开关"              |
+| 设置       | ★★★★★ | **23 行**全部真实生效，无"假开关"；重放表有通用不变量兜底 |
+| 桌面集成     | ★★★★☆ | 菜单/右键/托盘/任务栏/JumpList/全局快捷键 + IPC 归属校验 |
 | 打开性能     | ★★★★★ | 落盘缓存 → 二次打开零解码（约 5×）           |
 | 无障碍      | ★★★★☆ | 四层补齐（播报/语义/焦点陷阱/键盘可达）          |
-| 测试       | ★★★★★ | 24 套件 / 341 项，含产物与校验器自检        |
+| 测试       | ★★★★★ | **28 套件 / 346 项**，含产物自检、校验器反向门禁、源级不变量 |
+| 文档       | ★★★★☆ | 三份分工明确且数字实测；记忆日志在本机（不入库）        |
 
 ### 8.2 已知限制 / 技术债（都**刻意保留**）
 
@@ -289,10 +372,10 @@ node deploy/verify_icon.js    # 独立校验（不复用生成代码）+ 3 条�
 | -------------------------- | -------------- | ----------------------------------------------- |
 | 全局命名空间（14 个挂 `window`）     | **刻意不改**       | "零依赖 + 单文件"是产品主张，换 ES Module 要引打包器，与之冲突         |
 | `content-visibility: auto` | **评估后放弃**      | 有滚动锚定风险（跳版），与"首屏不跳版"目标冲突                        |
-| 离线单文件未 minify              | 可选优化           | 474 KB，minify 预计省 30–40%                        |
-| `Atrium.exe` 文件图标          | 仍是 Electron 默认 | 不重写 PE 资源段；要换需引 `rcedit`，与零依赖冲突。**窗口/任务栏图标已生效** |
-| 构建产物未版本化                   | 低危             | `deploy/dist*/` 原地覆盖，无法直接对比两版差异                 |
+| `Atrium.exe` 文件图标          | ✅ 已解决（v1.13.0） | 已引 rcedit 写入 PE 资源段；`appself` 有字节级断言             |
+| 构建产物未版本化                   | 低危（已缓解）        | 目录仍原地覆盖；已落 `BUILD-INFO.json`（版本 + 时刻 + exe MD5）供回溯。**刻意不按版本号建目录**（每次多 269MB，且要让 pack/回归/文档全改成"找最新目录"） |
 | 图标资产仅 Windows              | 待办             | 出 macOS 包需另生成 `.icns`                           |
+| `.workbuddy/` 不入库           | **刻意**         | 那是本机工具状态（记忆日志 / 发布 skill），不是项目内容。所以**发布流程已迁进 `deploy/release/RELEASE.md`** |
 
 ### 8.3 未做的功能（P2 候选，按需取舍）
 
@@ -312,7 +395,7 @@ EXIF 检索（按机型/日期区间/尺寸）· 视频支持 · 图片内编辑
 | 中  | **幻灯片播报节制**（避免每换一张都打断读屏）     | 无障碍从"能用"到"好用"        |
 | 低  | 视频支持 / 图片内编辑 / i18n / 设置导入导出 | 拓边界                  |
 
-> 节奏建议：从"补短板"转为"**按用户反馈深化**"。每一步的安全性都由 341 项断言兜住。
+> 节奏建议：从"补短板"转为"**按用户反馈深化**"。每一步的安全性都由 346 项断言兜住。
 
 ---
 
@@ -320,13 +403,18 @@ EXIF 检索（按机型/日期区间/尺寸）· 视频支持 · 图片内编辑
 
 | 坑                                                   | 判据                                                               | 处理                                                                 |
 | --------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `spawnSync` 默认给 stdin 建管道 → **EBUSY**               | 连 `cmd.exe`/`git`/`node` 都起不来，但异步 `spawn` 与 bash 直接执行正常          | 各脚本顶部包一层，默认 `stdio:['ignore','pipe','pipe']`（已改 5 个脚本）             |
+| `spawnSync` 默认给 stdin 建管道 → **EBUSY**               | 连 `cmd.exe`/`git`/`node` 都起不来，但异步 `spawn` 与 bash 直接执行正常          | 各脚本顶部包一层，默认 `stdio:['ignore','pipe','pipe']`                        |
+| **想给子进程喂 stdin（`input`）也一样不行**                      | `stdio[0]='ignore'` 时 input 被**静默丢弃**；改成 `'pipe'` 直接起不来（EBUSY）  | 换一条路：把参数写进 argv（如 `git check-ignore <path...>`），别用 `--stdin`   |
 | `fs.rmSync`/`unlinkSync`/`rm` 被垫片劫持到回收站，而 D 盘回收站不可用 | 报 `[safe-delete] SAFE_DELETE_FAIL_CLOSED`                        | 用 **`fs.rmdirSync(p,{recursive:true})`**（没被劫持）；`fs.renameSync` 可兜底 |
+| `git` 输出的中文路径被转义成 `"…\345\233\276…"`              | 所有按路径做的字符串比对全部落空                                                 | 一律加 `-c core.quotepath=false`                                      |
 | 探针"跑得起来但没输出"                                        | 失败集合 = "会写 `shots/` 的探针"                                         | **先 `cat logs/trace-<probe>.log` 的 `ERR` 行，别猜环境**                  |
 | 探针中途崩溃 → 设置污染留给下一个探针                                | `mode` 被留成非默认                                                    | 跑一次 `run_all.js masonry` 用它自己的还原路径写回默认，**别手工改 leveldb**            |
+| 探针缺 IPC handler → 假报错                                | 日志里出现 `[native] setAlwaysOnTop 失败…No handler registered`         | 给探针补桩：`require('./_desktop_stub').stubWindowChannels()`            |
 | XML 注释里连续两个减号 → 整个 SVG 被拒                           | canvas 报 `svg decode failed`；favicon **静默不显示**                   | 注释里别写 `--` 开头的 CSS 变量名                                             |
 | Electron 33 拒绝顶层 `data:` URL 导航                     | `ERR_FAILED (-2)`                                                | 加 `no-sandbox`，**不要**调 `disableHardwareAcceleration()`             |
+| `.cmd` 里的中文注释变成乱码命令                                 | `cmd //c xxx.cmd` 报 `'」—?' 不是内部或外部命令`                            | **`.cmd` 一律纯 ASCII + CRLF**                                         |
 | 本机无 ImageMagick / PIL / cairosvg / sharp            | `which convert` 命中的是 **Windows 自带的 FAT→NTFS 工具**，不能当 ImageMagick | SVG→PNG 零依赖路径 = 项目自带 Electron                                      |
+| **`rm -rf` 会顺着 junction 递归删掉目标**                    | 拿 junction 当"省空间的软链"用                                                        | 别用 junction；用 robocopy `/MIR` 或直接 `copy`                            |
 
 ---
 
@@ -334,27 +422,31 @@ EXIF 检索（按机型/日期区间/尺寸）· 视频支持 · 图片内编辑
 
 ```
 Atrium/
-├─ index.html              入口（375 行）
-├─ package.json            版本唯一来源 + npm 脚本
-├─ js/       15 模块       前端全部逻辑（8858 行）
-├─ css/      3 文件        主题用 CSS 变量
-├─ test/     5 文件        纯函数单测（Node）
-├─ brand/                  图标矢量 + .ico + 命名候选页
+├─ index.html              入口（373 行）
+├─ package.json            版本唯一来源 + npm 脚本（name 刻意保留 viewfinder）
+├─ js/       15 模块       前端全部逻辑（9361 行）
+├─ css/      3 文件        主题用 CSS 变量（1788 行）
+├─ test/     6 文件        纯函数单测（Node，807 条细分断言）
+├─ brand/                  图标矢量 + .ico + 命名候选页（cand-*.png 不入库）
 ├─ deploy/
-│  ├─ build_offline.js     离线单文件打包（FILES + GUARDS + 残留引用反向校验）
 │  ├─ pack.js              写 ZIP（自带强制校验）
 │  ├─ verify_zip.js        独立 ZIP 校验器（含反向门禁）
+│  ├─ verify_clone.js      新克隆可构建性（静态 / --full 端到端）
 │  ├─ make_icons.js        SVG → PNG → ICO
 │  ├─ verify_icon.js       独立 ICO 校验器（含反向用例）
 │  ├─ clean.js             清 logs/ + shots/
-│  ├─ electron/            main.js(1615) · preload.js(103) · exportlib.js(62) · assemble.js · launcher.cmd
-│  ├─ electron-test/       run_all.js(100KB) · run_probe.js · probes/(17) · fixtures/ · icon_gate.js · zip_gate.js
-│  └─ dist*/               构建产物（未版本化）
-├─ .workbuddy/
-│  ├─ memory/              项目长期记忆（MEMORY.md + 日志）
-│  └─ skills/viewfinder-release/SKILL.md   发布流程
+│  ├─ release/RELEASE.md   发布流程（随源码入库）
+│  ├─ electron/            main.js · preload.js · desktop.js · desktop-spec.js
+│  │                       · exportlib.js · assemble.js · launcher.cmd
+│  ├─ electron-test/       run_all.js · run_probe.js · probes/(17 + 共享桩)
+│  │                       · fixtures/ · icon_gate.js · zip_gate.js
+│  └─ dist-electron/       构建产物（未版本化；含 BUILD-INFO.json）
+├─ .workbuddy/             本机工具状态（**不入库**）：记忆日志 + 发布 skill
 ├─ Atrium_现状分析与迭代建议.md   现状与迭代史（改版必更新）
+├─ Atrium_问题清单与修复优先级.md  最近一次全项目体检报告
 └─ Atrium_vX.Y.Z_更新说明.md      每版更新说明
 ```
 
-> **动手前先读两份**：本手册（§6 雷区）+ `.workbuddy/memory/MEMORY.md`（72 条编号经验，日志按号引用）。
+> **动手前先读两份**：本手册（§6 雷区 + §7.4 冻结点）+ `deploy/release/RELEASE.md`（出包时）。
+> `.workbuddy/memory/MEMORY.md` 里另有几十条编号经验，但**它不入库**（新克隆里没有）——
+> 其中有长期价值的都已经沉淀进本手册与现状分析。

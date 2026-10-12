@@ -3,7 +3,7 @@
    ------------------------------------------------------------
    一条命令跑完全部质量门禁：
      node deploy/electron-test/run_all.js            跑全部
-     node deploy/electron-test/run_all.js --fast     只跑纯函数与联合几何（跳过 Electron）
+     node deploy/electron-test/run_all.js --fast     快跑（跳过大部分 Electron 探针；仍需 electron）
      node deploy/electron-test/run_all.js tf center  只跑指定套件
 
    设计要点：
@@ -148,6 +148,115 @@ const SUITES = [
       const check = ctx.check;
       check('瀑布流纯函数测试全部通过（87 断言）', ctx.code === 0,
         '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
+  /* ---------- 1b4. 冻结标识：改名会清空用户数据的那些字符串 ----------
+     这是一条**源级不变量**（只读文件、不起 Electron），因为要锁的东西散在四处：
+     `main.js`（源 origin / 任务栏身份）、`state.js`（三个 localStorage 键）、
+     `loader.js`（IndexedDB 名）、`deploy/electron/package.json`（userData 目录名）。
+
+     为什么值得单列一个套件：v1.13.0 把产品改名 Atrium，但**刻意保留**了这些标识。
+     它们一旦被顺手"清理"掉，后果是**用户数据一次性消失**：
+       · `vf://app` 改了 → 源（origin）变了 → localStorage + IndexedDB 全部失效
+         （设置 / 收藏 / 旋转记录 / 尺寸缓存一起没）；
+       · 三个 `viewfinder.*` LS 键改了 → 同上；
+       · `viewfinder-db` 改了 → 缩略图与尺寸缓存全丢（可重建，但首屏退化）；
+       · `productName` 改了 → userData 目录名随之改变 → 用户设置"凭空消失"；
+       · `com.atrium.app` 改了 → 任务栏固定 / JumpList 关联错乱。
+     成本是一条断言，收益是**永久免疫**。这也是全项目性价比最高的一条门禁。 */
+  {
+    id: 'frozen',
+    title: '冻结标识 · 改名就会清空用户数据的字符串（源级不变量，不需要 Electron）',
+    kind: 'node',
+    run: function (ctx) {
+      const check = ctx.check;
+      const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+      let main, state, loader, elPkg, rootPkg;
+      try {
+        main = read('deploy/electron/main.js');
+        state = read('js/state.js');
+        loader = read('js/loader.js');
+        elPkg = read('deploy/electron/package.json');
+        rootPkg = read('package.json');
+      } catch (e) {
+        check('冻结标识所在的源文件都可读', false, String((e && e.message) || e));
+        return;
+      }
+      const el = JSON.parse(elPkg);
+      const root = JSON.parse(rootPkg);
+
+      /* 逐个标识单独断言：失败时一眼看出是哪一个被改了，而不是笼统一句"标识变了"。 */
+      check('源（origin）仍是 vf://app —— 改了它 localStorage/IndexedDB 会一起失效',
+        main.indexOf('vf://app/index.html') >= 0 && /scheme:\s*'vf'/.test(main),
+        'main.js 里找不到 vf://app/index.html 或 vf 特权协议');
+      check('三个 localStorage 键未被改名（设置 / 收藏 / 旋转记录）',
+        state.indexOf("'viewfinder.settings.v1'") >= 0
+          && state.indexOf("'viewfinder.favs.v1'") >= 0
+          && state.indexOf("'viewfinder.rot.v1'") >= 0,
+        'state.js 里三个 viewfinder.*.v1 键必须原样保留');
+      check('IndexedDB 名仍是 viewfinder-db（缩略图与尺寸缓存）',
+        loader.indexOf("'viewfinder-db'") >= 0, 'loader.js 的 DB_NAME');
+      check('任务栏身份仍是 com.atrium.app（任务栏固定 / JumpList 关联）',
+        main.indexOf("'com.atrium.app'") >= 0, 'main.js 的 setAppUserModelId');
+      check('productName 仍是 Atrium —— 它决定 userData 目录名',
+        el.productName === 'Atrium', 'deploy/electron/package.json 的 productName=' + el.productName);
+      check('根 package.json 的 name 仍是 viewfinder（刻意保留，别"顺手改掉"）',
+        root.name === 'viewfinder', 'package.json 的 name=' + root.name);
+    },
+  },
+
+  /* ---------- 1b4b. IPC 链路完整性（源级，不需要 Electron） ----------
+     渲染层能调的每一条通道，主进程侧都必须有 handler；
+     `desktop.js` 的每一条通道，探针桩（`_desktop_stub.js`）都必须补上。
+
+     漏一处就是**静默降级**：`invoke` reject → 被 Native 的 `.catch` 吞成
+     false/null → 上层判"没生效" → 回滚 + 播报，或者干脆什么都没发生。
+     "探针是假宿主"那条隐患就是这么来的（缺 handler → 假失败）。
+
+     为什么用**源级静态检查**而不是"每个探针启动时断言 typeof === 'function'"：
+     一次覆盖全部探针，不需要逐个改 17 个探针文件，也不会随探针增减而失效。 */
+  {
+    id: 'ipcchain',
+    title: 'IPC 链路完整性 · preload 暴露的每条通道都有 handler / 桌面通道都有探针桩（源级）',
+    kind: 'node',
+    run: function (ctx) {
+      const check = ctx.check;
+      const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+      const names = (src, re) => {
+        const out = [];
+        let m;
+        while ((m = re.exec(src))) out.push(m[1]);
+        return out;
+      };
+      const uniq = (a) => a.filter((v, i) => a.indexOf(v) === i);
+      let preload, main, desktop, stub;
+      try {
+        preload = read('deploy/electron/preload.js');
+        main = read('deploy/electron/main.js');
+        desktop = read('deploy/electron/desktop.js');
+        stub = read('deploy/electron-test/probes/_desktop_stub.js');
+      } catch (e) {
+        check('IPC 链路源文件都可读', false, String((e && e.message) || e));
+        return;
+      }
+
+      const exposed = uniq(names(preload, /ipcRenderer\.(?:invoke|send)\('(vf:[A-Za-z]+)'/g));
+      const handled = uniq(names(main, /ipcMain\.(?:handle|on)\('(vf:[A-Za-z]+)'/g)
+        .concat(names(desktop, /ipcMain\.handle\('(vf:[A-Za-z]+)'/g)));
+      const desktopCh = uniq(names(desktop, /ipcMain\.handle\('(vf:[A-Za-z]+)'/g));
+      const stubbed = uniq(names(stub, /ipcMain\.handle\('(vf:[A-Za-z]+)'/g));
+
+      /* 下限只是防"正则失效后恒真"——低于这个数说明解析本身出了问题。 */
+      const noHandler = exposed.filter((c) => handled.indexOf(c) < 0);
+      check('preload 暴露的每条通道，主进程都有 handler（漏一条就是静默降级）',
+        exposed.length >= 30 && noHandler.length === 0,
+        '暴露 ' + exposed.length + ' 条，缺 handler=' + JSON.stringify(noHandler));
+
+      const noStub = desktopCh.filter((c) => stubbed.indexOf(c) < 0);
+      check('desktop.js 的每条通道都有探针桩（否则探针里是"假失败"）',
+        desktopCh.length > 0 && noStub.length === 0,
+        '桌面通道 ' + desktopCh.length + ' 条，缺桩=' + JSON.stringify(noStub));
     },
   },
 
@@ -810,16 +919,21 @@ const SUITES = [
             'pick=' + s8.dockAfterPick + ' ls=' + s8.dockPersisted + ' reset=' + s8.dockResetTo);
           check('「开始相框」按钮已接线且有对应实现',
             s8.frameKeyIsButton === true && s8.frameActionWired === true);
-          /* 「恢复默认」的重放表（Settings.ALL_KEYS）必须覆盖相框这几项。
-             frameDisplay 是 v1.11.0 新键，第一版就漏登记了 —— 而它的 applySetting
-             分支只在"相框正开着"时才有动作，漏了完全无声：点恢复默认，输出屏幕纹丝不动。
-             这类"漏登记"已栽过四次（MEMORY.md §22），故加一条断言直接锁表。 */
-          check('「恢复默认」重放表覆盖相框设置键（含 v1.11.0 新增的输出屏幕）',
-            Array.isArray(s8.allKeys)
-              && ['showFrame', 'frameDock', 'frameDisplay'].every(function (k) {
-                return s8.allKeys.indexOf(k) >= 0;
-              }),
-            JSON.stringify(s8.allKeys));
+          /* 「恢复默认」的重放表（Settings.ALL_KEYS）必须覆盖**设置面板里的每一行**。
+             老写法是手工列 3 个键（showFrame / frameDock / frameDisplay）—— 而它诞生的
+             原因恰恰是 frameDisplay 漏登记（v1.11.0）。用手工清单去防"漏登记"，等于把
+             同一个病换了个位置：下一版再加一个设置项，它照样发现不了。
+             这里改成**通用不变量**：输入直接取自面板自己的行定义（探针把 groups() 在
+             "条件行全展开"状态下取了一遍），代码自己说话。漏登记的后果是**静默**的 ——
+             面板看着刷新了，那一项却不生效（本项目已栽过四次，MEMORY.md §22）。 */
+          const rowKeys = Array.isArray(s8.rowKeys) ? s8.rowKeys : [];
+          const notInKeys = rowKeys.filter(function (k) {
+            return !Array.isArray(s8.allKeys) || s8.allKeys.indexOf(k) < 0;
+          });
+          check('「恢复默认」重放表覆盖设置面板的每一行（通用不变量，非手工清单）',
+            rowKeys.length > 0 && notInKeys.length === 0,
+            '面板行数=' + rowKeys.length + ' 未登记=' + JSON.stringify(notInKeys)
+              + ' allKeys=' + JSON.stringify(s8.allKeys));
         }
         /* 窗口置顶：设置里的开关与顶栏按钮同一状态（仅桌面版） */
         check('设置里的「窗口置顶」开关生效并同步到顶栏按钮',
@@ -830,10 +944,71 @@ const SUITES = [
     },
   },
 
+  /* ---------- 8b. 拖拽入口（唯一"条目没有磁盘路径"的通路） ---------- */
+  {
+    id: 'drop',
+    title: '拖拽入口 · 无磁盘路径的那条通路：索引 / 缩略图 / 灯箱 / 删除拒绝 / 多文件夹分组',
+    kind: 'probe',
+    script: 'probe_drop.js',
+    key: 'DROP ',
+    tags: ['core'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d) { check('探针返回数据', false, '未解析到 DROP 输出'); return; }
+
+      /* 这条通路此前在 17 个探针 + 6 个单测里命中 0 次：appself 自检走 --open-dir
+         （原生路径），永远测不到它。所以这里断言必须落在**结果**上，而不是
+         "函数被调用了"。 */
+      check('拖入一个文件夹 → 新增一个来源，名字取自顶层目录',
+        d.drop1Ok === true && d.drop1SrcDelta === 1 && d.drop1Name === '照片夹',
+        JSON.stringify({ ok: d.drop1Ok, delta: d.drop1SrcDelta, name: d.drop1Name }));
+      check('索引出的条目数与夹具一致（含一层子目录，递归扫到了）',
+        d.drop1Count === d.fixtureCount && d.fixtureCount >= 7,
+        'count=' + d.drop1Count + ' fixture=' + d.fixtureCount);
+      check('拖入的条目全部没有磁盘路径、且都持有 File（这就是它与主通路的根本差异）',
+        d.allPathless === true && d.allHaveFile === true,
+        JSON.stringify({ pathless: d.allPathless, haveFile: d.allHaveFile }));
+      check('rel 与夹具目录结构逐条一致（顶层目录名不重复）',
+        d.relsMatchFixture === true && d.relDupPrefix === false,
+        '期望=' + JSON.stringify(d.expectedRels) + ' 实际=' + JSON.stringify(d.actualRels));
+      check('缩略图真的画出来了（不是只建了瓦片）',
+        d.tiles >= 7 && d.thumbsPainted >= 4,
+        'tiles=' + d.tiles + ' painted=' + d.thumbsPainted);
+      check('拖入的图能打开灯箱，且大图真的解码出来了',
+        d.lightboxOpen === true && d.lightboxImgW > 0,
+        JSON.stringify({ open: d.lightboxOpen, w: d.lightboxImgW, err: d.lightboxErr || null }));
+      /* 边界：无路径条目点删除。它是"三档能力探测"的边界，边界最容易漏 ——
+         必须给出**可读原因**，不是静默失败、不是崩、更不能真删。 */
+      check('无路径条目点删除 → 能力探测判为不支持，且给出可读原因（不是静默失败）',
+        d.deleteCapability === null && d.deleteReturned === false && d.deleteThrew === null
+          && typeof d.deleteToast === 'string' && /不支持删除/.test(d.deleteToast),
+        JSON.stringify({ cap: d.deleteCapability, ret: d.deleteReturned,
+          threw: d.deleteThrew, toast: d.deleteToast }));
+      check('被拒的删除没有把条目弄丢（内存里还在）', d.stillThere === true, String(d.stillThere));
+      check('一次拖入多个文件夹 → 分组为多个来源，各自条目数正确',
+        d.drop2Ok === true && d.drop2SrcDelta === 2
+          && JSON.stringify(d.drop2Names) === JSON.stringify(['相册A', '相册B'])
+          && JSON.stringify(d.drop2Counts) === JSON.stringify([2, 1]),
+        JSON.stringify({ delta: d.drop2SrcDelta, names: d.drop2Names, counts: d.drop2Counts }));
+      check('散文件（没有顶层目录）归入「拖入的图片」',
+        d.drop3Ok === true && d.drop3SrcDelta === 1 && d.drop3Name === '拖入的图片',
+        JSON.stringify({ ok: d.drop3Ok, delta: d.drop3SrcDelta, name: d.drop3Name }));
+      check('拖入全是非图片 → 不建来源、返回 false（反向用例）',
+        d.drop4Ok === false && d.drop4SrcDelta === 0,
+        JSON.stringify({ ok: d.drop4Ok, delta: d.drop4SrcDelta }));
+      check('混合拖入（图片 + 非图片）→ 只收图片，非图片被丢掉',
+        d.drop5Ok === true && d.drop5Count === 1
+          && JSON.stringify(d.drop5Names) === JSON.stringify(['混合.png']),
+        JSON.stringify({ ok: d.drop5Ok, count: d.drop5Count, names: d.drop5Names }));
+      check('同名来源是「刷新」而不是重复新增（散文件都归入「拖入的图片」）',
+        d.drop5SrcDelta === 0 && d.drop5SourceCount === 1,
+        JSON.stringify({ delta: d.drop5SrcDelta, sameName: d.drop5SourceCount }));
+    },
+  },
+
   /* ---------- 9. 顶栏布局 ---------- */
   {
-    id: 'topbar',
-    title: '顶栏布局 · 品牌文案已移除 / 眼睛按钮并入右侧 / 置顶按钮就位 / 窄窗不换行',
+    id: 'topbar',    title: '顶栏布局 · 品牌文案已移除 / 眼睛按钮并入右侧 / 置顶按钮就位 / 窄窗不换行',
     kind: 'probe',
     script: 'probe_topbar.js',
     keys: ['INJECT ', 'EYE ', 'PIN ', 'PIN2 ', 'NARROW ', 'GEO '],
@@ -1368,6 +1543,24 @@ const SUITES = [
         JSON.stringify(s));
       check('没有选中时「导出选中的图片…」自动置灰', s.exportDisabledWhenNoSel === true, JSON.stringify(s));
       check('状态没变时不重建菜单（避免菜单白闪）', s.noopWhenUnchanged === true, JSON.stringify(s));
+
+      /* --- IPC 归属校验（纵深防御）：非受信 sender 必须被拒 --- */
+      const ig = d.ipcGuard || {};
+      const un = ig.untrusted || {};
+      const leaked = Object.keys(un).filter(function (k) { return un[k] !== null; });
+      check('7 条桌面集成通道对非受信 sender 全部拒绝（逐条实测，不是抽样）',
+        ig.channelCount === 7 && ig.rejectedAll === true && leaked.length === 0,
+        '通道数=' + ig.channelCount + ' 漏放行=' + JSON.stringify(leaked)
+          + ' 实测=' + JSON.stringify(un));
+      check('受信窗口的正常调用没有被误拒（guard 没把自家调用一起挡掉）',
+        !!(ig.trusted && ig.trusted.desktopInfo
+          && ig.trusted.desktopInfo.platform === process.platform
+          // menuState 返回 false 是"状态没变、不重建菜单"的正常语义，不是被拒；
+          // 被拒的形态是 null（guard 在 handler 之前就返回了）—— 所以这里判"是布尔值"
+          && typeof ig.trusted.menuState === 'boolean'),
+        JSON.stringify(ig.trusted));
+      check('非受信调用没有产生副作用（托盘没被建起来）',
+        ig.trusted && ig.trusted.trayAfter === false, JSON.stringify(ig.trusted));
     },
   },
 
@@ -1627,6 +1820,12 @@ function main() {
   const filters = argv.filter(function (a) { return a.charAt(0) !== '-'; });
 
   let suites = SUITES.slice();
+  /* --fast 的取舍：保留全部 node 纯函数套件 + 带 'joint' 标签的"三路径联合回归"。
+     ⚠️ tf 虽然是 probe（要起 Electron），但它是**最快的真实 Electron 冒烟测试**
+     （约 2 秒，却贡献 43 项里的 29 项）—— 去掉它等于放弃"真实 Electron 里跑一遍
+     缩放×旋转×平移"这条防线，不划算。所以 --fast **并不能脱离 Electron**：
+     新克隆里没 npm i 时 tf 会报"找不到 electron.exe"（9 套件里 8 通过）。
+     措辞一律按此为准，别写成"跳过 Electron"（早先文档就是那么写的，与实际不符）。 */
   if (fast) suites = suites.filter(function (s) { return s.kind === 'node' || (s.tags || []).indexOf('joint') >= 0; });
   if (filters.length) suites = suites.filter(function (s) { return filters.indexOf(s.id) >= 0; });
   // 快测模式：让支持 quickFlag 的 node 套件走精简路径（zip 套件会跳过 268MB 大包）
