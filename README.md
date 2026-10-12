@@ -2,7 +2,7 @@
 
 [English](README.en.md) · 简体中文
 
-发布包与版本更新说明见 [GitHub Releases](https://github.com/jhlxlml/Atrium/releases)。
+便携包下载与版本更新说明见 [GitHub Releases](https://github.com/jhlxlml/Atrium/releases/latest)。
 
 Atrium（中庭）是面向 Windows 的本地图片浏览器：选一个文件夹，像翻阅作品集一样浏览你的照片。天光从高处落下、照亮整片陈列空间的地方，照片墙就是中庭。
 
@@ -18,7 +18,7 @@ Atrium（中庭）是面向 Windows 的本地图片浏览器：选一个文件�
 
 交付形态只有一种：**Electron 便携包**。解压即用、无需安装。早先的「离线单文件 HTML」版本已在 v1.13.0 退役，对应的构建脚本、回归套件与渲染层浏览器回退分支都已移除。
 
-仓库主要保存源码，**不包含发布 ZIP**（约 112 MB，已在 `.gitignore` 中）；需要的话按下面的步骤自行构建。
+仓库主要保存源码，**不包含发布 ZIP**（约 112 MB，已在 `.gitignore` 中）—— 便携包请直接从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载，或按下面的步骤自行构建。
 
 ## 功能概览
 
@@ -64,11 +64,14 @@ Atrium（中庭）是面向 Windows 的本地图片浏览器：选一个文件�
 
 ### 使用便携包
 
-1. 解压 `Atrium_Electron版_v1.13.0.zip`；
-2. 双击 **`Atrium.cmd`**（**不是** `Atrium.exe`）；
+1. 从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载 **`Atrium_Electron_v1.13.0.zip`**（112.5 MB）；
+2. 解压后双击 **`Atrium.cmd`**（**不是** `Atrium.exe`）；
 3. 点「添加文件夹」，或者直接把文件夹 / 图片拖进窗口。
 
 > **为什么是 `.cmd` 而不是 exe**：WorkBuddy 及部分 Node 环境会注入 `NODE_OPTIONS`，Electron 打包版遇到它会**启动即退出**。启动器负责先清掉这个变量，再拉起主程序。它优先按名找 `Atrium.exe`，找不到才退回「目录里第一个 exe」。
+
+> 下载到的资产名是 ASCII 的 `Atrium_Electron_v1.13.0.zip` —— GitHub 的 release 资产名**不支持非 ASCII 字符**
+> （会被替换成 `.`），所以发布时用了这个名字；本地 `npm run pack` 生成的 ZIP 仍按构建链的命名带「版」字，两者内容完全一致。
 
 ### 从源码构建
 

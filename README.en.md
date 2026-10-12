@@ -2,7 +2,7 @@
 
 English · [简体中文](README.md)
 
-Downloads and version-specific release notes are available on [GitHub Releases](https://github.com/jhlxlml/Atrium/releases).
+Downloads and version-specific release notes are available on [GitHub Releases](https://github.com/jhlxlml/Atrium/releases/latest).
 
 Atrium is a local image browser for Windows: pick a folder and browse your photos the way you would flip through a portfolio. The name means *atrium* — the place where daylight falls from above and lights up the whole display space, and a photo wall is exactly that.
 
@@ -18,7 +18,7 @@ It does one thing: open a local folder and let you look at, and tidy up, your pi
 
 There is exactly one delivery form: a **portable Electron build**. Unzip and run, no installation. The earlier "offline single-file HTML" build was retired in v1.13.0; its build script, regression suites and every browser fallback in the renderer were removed.
 
-The repository holds source code only and **does not include the release ZIP** (~112 MB, already in `.gitignore`). Build it yourself with the steps below if you need it.
+The repository holds source code only and **does not include the release ZIP** (~112 MB, already in `.gitignore`) — grab the portable build from [Releases](https://github.com/jhlxlml/Atrium/releases/latest), or build it yourself with the steps below.
 
 ## Features
 
@@ -64,11 +64,13 @@ Four layers are in place: screen-reader announcements (all 52 user-facing action
 
 ### Using the portable build
 
-1. Unzip `Atrium_Electron版_v1.13.0.zip`.
-2. Double-click **`Atrium.cmd`** (**not** `Atrium.exe`).
+1. Download **`Atrium_Electron_v1.13.0.zip`** (112.5 MB) from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
+2. Unzip it, then double-click **`Atrium.cmd`** (**not** `Atrium.exe`).
 3. Click "添加文件夹" (Add folder), or drag a folder / images straight into the window.
 
 > **Why a `.cmd` and not the exe**: WorkBuddy and some Node environments inject `NODE_OPTIONS`, which makes a packaged Electron app **exit immediately on launch**. The launcher clears that variable first, then starts the app. It looks for `Atrium.exe` by name and only falls back to "the first exe in the folder" if it is missing.
+
+> The downloadable asset is named `Atrium_Electron_v1.13.0.zip` in ASCII — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so an ASCII name was used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the contents are identical.
 
 > The application UI is currently Chinese. This English README does not imply an English UI.
 

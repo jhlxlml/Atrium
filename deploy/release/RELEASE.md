@@ -205,3 +205,58 @@ grep -oE "id: '[a-zA-Z0-9_]+'" deploy/electron-test/run_all.js | sort -u | wc -l
 > 存档只靠根目录 ZIP（名字带版本号）。**但若该目录可能是用户自己解压测试留下的，先问一句再删。**
 > 旧版本 ZIP 不必留（结果与决策已写进现状分析与长期记忆）；`verify_zip.js` 会枚举根目录**所有** `*.zip`，
 > 所以清掉旧包只会让复验范围变小，不会失败。
+
+---
+
+## 发布到 GitHub Releases
+
+仓库：<https://github.com/jhlxlml/Atrium>　（**public**，默认分支 `main`）
+
+### 两步
+
+```bash
+# 1. 打 tag 并推送（附注 tag，说明写版本要点）
+git tag -a v1.13.0 -m 'Atrium v1.13.0'   # 内容按版本填
+git push origin v1.13.0
+
+# 2. 建 release + 上传 ZIP（token 只从环境变量读，不进 shell 历史）
+GH_TOKEN=<repo 权限的 token> node deploy/release/upload_release.js
+```
+
+先 `--dry` 可以只看它打算做什么、不发任何请求：
+
+```bash
+GH_TOKEN=x node deploy/release/upload_release.js --dry
+```
+
+### 这个脚本的纪律（别绕过）
+
+- **流程是「建 draft → 上传资产 → 校验大小 → 转公开」**。中途失败只会留下一个**草稿**，
+  不会出现"release 已公开但附件没传上去"——那个状态对下载者最难受。
+- **上传后必须比对大小**（本地 vs 远端字节数）。GitHub 返回成功不等于内容完整。
+- **幂等**：该 tag 已有 release 就复用，同名资产已存在就跳过，可安全重跑。
+- **发布说明取自 `Atrium_v<版本>_更新说明.md`**，不另写一份 —— 避免两处说法打架。
+
+### ⚠️ 高危坑：release 资产名不支持非 ASCII
+
+本地 ZIP 叫 `Atrium_Electron版_v1.13.0.zip`（`pack.js` 的命名），但 **GitHub 会把资产名里的非 ASCII 字符
+替换成 `.`** —— 实测上传后变成了 `Atrium_Electron._v1.13.0.zip`，和文档里写的名字对不上。
+
+所以**发布资产用 ASCII 名**：`Atrium_Electron_v1.13.0.zip`（`upload_release.js` 里写死）。
+本地 ZIP 名不动 —— `Atrium_Electron版` 同时是**构建输出目录名**（`assemble.js` / `pack.js` / `run_all.js` /
+`verify_clone.js` / `probe_fs.js` / `probe_rot_final.js` / `manual_appself.js` 都引用它），改它要动回归体系，不划算。
+
+> 若已经传成了被替换的名字，不用重传 112 MB —— 直接改名即可：
+> `PATCH /repos/<owner>/<repo>/releases/assets/<asset_id>`，body `{"name":"Atrium_Electron_v1.13.0.zip"}`。
+
+### 本机 token 从哪来
+
+本机没有 `gh` CLI。git 凭据由 **Git Credential Manager** 托管，可用它取：
+
+```bash
+GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null | sed -n 's/^password=//p') \
+  node deploy/release/upload_release.js
+```
+
+当前 token 的 scope 是 `gist, repo, workflow` —— `repo` 足够建 release 与上传资产。
+**别把 token 写进文件或命令行参数**（会进 shell 历史 / 进程列表）。
