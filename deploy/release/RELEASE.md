@@ -215,7 +215,15 @@ grep -oE "id: '[a-zA-Z0-9_]+'" deploy/electron-test/run_all.js | sort -u | wc -l
 
 ### 两步
 
+> **顺序不能反：先推 `main`，再打 tag、推 tag，最后才跑上传脚本。**
+> 若 tag 在远端不存在，GitHub 会**自动建一个** —— 但它指向的是**默认分支当前的 HEAD**。
+> 一旦本地提交还没推，这个自动 tag 就会**指向上一个版本的代码**，release 页的
+> "Source code (zip)" 也跟着错。实测踩过一次（详见下方"高危坑 2"）。
+
 ```bash
+# 0. 先把本版提交推上去（否则第 1 步的 tag 会指错地方）
+git push origin main
+
 # 1. 打 tag 并推送（附注 tag，说明写版本要点）
 git tag -a v1.13.0 -m 'Atrium v1.13.0'   # 内容按版本填
 git push origin v1.13.0
@@ -253,6 +261,34 @@ GH_TOKEN=x node deploy/release/upload_release.js --dry
 
 > 若已经传成了被替换的名字，不用重传 112 MB —— 直接改名即可：
 > `PATCH /repos/<owner>/<repo>/releases/assets/<asset_id>`，body `{"name":"Atrium_Electron_vX.Y.Z_x64.zip"}`。
+
+### ⚠️ 高危坑 2：tag 会被自动创建，且指向陈旧的 HEAD
+
+`upload_release.js` 建 release 时用的是 `tag_name: 'vX.Y.Z'`。**若该 tag 在远端不存在，
+GitHub 会自动建一个** —— 但它取的是**默认分支当前的 HEAD**，不是你本地的 HEAD。
+
+实测：本地已有 3 个 v1.14.0 提交但**尚未 push**，远端 `main` 还停在上一个版本，
+于是自动建的 `v1.14.0` tag 指向了**上一个版本的提交** —— release 页的
+"Source code (zip)" 里根本没有本版的新文件，而 release 已经公开了。
+
+**修法**（不用删 release，也不会让它掉线）：
+
+```bash
+git push origin main                                              # ① 先把提交推上去
+git tag -a v1.14.0 -m 'Atrium v1.14.0' <正确的提交>                 # ② 本地建注记 tag
+git push origin +refs/tags/v1.14.0:refs/tags/v1.14.0              # ③ 强制覆盖远端 tag
+```
+
+**复核**（两条都要做）：
+
+```bash
+git ls-remote origin 'refs/tags/v1.14.0*'    # ^{} 那一行必须是本版提交
+# 再查一次 tag 下的目录，确认新文件在：
+#   GET /repos/<o>/<r>/contents/deploy/electron?ref=v1.14.0   → 应含本版新增文件
+```
+
+> 用 `+refs/tags/...` 强制更新 tag **不会**让已发布的 release 掉线（实测 release 仍 `published`、资产仍在）。
+> 但**别等到发完才发现** —— 按上面"两步"的顺序做，这一步根本不会发生。
 
 ### 本机 token 从哪来
 
