@@ -72,14 +72,15 @@ Atrium（中庭）是面向 Windows 的本地图片浏览器：选一个文件�
 
 ### 使用便携包
 
-1. 从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载 **`Atrium_Electron_v1.13.0.zip`**（112.5 MB）；
+1. 从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载 **`Atrium_Electron_v1.14.0_x64.zip`**（112.5 MB，Windows x64）；
 2. 解压后双击 **`Atrium.cmd`**（**不是** `Atrium.exe`）；
 3. 点「添加文件夹」，或者直接把文件夹 / 图片拖进窗口。
 
 > **为什么是 `.cmd` 而不是 exe**：WorkBuddy 及部分 Node 环境会注入 `NODE_OPTIONS`，Electron 打包版遇到它会**启动即退出**。启动器负责先清掉这个变量，再拉起主程序。它优先按名找 `Atrium.exe`，找不到才退回「目录里第一个 exe」。
 
-> 下载到的资产名是 ASCII 的 `Atrium_Electron_v1.13.0.zip` —— GitHub 的 release 资产名**不支持非 ASCII 字符**
-> （会被替换成 `.`），所以发布时用了这个名字；本地 `npm run pack` 生成的 ZIP 仍按构建链的命名带「版」字，两者内容完全一致。
+> 下载到的资产名是 ASCII 的 `Atrium_Electron_v1.14.0_x64.zip`（后缀标架构，将来出 arm64 包可在同一 release 里共存）
+> —— GitHub 的 release 资产名**不支持非 ASCII 字符**（会被替换成 `.`），所以发布时用这个名字；
+> 本地 `npm run pack` 生成的 ZIP 仍按构建链的命名带「版」字，两者**内容完全一致**。
 
 > **数据在哪**：解压目录下会自动出现一个 `data/`（设置 / 收藏 / 旋转记录 / 缩略图缓存）。
 > 它是**便携**的 —— 拷走整个文件夹就等于带走全部配置，换台机器不用重新配。

@@ -14,6 +14,9 @@
    "release 已公开但附件没传上去"这种半成品 —— 那个状态对下载者最难受。
 
    幂等：若该 tag 已有 release，直接复用它（已存在同名资产则跳过上传）。
+
+   资产名：上传时用**显式 ASCII 名** `Atrium_Electron_v<VER>_x64.zip`（见 ASSET_NAME），
+   不用本地 ZIP 的 basename —— 后者含「版」，GitHub 会把它替换成 `.`。
    ============================================================ */
 'use strict';
 const fs = require('fs');
@@ -30,6 +33,14 @@ const VER = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const TAG = 'v' + VER;
 const ZIP = path.join(ROOT, 'Atrium_Electron版_v' + VER + '.zip');
 const NOTES = path.join(ROOT, 'Atrium_v' + VER + '_更新说明.md');
+
+/* 发布资产的**显式 ASCII 名**（带架构后缀）。
+   为什么不直接用本地 ZIP 的 basename：GitHub 会把资产名里的非 ASCII 字符
+   替换成 `.`（实测 `Atrium_Electron版_v1.13.0.zip` → `Atrium_Electron._v1.13.0.zip`），
+   和文档里写的名字对不上。本地 ZIP 名保持 `pack.js` 的命名不动（它是构建链的一部分），
+   只在**上传时**改名。带 `_x64` 是为了将来出 arm64 包时两者能在同一 release 里共存。 */
+const ARCH = 'x64';
+const ASSET_NAME = 'Atrium_Electron_v' + VER + '_' + ARCH + '.zip';
 
 const UA = { 'User-Agent': 'atrium-release-uploader', 'Accept': 'application/vnd.github+json' };
 const auth = () => Object.assign({ Authorization: 'Bearer ' + TOKEN }, UA);
@@ -92,7 +103,8 @@ function uploadAsset(uploadUrl, file, name) {
 
   console.log('仓库     : ' + REPO);
   console.log('tag      : ' + TAG);
-  console.log('资产     : ' + zipName + '  (' + mb(zipSize) + ')');
+  console.log('本地 ZIP : ' + zipName + '  (' + mb(zipSize) + ')');
+  console.log('发布资产 : ' + ASSET_NAME + '  （ASCII 名，与本地名不同是刻意的）');
   console.log('发布说明 : ' + path.basename(NOTES) + '  (' + body.length + ' 字符)');
 
   if (DRY) { console.log('\n[dry] 以上为将要执行的内容，未发送任何请求。'); return; }
@@ -116,12 +128,12 @@ function uploadAsset(uploadUrl, file, name) {
 
   /* ---------- 2. 上传资产（已存在则跳过） ---------- */
   const existing = await api('GET', API + '/repos/' + REPO + '/releases/' + rel.id + '/assets');
-  if (existing.some((a) => a.name === zipName)) {
-    console.log('· 资产已存在，跳过上传：' + zipName);
+  if (existing.some((a) => a.name === ASSET_NAME)) {
+    console.log('· 资产已存在，跳过上传：' + ASSET_NAME);
   } else {
     process.stdout.write('· 上传中（' + mb(zipSize) + '）… ');
     const t0 = Date.now();
-    const asset = await uploadAsset(rel.upload_url.replace('{?name,label}', ''), ZIP, zipName);
+    const asset = await uploadAsset(rel.upload_url.replace('{?name,label}', ''), ZIP, ASSET_NAME);
     console.log('完成，用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
     console.log('  → ' + asset.browser_download_url);
 

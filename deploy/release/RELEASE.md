@@ -195,7 +195,8 @@ grep -oE "id: '[a-zA-Z0-9_]+'" deploy/electron-test/run_all.js | sort -u | wc -l
 
 | 文件 | 用法 |
 |---|---|
-| `Atrium_Electron版_vX.Y.Z.zip` | 解压后双击 **`Atrium.cmd`**（不要直接双击 exe，某些环境带的 `NODE_OPTIONS` 会干扰启动） |
+| 本地：`Atrium_Electron版_vX.Y.Z.zip` | 解压后双击 **`Atrium.cmd`**（不要直接双击 exe，某些环境带的 `NODE_OPTIONS` 会干扰启动） |
+| Releases 资产：`Atrium_Electron_vX.Y.Z_x64.zip` | 同一份内容，**ASCII 名**（上传时改名，见下节）；`_x64` 标架构 |
 
 > **只有这一个交付物。** 离线单文件 HTML 版在 v1.13.0 已退役（`build_offline.js` 已删除）——
 > 手册与现状分析里若还提到"双目标交付"，那是过期内容。
@@ -239,15 +240,19 @@ GH_TOKEN=x node deploy/release/upload_release.js --dry
 
 ### ⚠️ 高危坑：release 资产名不支持非 ASCII
 
-本地 ZIP 叫 `Atrium_Electron版_v1.13.0.zip`（`pack.js` 的命名），但 **GitHub 会把资产名里的非 ASCII 字符
-替换成 `.`** —— 实测上传后变成了 `Atrium_Electron._v1.13.0.zip`，和文档里写的名字对不上。
+本地 ZIP 叫 `Atrium_Electron版_vX.Y.Z.zip`（`pack.js` 的命名），但 **GitHub 会把资产名里的非 ASCII 字符
+替换成 `.`** —— 实测上传 `Atrium_Electron版_v1.13.0.zip` 后变成了 `Atrium_Electron._v1.13.0.zip`，
+和文档里写的名字对不上。
 
-所以**发布资产用 ASCII 名**：`Atrium_Electron_v1.13.0.zip`（`upload_release.js` 里写死）。
-本地 ZIP 名不动 —— `Atrium_Electron版` 同时是**构建输出目录名**（`assemble.js` / `pack.js` / `run_all.js` /
+所以**发布资产用显式 ASCII 名**：`Atrium_Electron_vX.Y.Z_x64.zip`
+（在 `upload_release.js` 的 `ASSET_NAME` 里拼出，**上传时改名**，不依赖本地 basename）。
+后缀 `_x64` 标架构 —— 将来出 arm64 包时两者能在同一 release 里共存。
+本地 ZIP 名**不动** —— `Atrium_Electron版` 同时是**构建输出目录名**（`assemble.js` / `pack.js` / `run_all.js` /
 `verify_clone.js` / `probe_fs.js` / `probe_rot_final.js` / `manual_appself.js` 都引用它），改它要动回归体系，不划算。
+> 回归套件 `zip` 读的也是本地名（按 `package.json` 的 version 拼），所以**千万别为了对齐 Release 去改本地名**。
 
 > 若已经传成了被替换的名字，不用重传 112 MB —— 直接改名即可：
-> `PATCH /repos/<owner>/<repo>/releases/assets/<asset_id>`，body `{"name":"Atrium_Electron_v1.13.0.zip"}`。
+> `PATCH /repos/<owner>/<repo>/releases/assets/<asset_id>`，body `{"name":"Atrium_Electron_vX.Y.Z_x64.zip"}`。
 
 ### 本机 token 从哪来
 
