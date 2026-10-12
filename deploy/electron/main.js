@@ -1361,11 +1361,11 @@ async function runSelfTest(win) {
           // 界面入口：App.togglePin 应同步 设置 / aria / 图标（连点两次回到原状）
           window.App.togglePin();
           await new Promise((r) => setTimeout(r, 260));
-          R.pinAria = btn ? btn.getAttribute('aria-checked') : null;
+          R.pinAria = btn ? btn.getAttribute('aria-pressed') : null;
           R.pinSetting = !!window.State.settings.alwaysOnTop;
           window.App.togglePin();
           await new Promise((r) => setTimeout(r, 260));
-          R.pinBackAria = btn ? btn.getAttribute('aria-checked') : null;
+          R.pinBackAria = btn ? btn.getAttribute('aria-pressed') : null;
           R.pinBackSetting = !!window.State.settings.alwaysOnTop;
           R.pinUnset = await window.vfNative.alwaysOnTop(false);
           R.pinRealOff = await window.vfNative.getAlwaysOnTop();
@@ -1398,7 +1398,7 @@ async function runSelfTest(win) {
           R.frameOpened = await window.App.enterFrame();           // 走真实界面入口
           await new Promise((r) => setTimeout(r, 3200));           // 等开窗 + 第一张出图
           R.frameOpenInfo = await window.vfNative.frameInfo();
-          R.frameBtnAria = fbtn ? fbtn.getAttribute('aria-checked') : null;
+          R.frameBtnAria = fbtn ? fbtn.getAttribute('aria-pressed') : null;
         } catch (e) { R.frameWhy = String((e && e.message) || e); }
 
         return Object.assign(R, {

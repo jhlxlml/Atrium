@@ -54,19 +54,11 @@
   <symbol id="i-frame" viewBox="0 0 24 24"><rect x="2.8" y="4.4" width="18.4" height="15.2" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="5.6" y="7.2" width="12.8" height="9.6" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="9.4" cy="10.4" r="1.35" fill="currentColor"/><path d="M5.9 16.4l3.6-4.2 2.6 3 2.3-2.4 3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
   <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3.6 7.2h3.1c1.5 0 2.4.7 3.3 1.9l3.9 5.6c.9 1.2 1.8 1.9 3.3 1.9h3.4M3.6 16.8h3.1c1.5 0 2.4-.7 3.3-1.9l1-1.4M14 7.2h6.4M17.2 4.2l3 3-3 3M17.2 13.4l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-hide" viewBox="0 0 24 24"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
-  <!-- v1.15.0「更多」溢出菜单入口：横排三点（行业标准记号，非文字） -->
-  <symbol id="i-more" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></g></symbol>
 </svg>
 
 <!-- ============ 顶栏 ============ -->
 <header class="topbar" id="topbar" hidden>
   <div class="topbar-in">
-    <!-- 品牌标记：只做身份识别，不占交互宽度（v1.14.0 恢复一个视觉锚点）。
-         几何直接缩自 brand/icon.svg（viewBox 512 → 32），配色沿用 --ink / --sel / --paper。 -->
-    <span class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#1b1a17"/><g fill="none" stroke="#f7f5f1" stroke-width="3.4" stroke-linecap="butt"><path d="M8.2 13.2V8.2h5M18.8 8.2h5v5M24 18.8v5h-5M13.2 24H8.2v-5"/></g><circle cx="12.5" cy="12.9" r="2.4" fill="#b5842f"/><path d="M10.1 21.6 14 15.3l2.1 2.2 1.8-2.2 3.8 6.3Z" fill="#f7f5f1"/></svg>
-    </span>
-
     <!-- 品牌 + 多文件夹来源：合并为与右侧控件同款的单一胶囊 -->
     <div class="srcbar" id="srcbar" hidden>
       <div class="src-scroll" id="srcScroll">
@@ -82,10 +74,10 @@
 
     <div class="ctrls" id="ctrls">
       <div class="seg" id="modeSeg" role="tablist" aria-label="浏览模式">
-        <button class="seg-btn" data-mode="small"  title="小图网格（密集）" aria-label="小图网格"><svg><use href="#i-grid-s"/></svg><span class="seg-txt">小图</span></button>
-        <button class="seg-btn is-on" data-mode="medium" title="中图网格" aria-label="中图网格"><svg><use href="#i-grid-m"/></svg><span class="seg-txt">中图</span></button>
-        <button class="seg-btn" data-mode="masonry" title="瀑布流（不等高列）" aria-label="瀑布流"><svg><use href="#i-masonry"/></svg><span class="seg-txt">瀑布</span></button>
-        <button class="seg-btn" data-mode="single" title="单列整屏（逐张浏览）" aria-label="单列整屏"><svg><use href="#i-single"/></svg><span class="seg-txt">单列</span></button>
+        <button class="seg-btn" data-mode="small"  title="小图网格（密集）" aria-label="小图网格"><svg><use href="#i-grid-s"/></svg><span class="seg-txt">小</span></button>
+        <button class="seg-btn is-on" data-mode="medium" title="中图网格" aria-label="中图网格"><svg><use href="#i-grid-m"/></svg><span class="seg-txt">中</span></button>
+        <button class="seg-btn" data-mode="masonry" title="瀑布流（不等高列）" aria-label="瀑布流"><svg><use href="#i-masonry"/></svg><span class="seg-txt">瀑</span></button>
+        <button class="seg-btn" data-mode="single" title="单列整屏（逐张浏览）" aria-label="单列整屏"><svg><use href="#i-single"/></svg><span class="seg-txt">列</span></button>
       </div>
 
       <div class="sizectl" id="sizeCtl">
@@ -93,6 +85,20 @@
         <input type="range" id="sizeRange" min="0" max="100" step="1" value="52" aria-label="图片显示大小">
         <button class="ico-btn" id="sizePlus" title="放大"><svg><use href="#i-plus"/></svg></button>
       </div>
+
+      <span class="sep"></span>
+
+      <label class="select-wrap">
+        <select id="sortKey" title="排序方式" aria-label="排序方式">
+          <option value="name" selected>按名称</option>
+          <option value="size">按大小</option>
+          <option value="time">按文件时间</option>
+          <option value="shot">拍摄时间</option>
+        </select>
+      </label>
+      <button class="ico-btn" id="sortDir" title="切换升序 / 降序" aria-label="切换排序方向"><svg><use href="#i-arrow-d"/></svg></button>
+
+      <span class="sep"></span>
 
       <div class="search" id="searchBox">
         <button type="button" class="ico-btn search-toggle" id="searchToggle" title="搜索文件名" aria-label="搜索文件名" aria-expanded="false">
@@ -104,57 +110,49 @@
         </button>
       </div>
 
-      <!-- 「更多 ⋯」溢出菜单：一次性设定 / 低频操作从常驻顶栏下沉到这里，
-           顶栏宽度从此恒定（v1.15.0 信息架构重构）。菜单与设置面板同款处理：
-           挂到 <body> 下 + fixed 定位，彻底不受 .ctrls 的裁剪与层叠上下文影响。 -->
-      <div class="more-wrap" id="moreWrap">
-        <button type="button" class="ico-btn" id="moreBtn" title="更多选项" aria-label="更多选项" aria-expanded="false" aria-haspopup="menu">
-          <svg><use href="#i-more"/></svg>
+      <button class="ico-btn favbtn" id="favOnlyBtn" title="只看收藏" aria-label="只看收藏"><svg><use href="#i-star"/></svg></button>
+
+      <span class="sep"></span>
+
+      <div class="trash-wrap" id="trashWrap" hidden>
+        <button class="ico-btn" id="trashBtn" title="最近删除（可还原）" aria-label="最近删除">
+          <svg><use href="#i-undo"/></svg><span class="badge" id="trashBadge" hidden>0</span>
         </button>
-        <div class="more-menu" id="moreMenu" hidden role="menu" aria-label="更多选项">
-          <button type="button" class="mm-item favbtn" id="favOnlyBtn" role="menuitemcheckbox" aria-checked="false" title="只看收藏（F）">
-            <svg><use href="#i-star"/></svg><span>只看收藏</span>
-          </button>
-
-          <div class="trash-wrap" id="trashWrap" hidden>
-            <button type="button" class="mm-item" id="trashBtn" role="menuitem" title="最近删除（可还原）" aria-label="最近删除">
-              <svg><use href="#i-undo"/></svg><span>最近删除</span><span class="badge" id="trashBadge" hidden>0</span>
-            </button>
-            <!-- 面板本体由 wireTrash() 移到 <body> 下（fixed 浮层）；trashPanel 的
-                 兄弟结构保持不变，面板定位/互斥逻辑一行不用动。 -->
-            <div class="trash-panel" id="trashPanel" hidden>
-              <div class="tp-head">
-                <span>最近删除</span>
-                <button type="button" class="tp-clear" id="trashClear" title="只清空这里的记录，不动回收站里的文件">清空记录</button>
-              </div>
-              <div class="tp-list" id="trashList"></div>
-              <div class="tp-foot">
-                <button type="button" class="tp-viewall" id="trashViewAll">打开回收站…</button>
-                <button type="button" class="tp-open" id="trashOpenRb">系统回收站</button>
-                <span class="tp-tip">Ctrl+Z 撤销最近一次</span>
-              </div>
-            </div>
+        <div class="trash-panel" id="trashPanel" hidden>
+          <div class="tp-head">
+            <span>最近删除</span>
+            <button type="button" class="tp-clear" id="trashClear" title="只清空这里的记录，不动回收站里的文件">清空记录</button>
           </div>
-
-          <button type="button" class="mm-item" id="brandEye" role="menuitemcheckbox" aria-checked="false" title="闭眼：模糊预览（隐私模式）" aria-label="切换模糊预览">
-            <svg><use href="#i-eye"/></svg><span>隐私模式</span>
-          </button>
-
-          <!-- 相框模式（正式功能）：初始带 hidden，等 App.applyFrameUI() 按设置决定
-               是否亮出来 —— 与 #pinBtn 同一套"先藏后亮"策略。 -->
-          <button type="button" class="mm-item" id="frameBtn" role="menuitemcheckbox" aria-checked="false" title="相框模式：随机轮播相册里的图片" aria-label="开启相框模式" hidden>
-            <svg><use href="#i-frame"/></svg><span>相框模式</span>
-          </button>
-
-          <button type="button" class="mm-item" id="pinBtn" role="menuitemcheckbox" aria-checked="false" title="窗口置顶：让 Atrium 始终浮在其它窗口之上" aria-label="窗口置顶" hidden>
-            <svg><use href="#i-pin"/></svg><span>窗口置顶</span>
-          </button>
+          <div class="tp-list" id="trashList"></div>
+          <div class="tp-foot">
+            <button type="button" class="tp-viewall" id="trashViewAll">打开回收站…</button>
+            <button type="button" class="tp-open" id="trashOpenRb">系统回收站</button>
+            <span class="tp-tip">Ctrl+Z 撤销最近一次</span>
+          </div>
         </div>
       </div>
+
+      <!-- 隐私模式（闭眼模糊）—— 与「最近删除」同组，风格统一 -->
+      <button type="button" class="ico-btn" id="brandEye" title="闭眼：模糊预览（隐私模式）" aria-label="切换模糊预览" aria-pressed="false"><svg><use href="#i-eye"/></svg></button>
+
+      <span class="sep"></span>
+
+      <!-- 相框模式（实验功能，默认隐藏）：全屏随机轮播，桌面版会另开一个无边框置顶窗口。
+           初始带 hidden，等 App.applyFrameUI() 按设置决定是否亮出来 —— 与 #pinBtn
+           同一套"先藏后亮"策略，避免启动瞬间闪一下死图标。 -->
+      <button type="button" class="ico-btn" id="frameBtn" title="相框模式：随机轮播相册里的图片" aria-label="开启相框模式" aria-pressed="false" hidden>
+        <svg><use href="#i-frame"/></svg>
+      </button>
 
       <!-- 设置：控件栏右端（与「最近删除」面板同款浮层） -->
       <button type="button" class="ico-btn" id="setBtn" title="设置" aria-label="打开设置" aria-expanded="false" aria-haspopup="dialog">
         <svg><use href="#i-gear"/></svg>
+      </button>
+
+      <!-- 窗口置顶（仅桌面版可见）：控件栏最右端，紧邻系统窗口按钮，
+           位置对应「窗口最小化左侧」这一直觉 -->
+      <button type="button" class="ico-btn pinbtn" id="pinBtn" title="窗口置顶：让 Atrium 始终浮在其它窗口之上" aria-label="窗口置顶" aria-pressed="false" hidden>
+        <svg><use href="#i-pin"/></svg>
       </button>
     </div>
   </div>
@@ -199,8 +197,11 @@
       </div>
       <p class="empty-hint">也可以直接把一个或多个文件夹 <strong>拖拽</strong> 到这里</p>
       <ul class="empty-points">
+        <li>支持 JPG / PNG / GIF / WebP / BMP / AVIF / SVG 等</li>
         <li>可同时加载多个文件夹 · 全部 / 分文件夹查看</li>
+        <li>大图查看 · 居中最大化 · 全屏幻灯片</li>
         <li>小图 / 中图 / 瀑布流 / 单列整屏 四种浏览模式</li>
+        <li>按页浏览，每页显示数量可自由调节</li>
       </ul>
     </div>
   </section>
@@ -230,19 +231,6 @@
             <option value="0">全部显示</option>
           </select>
         </label>
-        <!-- 排序（v1.15.0 从顶栏下沉）：改排列顺序是"设定一次、长期生效"的低频动作，
-             与「每页显示」同组正当合理；底栏本来是吸底热区，鼠标靠近即显。 -->
-        <span class="vb-sep" aria-hidden="true"></span>
-        <span class="vb-cap">排序</span>
-        <label class="select-wrap">
-          <select id="sortKey" title="排序方式" aria-label="排序方式">
-            <option value="name" selected>按名称</option>
-            <option value="size">按大小</option>
-            <option value="time">按文件时间</option>
-            <option value="shot">拍摄时间</option>
-          </select>
-        </label>
-        <button class="ico-btn vb-dir" id="sortDir" title="切换升序 / 降序" aria-label="切换排序方向"><svg><use href="#i-arrow-d"/></svg></button>
         <span class="vb-page" id="pageInfo"></span>
       </div>
       <div class="vb-note" id="footNote"></div>

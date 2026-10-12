@@ -111,7 +111,7 @@ npm test
 
 | Command | Purpose |
 |---|---|
-| `npm test` | Full regression: **29 suites / 363 assertions**, roughly 190 s |
+| `npm test` | Full regression: **29 suites / 357 assertions**, roughly 190 s |
 | `npm run test:fast` | Quick pass: 12 suites / 54 assertions, ~8 s (**includes `tf`, which needs electron**) |
 | `npm run build` | Build the portable Electron package |
 | `npm run pack` | Produce the release ZIP |
@@ -175,8 +175,8 @@ The project tries hard to turn "potholes we fell into" into **mechanisms**. Curr
 
 | Metric | Value |
 |---|---|
-| Regression | **29 suites / 363 assertions**, non-zero exit on any failure |
-| Source size | `js/` 9,676 lines across 15 modules · `css/` 1,886 lines across 3 files · `index.html` 385 lines · main-process side 2,993 lines |
+| Regression | **29 suites / 357 assertions**, non-zero exit on any failure |
+| Source size | `js/` 9,584 lines across 15 modules · `css/` 1,805 lines across 3 files · `index.html` 373 lines · main-process side 2,993 lines |
 | IPC | 35 invoke + 1 renderer→main + 3 main→renderer = **39 unique channel names** |
 | Runtime dependencies | **0** (`electron` and `rcedit` are build-time only) |
 
@@ -189,8 +189,8 @@ Several layers of the regression are **mutually independent lines of defence**:
 - **Security criteria go into the regression too**: the `update` suite locks the `openExternal` URL allow-list with **21 reverse cases** (subdomain spoofing, userinfo spoofing, non-default port, path traversal, `file://`, `javascript:` …) — testing only that "the official link passes" would be an always-true gate.
 - **Failures explain themselves**: assertion messages carry field evidence such as "how many announcements fired, and what the last one said", instead of just `false`.
 
-> **On the number**: `363` counts **suite-level entries**. Seven pure-function suites expand into far more fine-grained assertions internally (872 in total) but are counted as one entry each — so **do not add them up**.
-> Separately, the `zip` suite has **2 conditional assertions** that only run when the **delivery ZIP is present** (a source-only checkout reports `361` / ~175 s) — it tests whether the built package itself is correct, which is moot without a package.
+> **On the number**: `357` counts **suite-level entries**. Seven pure-function suites expand into far more fine-grained assertions internally (872 in total) but are counted as one entry each — so **do not add them up**.
+> Separately, the `zip` suite has **2 conditional assertions** that only run when the **delivery ZIP is present** (a source-only checkout reports `355` / ~175 s) — it tests whether the built package itself is correct, which is moot without a package.
 
 ## Repository layout
 

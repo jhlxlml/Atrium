@@ -10,18 +10,13 @@
   --surface: #fffdf9;        /* 浮层 / 卡片 */
   --ink: #1b1a17;            /* 主文字 */
   --ink-2: #55524b;          /* 次级文字 */
-  --muted: #8d897e;          /* 弱化文字：**仅限装饰性用途**（占位、禁用态、图标）。
-                                对纸底仅 3.21:1，不能用于承载信息的正文 —— 那种场景用 --muted-strong */
-  --muted-strong: #6b675e;   /* 弱化但**承载信息**的小字号正文（设置说明 / 底部提示 / 删除提示）。
-                                实测对纸底 5.17、次级面板 4.86、浮层 5.55，均 ≥ WCAG AA 正文门槛 4.5 */
+  --muted: #8d897e;          /* 弱化文字 */
   --line: #e5e1d8;           /* hairline 分隔 */
-  --line-2: #cec7b8;         /* 强调分隔：与 --line 拉开约 0.35 对比度层级（实测 1.54 vs 1.36） */
+  --line-2: #d9d4c8;         /* 强调分隔 */
   --accent: #1b1a17;         /* 克制近墨强调（主操作 / 当前视图态） */
   --accent-soft: #ece8df;
   --danger: #a4483a;
-  --sel: #b5842f;            /* 统一暖金：选中 / 焦点 / 收藏强调。
-                                **约束：只用于非文字元素**（焦点环、描边、底色）。
-                                实测对纸底仅 3.06:1 —— 达到非文字 3:1 门槛，但**不能**用于文字或小图标前景。 */
+  --sel: #b5842f;            /* 统一暖金：选中 / 焦点 / 收藏强调 */
   --sel-soft: rgba(181,132,47,.15);
   --ring: rgba(181,132,47,.55);
   --shadow-1: 0 1px 2px rgba(27,26,23,.05), 0 6px 20px -12px rgba(27,26,23,.18);
@@ -115,15 +110,6 @@ svg { width: 1em; height: 1em; display: block; }
 /* 品牌文字已移除：眼睛按钮并入右侧控件组（见 .ctrls），此处仅保留占位注释 */
 .brand { display: none; }
 
-/* 品牌标记：视觉锚点，**非交互**（不加 button，不给它 tab 焦点 —— 顶栏已够挤）。
-   深色主题下暖纸描一圈细边，避免深色方块糊进深色背景。 */
-.brand-mark {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 7px;
-}
-.brand-mark svg { width: 24px; height: 24px; display: block; }
-body[data-theme="dark"] .brand-mark { box-shadow: 0 0 0 1px var(--line-2); }
-
 .spacer { flex: 1 1 8px; min-width: 8px; }
 
 /* 控件簇 — 统一高度基线，按功能分组；单行固定，绝不换行 */
@@ -145,26 +131,14 @@ body[data-theme="dark"] .brand-mark { box-shadow: 0 0 0 1px var(--line-2); }
   box-shadow: var(--shadow-1);
   height: 42px;
 }
-/* 常驻横向滚动 + 右缘渐隐（v1.15.0 起无条件启用）：
-   低频控件已全部收进「更多 ⋯」溢出菜单，常驻项只剩 6 组，绝大多数窗口宽度下
-   一行放得下；真放不下时（极窄窗口 / 超长分段文案）可滑而不是溢出重叠。
-   曾经只有"确实溢出"才开 overflow（.is-scrollable）—— 那套条件判断随
-   wireCtrlScrollHint 一起退役，浮层（更多菜单 / 最近删除 / 设置）都已挂到
-   <body> 下，不再被这里的 overflow 裁剪。 */
-.ctrls {
-  scrollbar-width: none;
-  overflow-x: auto; overflow-y: hidden;
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
-}
+.ctrls { scrollbar-width: none; }
 .ctrls::-webkit-scrollbar { display: none; }
-/* 已滚到右端：撤掉渐隐，让最后一颗按钮完整显形（JS 只维护 at-end） */
-.ctrls.at-end {
-  -webkit-mask-image: none; mask-image: none;
-}
 
 @media (min-width: 1181px) {
   .ctrls { gap: 6px; }
+  /* 仅在「确实溢出、需要横滚」时才裁剪（JS 动态加 is-scrollable）。
+     常驻 overflow:hidden 会把向下弹出的浮层（最近删除面板）裁成 0 高。 */
+  .ctrls.is-scrollable { overflow-x: auto; overflow-y: hidden; }
   .ctrls .seg { border: 0; background: transparent; box-shadow: none; padding: 0; }
   .ctrls > .sep { height: 18px; opacity: .55; }
   .ctrls > .sizectl { gap: 3px; }
@@ -184,18 +158,6 @@ body[data-theme="dark"] .brand-mark { box-shadow: 0 0 0 1px var(--line-2); }
 .ico-btn.desc svg { transform: rotate(180deg); }
 .ico-btn:active { transform: scale(.92); background: var(--sel-soft); color: var(--ink); }
 
-/* 触摸设备：把图标按钮撑到 40px（WCAG 2.5.5 推荐 44px，这里取 40 是顶栏单行空间的折中）。
-   已有的 hover:none 分支只管"常显"，这里补尺寸 —— 32/28px 在指尖下太密。 */
-@media (hover: none) {
-  .ico-btn { width: 40px; height: 40px; }
-  .ico-btn svg { width: 18px; height: 18px; }
-  .seg-btn { min-height: 34px; padding-top: 5px; padding-bottom: 5px; }
-  .ctrls { gap: 10px; }
-  .lb-actions .ico-btn, .ico-btn.lb-del { width: 40px; height: 40px; }
-  .sizeCtl input[type="range"] { height: 40px; }
-  .btn-sm { padding-top: 8px; padding-bottom: 8px; }
-}
-
 /* 分段控件 — 统一 32px 高度 */
 .seg {
   display: inline-flex; align-items: center; gap: 2px;
@@ -205,7 +167,7 @@ body[data-theme="dark"] .brand-mark { box-shadow: 0 0 0 1px var(--line-2); }
 }
 .seg-btn {
   display: inline-flex; align-items: center; gap: 5px;
-  border: 0; background: transparent; color: var(--muted-strong);
+  border: 0; background: transparent; color: var(--muted);
   font-size: 12px; font-weight: 500;
   padding: 5.5px 10px; border-radius: 7px;
   transition: background .18s, color .18s;
@@ -333,7 +295,7 @@ input[type="range"]::-moz-range-thumb {
   display: flex; align-items: center; gap: 10px;
   color: var(--ink-2); font-size: 13px;
 }
-.status-count { color: var(--muted-strong); font-variant-numeric: tabular-nums; }
+.status-count { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* ============================================================
    图库舞台与瓦片
@@ -590,7 +552,7 @@ html.snap-single .single-tile {
 }
 .src-chip .sc-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .src-chip .sc-count {
-  font-size: 10.5px; color: var(--muted-strong); font-variant-numeric: tabular-nums;
+  font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums;
   background: var(--paper-2); border-radius: 99px; padding: 1px 7px;
   transition: background .16s, color .16s;
 }
@@ -645,7 +607,7 @@ html.snap-single .single-tile {
   backdrop-filter: blur(14px) saturate(1.1);
   border-top: 1px solid var(--line);
   box-shadow: 0 -6px 22px -14px rgba(27,26,23,.35);
-  color: var(--muted-strong); font-size: 12px;
+  color: var(--muted); font-size: 12px;
   transform: translateY(100%);
   opacity: 0;
   pointer-events: none;
@@ -653,18 +615,13 @@ html.snap-single .single-tile {
 }
 .viewbar.is-shown { transform: none; opacity: 1; pointer-events: auto; }
 .vb-left { display: flex; align-items: center; gap: 8px; flex: none; }
-.vb-cap { color: var(--muted-strong); white-space: nowrap; }
-/* 底栏内的细分隔（每页显示 || 排序）—— 竖线方案，不用空白蒙混 */
-.vb-sep { width: 1px; height: 16px; background: var(--line-2); flex: none; }
-/* 底栏里的图标按钮比顶栏小一档：底栏是 12px 文字的信息密度，32px 太抢 */
-.viewbar .ico-btn { width: 28px; height: 28px; border-radius: 7px; }
-.viewbar .ico-btn svg { width: 14px; height: 14px; }
+.vb-cap { color: var(--muted); white-space: nowrap; }
 .vb-page {
   font-variant-numeric: tabular-nums; color: var(--ink-2);
   padding-left: 6px; border-left: 1px solid var(--line-2); white-space: nowrap;
 }
 .vb-page strong { color: var(--ink); font-weight: 600; }
-.vb-note { flex: 1; min-width: 0; text-align: center; color: var(--muted-strong); letter-spacing: .02em; }
+.vb-note { flex: 1; min-width: 0; text-align: center; color: var(--muted); letter-spacing: .02em; }
 .vb-note strong { color: var(--ink-2); font-weight: 600; }
 .vb-err { color: var(--danger); white-space: nowrap; }
 .vb-right { display: flex; gap: 8px; flex: none; }
@@ -701,7 +658,7 @@ html.snap-single .single-tile {
 }
 .resume-box .btn { display: inline-flex; align-items: center; }
 .resume-box .btn svg { width: 15px; height: 15px; margin-right: 6px; flex: none; }
-.empty-hint { margin-top: 22px; font-size: 12.5px; color: var(--muted-strong); }
+.empty-hint { margin-top: 22px; font-size: 12.5px; color: var(--muted); }
 .empty-hint strong { color: var(--ink-2); font-weight: 500; }
 .empty-points {
   list-style: none; padding: 18px 26px; margin: 30px auto 0;
@@ -710,7 +667,7 @@ html.snap-single .single-tile {
   border-radius: var(--r-l); box-shadow: var(--shadow-1);
 }
 .empty-points li {
-  font-size: 12px; color: var(--muted-strong);
+  font-size: 12px; color: var(--muted);
   display: flex; align-items: center; gap: 6px;
 }
 .empty-points li::before {
@@ -775,8 +732,6 @@ html.snap-single .single-tile {
 /* ============================================================
    最近删除（撤销删除入口）
    ============================================================ */
-/* v1.15.0：触发器已移入「更多 ⋯」菜单（#trashWrap 是菜单里的一项），
-   position:relative 只作历史保留 —— 面板本体由 JS 挂到 <body> 下。 */
 .trash-wrap { position: relative; }
 .badge {
   position: absolute; top: -5px; right: -5px;
@@ -804,13 +759,13 @@ html.snap-single .single-tile {
   font-size: 12.5px; font-weight: 700; letter-spacing: .04em; color: var(--ink);
 }
 .tp-clear, .tp-open, .tp-viewall {
-  border: 0; background: transparent; color: var(--muted-strong);
+  border: 0; background: transparent; color: var(--muted);
   font-size: 11.5px; padding: 2px 4px; border-radius: 4px;
 }
 .tp-clear:hover, .tp-open:hover, .tp-viewall:hover { color: var(--ink); background: var(--accent-soft); }
 .tp-viewall { font-weight: 600; }
 .tp-list { max-height: 320px; overflow: auto; padding: 4px 0; }
-.tp-empty { padding: 18px 12px; text-align: center; color: var(--muted-strong); font-size: 12.5px; }
+.tp-empty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 12.5px; }
 .tp-row {
   display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px;
   padding: 7px 12px;
@@ -820,7 +775,7 @@ html.snap-single .single-tile {
   font-size: 12.5px; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tp-meta { font-size: 11.5px; color: var(--muted-strong); white-space: nowrap; }
+.tp-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .tp-restore {
   border: 1px solid var(--line-2); background: var(--surface); color: var(--ink);
   font-size: 11.5px; padding: 3px 10px; border-radius: 6px; white-space: nowrap;
@@ -830,7 +785,7 @@ html.snap-single .single-tile {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px; border-top: 1px solid var(--line); background: var(--paper-2);
 }
-.tp-tip { font-size: 11.5px; color: var(--muted-strong); }
+.tp-tip { font-size: 11px; color: var(--muted); }
 
 /* ============================================================
    设置面板（与「最近删除」同款浮层；同样重挂 body + fixed 定位）
@@ -865,7 +820,7 @@ html.snap-single .single-tile {
 .sp-group + .sp-group { border-top: 1px solid var(--line); }
 .sp-group-h {
   padding: 10px 14px 4px; font-size: 10.5px; font-weight: 700;
-  letter-spacing: .14em; text-transform: uppercase; color: var(--muted-strong);
+  letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
 }
 .sp-row {
   display: flex; align-items: center; gap: 10px;
@@ -874,7 +829,7 @@ html.snap-single .single-tile {
 .sp-row:hover { background: var(--paper-2); }
 .sp-label { flex: 1 1 auto; min-width: 0; }
 .sp-name { font-size: 12.5px; color: var(--ink); line-height: 1.35; }
-.sp-desc { font-size: 12px; color: var(--muted-strong); line-height: 1.45; margin-top: 2px; }
+.sp-desc { font-size: 11px; color: var(--muted); line-height: 1.4; margin-top: 1px; }
 .sp-ctl { flex: none; display: inline-flex; align-items: center; gap: 6px; }
 
 /* 分段（设置内的小号两/三档切换，风格对齐 .seg） */
@@ -884,7 +839,7 @@ html.snap-single .single-tile {
   border-radius: 8px; padding: 2px;
 }
 .sp-seg button {
-  border: 0; background: transparent; color: var(--muted-strong);
+  border: 0; background: transparent; color: var(--muted);
   font-size: 11.5px; font-weight: 500; padding: 4px 9px; border-radius: 6px;
   transition: background .16s, color .16s;
 }
@@ -928,7 +883,7 @@ html.snap-single .single-tile {
 .sp-num:focus { border-color: var(--line-2); }
 /* 同上：裸 :focus 的 (0,2,0) 会压掉全局 :focus-visible 的焦点环 */
 .sp-num:focus:not(:focus-visible) { outline: none; }
-.sp-suffix { font-size: 11px; color: var(--muted-strong); }
+.sp-suffix { font-size: 11px; color: var(--muted); }
 
 /* 设置内的滑杆复用全局 range 样式，仅调宽度 */
 .sp-range { width: 96px; }
@@ -964,49 +919,14 @@ html.snap-single .single-tile {
   padding: 8px 14px; border-top: 1px solid var(--line); background: var(--paper-2);
   flex: none;
 }
-.sp-tip { font-size: 11px; color: var(--muted-strong); }
+.sp-tip { font-size: 11px; color: var(--muted); }
 /* 版本号：报障时用来确认所跑版本，弱化处理，不抢视觉 */
 .sp-ver { font-variant-numeric: tabular-nums; opacity: .72; }
 .sp-reset {
-  border: 0; background: transparent; color: var(--muted-strong);
+  border: 0; background: transparent; color: var(--muted);
   font-family: inherit; font-size: 11.5px; padding: 2px 4px; border-radius: 4px;
 }
 .sp-reset:hover { color: var(--danger); background: rgba(164,72,58,.08); }
-
-/* ============================================================
-   「更多 ⋯」溢出菜单（v1.15.0 信息架构重构）
-   低频 / 一次性操作从常驻顶栏下沉到这里。菜单与设置面板同款：
-   挂到 <body> 下 + fixed 定位，不受 .ctrls 的 overflow 与层叠上下文约束。
-   ============================================================ */
-.more-wrap { position: relative; display: inline-flex; }
-.more-menu {
-  position: fixed; top: 0; left: 0;      /* 实际坐标由 JS 按按钮矩形写入 */
-  z-index: 240;                          /* 与最近删除 / 设置面板同级 */
-  min-width: 208px; max-width: 84vw;
-  background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--r-m); box-shadow: var(--shadow-2);
-  padding: 6px;
-}
-.mm-item {
-  display: flex; align-items: center; gap: 9px; width: 100%;
-  border: 0; border-radius: 8px; background: transparent;
-  color: var(--ink-2); font-family: inherit; font-size: 12.5px; font-weight: 500;
-  padding: 8px 10px; text-align: left; cursor: pointer;
-  transition: background .15s, color .15s;
-}
-.mm-item svg { width: 15px; height: 15px; flex: none; }
-.mm-item span { white-space: nowrap; }
-.mm-item:hover { background: var(--paper-2); color: var(--ink); }
-.mm-item:focus-visible { outline: 2px solid var(--ring); outline-offset: -1px; }
-.mm-item:active { transform: scale(.98); }
-/* 选中态（复选型菜单项：aria-checked 驱动） */
-.mm-item[aria-checked="true"] { color: var(--sel); background: var(--sel-soft); }
-.mm-item.favbtn.is-active { color: var(--sel); }
-.mm-item.is-blur { color: var(--sel); }
-/* 菜单里的角标：从"绝对定位盖章"改成行尾计数（左对齐文字 + 数字更自然） */
-.more-menu .badge { position: static; margin-left: auto; box-shadow: none; }
-/* 桌面版专属项在浏览器模式下整项隐藏（与过去 trashWrap 的行为一致） */
-.mm-item[hidden] { display: none; }
 
 /* ============================================================
    确认弹层（删除等不可逆操作）
@@ -1050,7 +970,7 @@ html.snap-single .single-tile {
   color: var(--ink); font-size: 12px; font-weight: 500;
   word-break: break-all; line-height: 1.45;
 }
-.vf-modal-more { display: block; margin-top: 6px; color: var(--muted-strong); font-size: 11.5px; }
+.vf-modal-more { display: block; margin-top: 6px; color: var(--muted); font-size: 11.5px; }
 .vf-modal-warn {
   display: block; margin-top: 9px; padding: 6px 9px;
   background: #fdf3f1; border: 1px solid #f0d6d0; border-radius: var(--r-s);
@@ -1070,7 +990,7 @@ html.snap-single .single-tile {
   font-family: var(--font-ui); font-size: 18px; font-weight: 700;
   color: var(--ink); letter-spacing: .02em;
 }
-.vf-about-ver { color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums; }
+.vf-about-ver { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .vf-about-tag {
   margin-left: auto; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px;
   background: var(--paper-2); color: var(--ink-2); font-size: 11px; white-space: nowrap;
@@ -1099,7 +1019,7 @@ html.snap-single .single-tile {
 .vf-about-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 3px; }
 .vf-about-upd { display: flex; align-items: center; gap: 10px; margin-top: 11px; flex-wrap: wrap; }
 .vf-about-upd .btn { padding: 4px 12px; font-size: 12px; }
-.vf-about-upd-r { color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
+.vf-about-upd-r { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .vf-about-upd-r.is-new { color: var(--ink); font-weight: 600; }
 .vf-about-upd-r.is-err { color: var(--danger); }
 
@@ -1116,7 +1036,7 @@ html.snap-single .single-tile {
   font-family: var(--font-mono, ui-monospace, Menlo, Consolas, monospace);
   font-size: 11px; line-height: 1.5;
 }
-.vf-shortcuts .vf-about-p { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted-strong); }
+.vf-shortcuts .vf-about-p { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); }
 
 /* ============================================================
    回收站视图（删掉的图片在这里找回）
@@ -1136,7 +1056,7 @@ html.snap-single .single-tile {
 }
 .tv-top .spacer { flex: 1 1 auto; }
 .tv-title { font-size: 17px; font-weight: 600; letter-spacing: .2px; }
-.tv-count { font-size: 12px; color: var(--muted-strong); font-variant-numeric: tabular-nums; }
+.tv-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tv-vsep { width: 1px; height: 20px; background: var(--line-2); margin: 0 2px; }
 .tv-top .btn svg { width: 14px; height: 14px; }
 .tv-top .btn:disabled { opacity: .45; cursor: not-allowed; }
@@ -1165,7 +1085,7 @@ html.snap-single .single-tile {
 .tv-card.tv-noprev .tv-ph::after {
   content: '预览不可用'; position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; color: var(--muted-strong);
+  font-size: 11px; color: var(--muted);
 }
 .tv-card.tv-noprev .tv-ph { background: repeating-linear-gradient(45deg, var(--paper-2), var(--paper-2) 8px, #eae6dc 8px, #eae6dc 16px); }
 
@@ -1197,22 +1117,22 @@ html.snap-single .single-tile {
   display: block; font-size: 12.5px; font-weight: 500;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tv-meta { display: block; font-size: 11px; color: var(--muted-strong); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tv-meta { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .tv-path {
-  display: block; font-size: 10.5px; color: var(--muted-strong); margin-top: 3px;
+  display: block; font-size: 10.5px; color: var(--muted); margin-top: 3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .82;
 }
 .tv-marquee {
   position: absolute; z-index: 8; pointer-events: none;
   border: 1px solid var(--sel); background: var(--sel-soft); border-radius: 2px;
 }
-.tv-empty { text-align: center; padding: 90px 20px; color: var(--muted-strong); }
+.tv-empty { text-align: center; padding: 90px 20px; color: var(--muted); }
 .tv-empty-ic { width: 40px; height: 40px; margin: 0 auto 14px; color: var(--line-2); }
 .tv-empty-title { font-size: 16px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
 .tv-empty-desc { font-size: 13px; }
 .tv-foot-note {
   max-width: 1760px; margin: 26px auto 0; padding: 0 22px;
-  font-size: 11.5px; color: var(--muted-strong); line-height: 1.7;
+  font-size: 11.5px; color: var(--muted); line-height: 1.7;
 }
 
 /* ============================================================
@@ -1248,7 +1168,14 @@ body.privacy-blur .tile::after {
   .topbar { position: sticky; }
   .ctrls {
     flex-wrap: nowrap; gap: 6px; flex: 0 1 auto; min-width: 0;
+    overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
   }
+  .ctrls.at-end {
+    -webkit-mask-image: none; mask-image: none;
+  }
+  .ctrls::-webkit-scrollbar { display: none; }
   .ctrls > .sep { display: none; }
   .seg-txt { display: none; }                /* 非最大化：分段控件只留图标 */
   .search.is-open input { width: 148px; max-width: 148px; }
@@ -1282,9 +1209,8 @@ body[data-theme="dark"] {
   --ink: #f2efe8;
   --ink-2: #c3bdb2;
   --muted: #8e887d;
-  --muted-strong: #9e988e;   /* 深色下对浮层 5.46、次级面板 5.81，均 ≥ 4.5 */
   --line: #33302b;
-  --line-2: #4b463e;
+  --line-2: #423e37;
   --accent: #f2efe8;
   --accent-soft: #2c2926;
   --sel: #d8a94e;

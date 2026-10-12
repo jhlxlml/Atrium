@@ -1074,53 +1074,38 @@ const SUITES = [
 
   /* ---------- 9. 顶栏布局 ---------- */
   {
-    id: 'topbar',    title: '顶栏布局 · 品牌文案已移除 / 低频控件收进更多菜单 / 排序下沉底栏 / 窄窗不换行',
+    id: 'topbar',    title: '顶栏布局 · 品牌文案已移除 / 眼睛按钮并入右侧 / 置顶按钮就位 / 窄窗不换行',
     kind: 'probe',
     script: 'probe_topbar.js',
-    keys: ['INJECT ', 'EYE ', 'PIN ', 'PIN2 ', 'NARROW ', 'GEO ', 'MORE '],
+    keys: ['INJECT ', 'EYE ', 'PIN ', 'PIN2 ', 'NARROW ', 'GEO '],
     tags: ['slow'],
     run: function (ctx) {
       const check = ctx.check;
       const inj = ctx.keys['INJECT '], eye = ctx.keys['EYE '], pin = ctx.keys['PIN '],
-        pin2 = ctx.keys['PIN2 '], narrow = ctx.keys['NARROW '], geo = ctx.keys['GEO '],
-        more = ctx.keys['MORE '];
+        pin2 = ctx.keys['PIN2 '], narrow = ctx.keys['NARROW '], geo = ctx.keys['GEO '];
       if (!geo) { check('探针返回数据', false, '未解析到 GEO 输出'); return; }
       check('顶栏已移除品牌文案', geo.brandTextPresent === false);
-      /* v1.15.0 信息架构重构：常驻只剩 模式分段 / 尺寸 / 搜索 / 更多 / 设置，
-         收藏·最近删除·隐私·相框·置顶 收进「更多 ⋯」，排序移到底部状态栏。 */
-      check('「更多 ⋯」按钮在控件簇内', geo.moreInCtrls === true);
-      check('更多菜单已挂到 body 下（fixed 浮层，不受 .ctrls 裁剪）',
-        geo.moreMenuParent === 'BODY', String(geo.moreMenuParent));
-      check('低频控件全部收进更多菜单',
-        geo.favInMenu === true && geo.trashInMenu === true && geo.eyeInMenu === true
-          && geo.frameInMenu === true && geo.pinInMenu === true,
-        JSON.stringify({ fav: geo.favInMenu, trash: geo.trashInMenu, eye: geo.eyeInMenu,
-          frame: geo.frameInMenu, pin: geo.pinInMenu }));
-      check('排序控件已下沉底部状态栏（与每页显示同组）',
-        geo.sortInViewbar === true && geo.sortDirInViewbar === true,
-        JSON.stringify({ key: geo.sortInViewbar, dir: geo.sortDirInViewbar }));
-      check('设置按钮是控件簇的最后一颗',
-        geo.setIdx === geo.ctrlCount - 1,
-        'setIdx=' + geo.setIdx + ' total=' + geo.ctrlCount);
-      check('顶栏左侧依次是 品牌标记 + 来源栏 + 间距 + 控件簇',
-        Array.isArray(geo.topbarLeftChildren) && geo.topbarLeftChildren.length === 4
-          && geo.topbarLeftChildren[0] === 'brand-mark'
-          && geo.topbarLeftChildren[3].indexOf('ctrls') === 0,
+      check('眼睛按钮位于右侧控件簇内', geo.eyeInCtrls === true);
+      check('眼睛按钮位于最近删除之后', geo.eyeAfterTrash === true && geo.eyeIdx > geo.trashIdx,
+        'trashIdx=' + geo.trashIdx + ' eyeIdx=' + geo.eyeIdx);
+      check('顶栏左侧只有来源栏 + 间距 + 控件簇',
+        Array.isArray(geo.topbarLeftChildren) && geo.topbarLeftChildren.length === 3,
         JSON.stringify(geo.topbarLeftChildren));
       check('紧凑高度规则已注入', geo.hasFitRule === true);
       if (eye) {
         check('眼睛按钮可切换模糊预览', eye.before === false && eye.after === true && eye.blurred === true);
       }
-      /* 相框（正式功能）：菜单项默认可见；显隐只用 hidden 属性，节点不出菜单 */
-      check('相框已转正：defaults 为开、菜单项可见且节点仍在菜单内',
-        geo.frameDefaultOn === true && geo.frameVisible === true && geo.frameInMenu === true,
+      /* 相框 v1.11.0 起为**正式功能**：顶栏图标默认可见；且无论显隐节点都留在 .ctrls 里
+         （用 hidden 属性而不是摘节点，否则上面的 ctrlCount / pinIsLast / pinIdx 全会变） */
+      check('相框已转正：defaults() 为开、顶栏图标可见且节点仍在控件簇内',
+        geo.frameDefaultOn === true && geo.frameVisible === true && geo.frameIdx >= 0,
         'default=' + geo.frameDefaultOn + ' visible=' + geo.frameVisible
-          + ' inMenu=' + geo.frameInMenu + ' total=' + geo.ctrlCount);
-      /* 置顶按钮（v1.7.0）：现在住在更多菜单里；aria-checked 承载选中态 */
+          + ' idx=' + geo.frameIdx + ' total=' + geo.ctrlCount);
+      /* 置顶按钮（v1.7.0）：位置在最右端（紧邻系统窗口按钮）、点击真的调到原生桥、状态双向同步 */
       if (pin) {
-        check('置顶项位于更多菜单内',
-          geo.pinInMenu === true && geo.setIdx === geo.ctrlCount - 1,
-          'setIdx=' + geo.setIdx + ' total=' + geo.ctrlCount);
+        check('置顶按钮位于控件簇内、且是最右一个',
+          geo.pinInCtrls === true && geo.pinAfterSet === true && geo.pinIsLast === true,
+          'setIdx=' + geo.setIdx + ' pinIdx=' + geo.pinIdx + ' total=' + geo.ctrlCount);
         check('桌面版下置顶按钮可见且有可读标签',
           pin.visible === true && pin.canPin === true && /置顶/.test(pin.label || ''),
           'visible=' + pin.visible + ' canPin=' + pin.canPin + ' label=' + pin.label);
@@ -1128,24 +1113,15 @@ const SUITES = [
           pin.ipcCalls >= 1 && pin.ipcLast === true,
           'calls=' + pin.ipcCalls + ' last=' + pin.ipcLast);
         check('置顶状态：设置 / 图标 / aria / 高亮 四者一致',
-          pin.settingOn === true && pin.afterChecked === 'true'
+          pin.settingOn === true && pin.afterPressed === 'true'
             && pin.afterIcon === '#i-pin-on' && pin.isOnClass === true,
-          JSON.stringify({ setting: pin.settingOn, aria: pin.afterChecked, icon: pin.afterIcon, on: pin.isOnClass }));
+          JSON.stringify({ setting: pin.settingOn, aria: pin.afterPressed, icon: pin.afterIcon, on: pin.isOnClass }));
         if (pin2) {
           check('再次点击可取消置顶并回到未选中态',
-            pin2.checked === 'false' && pin2.setting === false
+            pin2.pressed === 'false' && pin2.setting === false
               && pin2.icon === '#i-pin' && pin2.isOnClass === false && pin2.ipcLast === false,
-            JSON.stringify({ aria: pin2.checked, setting: pin2.setting, icon: pin2.icon, last: pin2.ipcLast }));
+            JSON.stringify({ aria: pin2.pressed, setting: pin2.setting, icon: pin2.icon, last: pin2.ipcLast }));
         }
-      }
-      if (more) {
-        check('更多菜单可开：菜单显形、aria-expanded 同步、坐标已写入',
-          more.opened === true && more.aria === 'true' && more.placed === true,
-          JSON.stringify(more));
-        check('点「最近删除」→ 面板弹出且菜单收起（互斥）',
-          more.trashOpen === true && more.menuClosedAfterTrash === true,
-          JSON.stringify({ open: more.trashOpen, closed: more.menuClosedAfterTrash }));
-        check('点面板外部 → 面板收起', more.trashClosedAfterOutside === true);
       }
       if (narrow) {
         check('窄窗口下来源栏与控件簇同排', narrow.sameRow === true);

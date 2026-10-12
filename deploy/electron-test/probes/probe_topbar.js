@@ -99,31 +99,6 @@ async function run() {
   })()`);
   console.log('EYE ' + JSON.stringify(eyeTest));
 
-  /* 「更多 ⋯」溢出菜单（v1.15.0）：菜单可开、坐标已写入；点「最近删除」项 →
-     面板弹出且菜单收起（互斥）；点页面空白 → 面板收起。 */
-  const moreTest = await win.webContents.executeJavaScript(`(() => {
-    const out = {};
-    const btn = document.getElementById('moreBtn');
-    const menu = document.getElementById('moreMenu');
-    const panel = document.getElementById('trashPanel');
-    btn.click();
-    out.opened = menu.hidden === false;
-    out.aria = btn.getAttribute('aria-expanded');
-    out.menuParent = menu.parentElement.tagName;
-    out.placed = menu.style.left !== '' && menu.style.top !== '';
-    out.itemCount = menu.querySelectorAll('.mm-item').length;
-    // 点「最近删除」项：面板弹出，菜单自身收起
-    document.getElementById('trashBtn').click();
-    out.trashOpen = panel.hidden === false;
-    out.menuClosedAfterTrash = menu.hidden === true;
-    out.ariaAfterTrash = btn.getAttribute('aria-expanded');
-    // 点页面空白（body）：面板收起
-    document.body.click();
-    out.trashClosedAfterOutside = panel.hidden === true;
-    return out;
-  })()`);
-  console.log('MORE ' + JSON.stringify(moreTest));
-
   /* 窗口置顶按钮：可见（桌面版）→ 点击后应真的调到原生桥，且状态/图标/aria 同步 */
   const pinTest = await win.webContents.executeJavaScript(`(async () => {
     const btn = document.getElementById('pinBtn');
@@ -132,11 +107,11 @@ async function run() {
     out.visible = !btn.hidden;
     out.canPin = !!(window.Native && window.Native.canPin);
     out.label = btn.getAttribute('aria-label');
-    out.beforeChecked = btn.getAttribute('aria-checked');
+    out.beforePressed = btn.getAttribute('aria-pressed');
     out.beforeIcon = btn.querySelector('use') ? btn.querySelector('use').getAttribute('href') : null;
     btn.click();
     await new Promise(r => setTimeout(r, 300));
-    out.afterChecked = btn.getAttribute('aria-checked');
+    out.afterPressed = btn.getAttribute('aria-pressed');
     out.afterIcon = btn.querySelector('use') ? btn.querySelector('use').getAttribute('href') : null;
     out.settingOn = !!window.State.settings.alwaysOnTop;
     out.isOnClass = btn.classList.contains('is-on');
@@ -158,7 +133,7 @@ async function run() {
     btn.click();
     await new Promise(r => setTimeout(r, 300));
     return {
-      checked: btn.getAttribute('aria-checked'),
+      pressed: btn.getAttribute('aria-pressed'),
       icon: btn.querySelector('use') ? btn.querySelector('use').getAttribute('href') : null,
       setting: !!window.State.settings.alwaysOnTop,
       isOnClass: btn.classList.contains('is-on'),
@@ -228,13 +203,10 @@ async function run() {
                bg: c.backgroundColor, radius: c.borderRadius, border: c.borderTopColor, pad: c.padding }; };
     const c = document.querySelector('.ctrls');
     const kids = c ? [...c.children] : [];
-    const menu = document.getElementById('moreMenu');
-    const mi = kids.findIndex(k => k.id === 'moreWrap');
+    const ti = kids.findIndex(k => k.classList.contains('trash-wrap'));
+    const ei = kids.findIndex(k => k.id === 'brandEye');
     const si = kids.findIndex(k => k.id === 'setBtn');
-    // v1.15.0 信息架构重构：低频控件全部收进「更多 ⋯」菜单；排序下沉底栏。
-    // 断言的是"节点在哪"而不是"位置坐标" —— 挂在 body 下 fixed 定位后坐标没有意义。
-    const inMenu = (id) => { const e = document.getElementById(id); return !!e && !!menu && menu.contains(e); };
-    const inViewbar = (id) => { const e = document.getElementById(id); return !!e && !!e.closest('.vb-left'); };
+    const pi = kids.findIndex(k => k.id === 'pinBtn');
     return {
       frameUiErr: window.__frameUiErr || null,
       frameDefaultOn: !!(window.State.defaults && window.State.defaults.showFrame === true),
@@ -249,23 +221,14 @@ async function run() {
       hasFitRule: [...document.styleSheets].some(ss => { try {
         return [...ss.cssRules].some(r => r.cssText && r.cssText.includes('width: fit-content')); } catch(e){ return false; } }),
       brandTextPresent: !!document.querySelector('.brand-name, .brand-en'),
-      /* 「更多 ⋯」溢出菜单 */
-      moreInCtrls: mi >= 0,
-      moreMenuParent: menu ? menu.parentElement.tagName : null,
-      moreBtnExists: !!document.getElementById('moreBtn'),
-      moreBtnExpandedAttr: document.getElementById('moreBtn')
-        ? document.getElementById('moreBtn').getAttribute('aria-expanded') : null,
-      favInMenu: inMenu('favOnlyBtn'),
-      trashInMenu: inMenu('trashBtn'),
-      eyeInMenu: inMenu('brandEye'),
-      frameInMenu: inMenu('frameBtn'),
-      pinInMenu: inMenu('pinBtn'),
-      /* 排序已从顶栏移到底部状态栏 */
-      sortInViewbar: inViewbar('sortKey'),
-      sortDirInViewbar: inViewbar('sortDir'),
-      setIdx: si, ctrlCount: kids.length,
-      /* 相框（v1.11.0 起为**正式功能**）：默认可见；显隐只用 hidden 属性，节点不出菜单 */
+      eyeInCtrls: ei >= 0, eyeAfterTrash: ei === ti + 1, trashIdx: ti, eyeIdx: ei,
+      // 置顶按钮：位于控件簇内，且是控件簇的最后一个（最靠近系统窗口按钮）
+      pinInCtrls: pi >= 0, pinAfterSet: pi === si + 1, pinIsLast: pi === kids.length - 1,
+      setIdx: si, pinIdx: pi, ctrlCount: kids.length,
+      // 相框（v1.11.0 起为**正式功能**）：默认就是可见的；且无论显隐都**仍在 .ctrls 里**
+      // （用 hidden 属性而不是摘节点，否则 ctrlCount / pinIsLast / pinIdx 都会跟着变）
       frameVisible: (() => { const b = document.getElementById('frameBtn'); return !!b && b.hidden === false; })(),
+      frameIdx: kids.findIndex(k => k.id === 'frameBtn'),
       trashPanelParent: document.getElementById('trashPanel') ? document.getElementById('trashPanel').parentElement.tagName : null,
       topbarLeftChildren: [...document.querySelector('.topbar-in').children].map(k => k.className || k.id),
     };
