@@ -1,0 +1,1691 @@
+/* ============================================================
+   Atrium · 回归套件入口（P0-1）
+   ------------------------------------------------------------
+   一条命令跑完全部质量门禁：
+     node deploy/electron-test/run_all.js            跑全部
+     node deploy/electron-test/run_all.js --fast     只跑纯函数与联合几何（跳过 Electron）
+     node deploy/electron-test/run_all.js tf center  只跑指定套件
+
+   设计要点：
+   1) 纯函数层（js/transform.js）用 Node 直接断言 —— 毫秒级反馈，不启动 Electron；
+   2) Electron 层探针只输出原始测量值，断言全部集中在本文件，避免「探针自己判自己」；
+   3) 「三路径联合回归」（缩放×旋转×平移）是硬性门禁，任何一条破坏都会失败；
+   4) 任一失败即以非零码退出，可直接接入 CI / 提交钩子。
+   ============================================================ */
+'use strict';
+
+const path = require('path');
+const fs = require('fs');
+/* spawnSync 的默认 stdio 会给 stdin 建管道，本机沙箱拒绝（EBUSY，连 cmd.exe
+   都起不来）。子进程（robocopy / electron 探针 / 7z / where）没有一个需要
+   stdin，所以统一把它设成 ignore；stdout 与 stderr 照常 pipe，调用方无感。
+   显式传了 stdio 的调用点仍然优先。 */
+const { spawnSync: rawSpawnSync } = require('child_process');
+const spawnSync = function (cmd, args, opts) {
+  return rawSpawnSync(cmd, args, Object.assign({ stdio: ['ignore', 'pipe', 'pipe'] }, opts || {}));
+};
+const { runProbe, runAppSelftest } = require('./run_probe.js');
+
+const HERE = __dirname;
+const ROOT = path.resolve(HERE, '..', '..');
+const LOGS = path.join(HERE, 'logs');
+if (!fs.existsSync(LOGS)) fs.mkdirSync(LOGS, { recursive: true });
+
+const EPS = 0.6;          // 几何容差（px）
+const EPS_FOCAL = 0.5;    // 不动点漂移容差（内容像素）
+
+/* ---------- 断言收集 ---------- */
+function makeChecker(suiteName, results) {
+  return function check(name, cond, detail) {
+    results.push({ suite: suiteName, name: name, ok: !!cond, detail: detail || '' });
+  };
+}
+function near(check, name, actual, expected, eps, unit) {
+  const e = eps == null ? EPS : eps;
+  if (typeof actual !== 'number' || !isFinite(actual)) {
+    check(name, false, '非数值: ' + actual);
+    return;
+  }
+  const d = Math.abs(actual - expected);
+  check(name, d <= e, '实测 ' + round(actual) + '，期望 ' + round(expected) + '，偏差 ' + round(d) + (unit || 'px'));
+}
+function round(v) { return typeof v === 'number' ? Math.round(v * 1000) / 1000 : v; }
+
+/* ---------- 稳健的 JSON 提取（探针输出后常带 IPC 噪声）---------- */
+function extractJSON(text, key) {
+  if (!text) return null;
+  const i = text.indexOf(key);
+  if (i < 0) return null;
+  const s = text.slice(i + key.length);
+  const m = s.search(/[[{]/);
+  if (m < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let j = m; j < s.length; j++) {
+    const c = s[j];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '[' || c === '{') depth++;
+    else if (c === ']' || c === '}') {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(s.slice(m, j + 1)); } catch (e) { return null; }
+      }
+    }
+  }
+  return null;
+}
+
+/* ============================================================
+   套件定义
+   每项：{ id, title, kind:'node'|'probe', script, keys:[输出标签], run(ctx) }
+   ============================================================ */
+const SUITES = [
+  /* ---------- 1. 纯函数：js/transform.js ---------- */
+  {
+    id: 'unit',
+    title: '纯函数 · transform.js 几何层（Node，无需 Electron）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'transform.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('纯函数测试全部通过', ctx.code === 0, '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
+  /* ---------- 1b. 纯函数 · 图片头尺寸解析（性能优化的正确性地基） ---------- */
+  {
+    id: 'header',
+    title: '纯函数 · Util.sizeFromHeader 逐格式偏移量（Node，无需 Electron）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'imageheader.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('图片头解析测试全部通过', ctx.code === 0, '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
+  /* ---------- 1b2. 纯函数：相框的洗牌 / 朝向 / 按比例装箱（Node） ---------- */
+  {
+    id: 'frame',
+    title: '纯函数 · 相框洗牌无偏 / 不连播同一张 / 旋转朝向 / 按比例装箱不越界（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'frame.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('相框纯函数测试全部通过（505 断言）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
+  /* ---------- 1b3. 纯函数：无障碍焦点数学与播报区（Node） ---------- */
+  {
+    id: 'a11y',
+    title: '纯函数 · 无障碍 Tab 循环 / tabindex 边界 / 初始焦点选择 / 播报区（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'a11y.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('无障碍纯函数与播报区测试全部通过（77 断言）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
+  /* ---------- 1b4. 纯函数：瀑布流的列分配 / 高度 / 二分代理不变量（Node） ----------
+     核心不变量：positions[i].y 单调不减（可安全二分），而 y+h **不单调**
+     （同列里后放的矮图底边可能更靠上）→ 网格的可见区裁剪 / 滚动锚定 / 框选
+     三处都必须改按单调的 yMax 前缀数组二分；这条套件就是那三处的正确性地基。 */
+  {
+    id: 'masonryunit',
+    title: '纯函数 · 瀑布流列分配 / 最短列优先 / y 单调而 y+h 不单调 / yMax 覆盖不变量（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'masonry.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('瀑布流纯函数测试全部通过（87 断言）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
+  /* ---------- 1b5. 纯函数：桌面集成（菜单模板 / 加速键 / 命令表接线） ----------
+     这一层全是"写错了也不报错"的东西：菜单项少接一个 cmd 只是点了没反应，
+     加速键拼错只是注册不上。所以除了正向断言，套件里还有**反向用例**
+     （故意写坏的模板必须被审查器拒绝），否则门禁等于恒真。 */
+  {
+    id: 'desktop',
+    title: '纯函数 · 桌面集成：菜单模板 / 加速键合法性与唯一性 / 命令表接线 / 图标点阵（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'desktop.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('桌面集成纯函数测试全部通过', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
+  /* ---------- 1c. 打开性能：大图 × 大目录的真实耗时与机制 ---------- */
+  {
+    id: 'perf',
+    title: '打开性能 · 文件头取尺寸 / 解码即降采样 / 缩略图落盘（二次打开零解码）',
+    kind: 'probe',
+    script: 'probe_perf.js',
+    key: 'PERF ',
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.first || !d.second) { check('探针返回数据', false, '未解析到 PERF 输出'); return; }
+      const imgs = d.images || [];
+
+      /* ① 尺寸来源：读文件头 vs 浏览器真实解码，必须逐张完全一致。
+            这条是整条优化链路的地基 —— 缩略图改成降采样解码后，尺寸不能再从
+            解码产物里拿，只能靠读文件头；读错了整屏瓦片都会排错形状。 */
+      const xc = d.xcheck || [];
+      check('文件头解析的宽高与浏览器真实解码逐张一致',
+        xc.length >= 4 && xc.every(function (x) { return x.match === true; }),
+        xc.map(function (x) { return x.name + '=' + (x.match ? 'OK' : '不一致'); }).join(' '));
+      check('尺寸探测只需读文件头（不需要解码）',
+        !!(d.sizeApi && d.sizeApi.imageSizeIsFn && d.sizeApi.hasReadHead),
+        JSON.stringify(d.sizeApi && { fn: d.sizeApi.imageSizeIsFn, rh: d.sizeApi.hasReadHead }));
+      const via = d.sizeApi && d.sizeApi.viaApi;
+      check('尺寸探测 API 返回的宽高正确',
+        !!(via && imgs[0] && via.w === imgs[0].w && via.h === imgs[0].h),
+        JSON.stringify(via) + ' 期望 ' + (imgs[0] ? imgs[0].w + '×' + imgs[0].h : '?'));
+
+      /* ② 尺寸库必须存「原图真实尺寸」。
+            降采样解码的产物尺寸远小于原图；若把它当原图尺寸写进缓存，
+            下次打开整屏布局就全错了（而且是悄悄错）。 */
+      const it0 = d.first.items || [];
+      const wrongDim = it0.filter(function (it, i) {
+        return !imgs[i] || it.w !== imgs[i].w || it.h !== imgs[i].h;
+      });
+      check('尺寸库存的是原图真实尺寸（不是缩略图尺寸）',
+        it0.length >= 4 && wrongDim.length === 0,
+        it0.map(function (it, i) { return it.name + ':' + it.w + '×' + it.h + (imgs[i] ? '(应' + imgs[i].w + '×' + imgs[i].h + ')' : ''); }).join(' '));
+
+      /* ③ 降采样不能改变宽高比 */
+      const badAr = it0.filter(function (it, i) {
+        if (!imgs[i]) return true;
+        const t = imgs[i].w / imgs[i].h;
+        return Math.abs(it.ratio - t) / t > 0.01;
+      });
+      check('降采样后宽高比与原图一致（误差 <1%）', badAr.length === 0, badAr.map(function (x) { return x.name; }).join(','));
+
+      const tooBig = (d.first.shown || []).filter(function (s) { return Math.max(s.nw, s.nh) > 1600; });
+      check('缩略图最长边不超过上限 1600px', tooBig.length === 0,
+        (d.first.shown || []).map(function (s) { return s.nw + '×' + s.nh; }).join(' '));
+
+      /* ④ 首开：走的是降采样解码，没有掉到 <img> 全解兜底 */
+      const st1 = d.first.stats || {};
+      check('首开全部走「解码即降采样」路径（无 <img> 兜底）',
+        st1.viaBitmap >= d.first.itemCount && st1.viaImg === 0,
+        'decodes=' + st1.decodes + ' bitmap=' + st1.viaBitmap + ' img=' + st1.viaImg);
+      check('首开所有瓦片都真的显示出图了',
+        d.first.allOk === true && d.first.tileCount >= d.first.itemCount,
+        'tiles=' + d.first.tileCount + '/' + d.first.itemCount);
+
+      /* ⑤ 二次打开：零解码、全命中落盘缓存 —— 这是「图片多时打开慢」的主修项 */
+      const st2 = d.second.stats || {};
+      check('落盘缓存的条数 = 图片数', d.cacheBefore && d.cacheBefore.count === d.first.itemCount,
+        JSON.stringify(d.cacheBefore));
+      check('二次打开零解码（全部命中缩略图落盘缓存）', st2.decodes === 0,
+        'decodes=' + st2.decodes + ' diskHits=' + st2.diskHits + ' misses=' + st2.misses);
+      check('二次打开的每一次取图都来自磁盘命中',
+        st2.diskHits >= d.second.itemCount && st2.misses === 0,
+        'diskHits=' + st2.diskHits + ' 需≥' + d.second.itemCount + '，misses=' + st2.misses);
+      check('二次打开出图更快（至少 2×）', d.second.allMs * 2 <= d.first.allMs,
+        '首开 ' + d.first.allMs + 'ms → 二开 ' + d.second.allMs + 'ms');
+
+      /* ⑥ 降采样解码本身的契约（不做速度断言 —— 实测与全量解码持平：
+            熵解码不随缩放减少，省的是 IDCT 与峰值内存，见更新说明） */
+      const ab = d.decodeAB || {};
+      check('降采样输出正是请求的像素尺寸',
+        ab.decodeSmallPx === '640x427' && ab.decodeFullPx === (ab.srcW + 'x' + ab.srcH),
+        'full=' + ab.decodeFullPx + ' small=' + ab.decodeSmallPx);
+      check('只给一边时浏览器自动保持宽高比',
+        !!ab.arTrue && Math.abs(ab.arOnlyWidth - ab.arTrue) / ab.arTrue < 0.01,
+        'arTrue=' + ab.arTrue + ' arOnlyWidth=' + ab.arOnlyWidth + ' (' + ab.onlyWidthPx + ')');
+      check('降采样不慢于全量解码（速度持平即可，防止回退）',
+        ab.decodeSmallMs <= ab.decodeFullMs * 2,
+        'full=' + ab.decodeFullMs + 'ms small=' + ab.decodeSmallMs + 'ms');
+    },
+  },
+
+  /* ---------- 2. 打包链路门禁：ZIP 写入器的 CRC 正确性与 7-Zip 兼容 ---------- */
+  {
+    id: 'zip',
+    title: '打包链路 · ZIP CRC / 结构 / 7-Zip 第三方复验',
+    kind: 'node',
+    script: path.join(HERE, 'zip_gate.js'),
+    quickFlag: true,
+    tags: ['core'],
+    run: function (ctx) {
+      const check = ctx.check;
+      let d = null;
+      try { d = JSON.parse(String(ctx.tail || '').replace(/^ZIPGATE\s*/, '')); } catch (e) { d = null; }
+      if (!d) { check('门禁脚本返回可解析结果', false, String(ctx.tail || '').slice(0, 200)); return; }
+
+      check('CRC 实现自检通过（标准向量 + 原生/JS 表交叉验证）', d.crcSelfTestOk === true, d.crcSource);
+      // 这一条就是 v1.5.0 翻车的那个 bug：CRC 算在压缩后字节流上
+      check('「CRC 算在压缩流上」的坏包被判失败', d.badRejected === true, d.badReason || '');
+      check('坏包失分点正是 CRC（实算值与声明值不符）', d.badCrcBad === 1, 'crcBad=' + d.badCrcBad);
+      // 与坏包只差 CRC 一个变量的对照组必须通过 → 失败归因于 CRC，而非别的结构问题
+      check('仅差 CRC 一个变量的对照组被判通过', d.controlAccepted === true);
+
+      if (d.electronZipExists && !d.electronSkipped) {
+        check('Electron 大包全部条目 CRC 正确、内容与源一致',
+          d.electronOk === true && d.electronCrcBad === 0 && d.electronContentBad === 0,
+          '条目 ' + d.electronEntries + ' / CRC 错误 ' + d.electronCrcBad + ' / 内容不符 ' + d.electronContentBad);
+      }
+
+      if (d.sevenZipFound) {
+        if (d.electronZipExists && !d.electronSkipped) {
+          check('7-Zip 复验 Electron 大包：无任何 CRC Failed',
+            d.sevenZipElectronOk === true && d.sevenZipElectronCrcFailed === 0,
+            'CRC Failed 计数 ' + d.sevenZipElectronCrcFailed);
+        }
+      } else {
+        check('7-Zip 未安装时跳过第三方复验（不视为失败）', true, '未找到 7z.exe');
+      }
+    },
+  },
+
+  /* ---------- 品牌图标：ICO 是手写的二进制容器，必须有门禁 ---------- */
+  {
+    id: 'icon',
+    title: '品牌图标 · ICO 结构 / 内嵌 PNG 尺寸一致 / 反向用例（Node）',
+    kind: 'node',
+    script: path.join(HERE, 'icon_gate.js'),
+    quickFlag: true,
+    tags: ['core'],
+    run: function (ctx) {
+      const check = ctx.check;
+      let d = null;
+      try { d = JSON.parse(String(ctx.tail || '').replace(/^ICONGATE\s*/, '')); } catch (e) { d = null; }
+      if (!d) { check('门禁脚本返回可解析结果', false, String(ctx.tail || '').slice(0, 200)); return; }
+
+      check('brand/icon.ico 存在', d.exists === true, d.path);
+      check('ICO 容器结构合法（头 / 目录项 / 数据区间 / 内嵌 PNG 尺寸一致）',
+        d.ok === true,
+        (d.errors && d.errors.length) ? d.errors.join(' | ') : (d.count + ' 个尺寸 / ' + d.bytes + ' 字节'));
+      check('覆盖桌面所需尺寸 16/24/32/48/64/128/256',
+        [16, 24, 32, 48, 64, 128, 256].every(function (s) { return (d.sizes || []).indexOf(s) >= 0; }),
+        (d.sizes || []).join('/'));
+      /* 反向用例：不通过的校验器等于没有校验器（同 zip 套件里"坏包必须被判失败"的思路） */
+      check('反向用例全部被拒（坏包不会被放行）',
+        d.reverseAllRejected === true && (d.reverseCases || []).length >= 3,
+        (d.reverseCases || []).map(function (c) { return (c.rejected ? '✓' : '✗') + c.name; }).join('  '));
+    },
+  },
+
+  /* ---------- 3. 三路径联合回归（核心门禁）---------- */
+  {
+    id: 'tf',
+    title: '三路径联合回归 · 缩放 × 旋转 × 平移（真实 Electron）',
+    kind: 'probe',
+    script: 'probe_transform.js',
+    key: 'TF ',
+    tags: ['core', 'joint'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.steps) { check('探针返回数据', false, '未解析到 TF 输出'); return; }
+      const S = d.steps;
+      const step = function (k) { return S[k]; };
+
+      // A 适应态居中
+      if (step('A1 fit')) {
+        near(check, 'A1 适应态居中', step('A1 fit').centerDev.dx, 0);
+        near(check, 'A1 适应态居中(纵)', step('A1 fit').centerDev.dy, 0);
+      } else check('A1 适应态居中', false, '缺少步骤 A1');
+
+      // B 不动点缩放（非中心）
+      const b = step('B1 zoom@offcenter');
+      if (b) {
+        check('B1 首次缩放确实触发了边界夹取（场景有效）', b.drift1 && b.drift1.clamped === true);
+        check('B1 未夹取时不漂移', b.drift2 && b.drift2.clamped === false, b.drift2 ? 'clamped=' + b.drift2.clamped : '无数据');
+        if (b.drift2) {
+          check('B1 不动点漂移 < ' + EPS_FOCAL + 'px', Math.max(b.drift2.px, b.drift2.py) <= EPS_FOCAL,
+            'dx=' + round(b.drift2.px) + ' dy=' + round(b.drift2.py));
+        }
+      } else check('B1 不动点缩放', false, '缺少步骤 B1');
+
+      // C 平移后再缩放（v1.4.x 隐藏缺陷的回归点）
+      const c1 = step('C1 zoom@panned-offcenter'), c2 = step('C2 zoomout@panned-offcenter');
+      if (c1 && c1.drift) {
+        check('C1 场景未触发夹取（断言有效）', c1.drift.clamped === false, 'clamped=' + c1.drift.clamped);
+        check('C1 平移后放大不漂移 < ' + EPS_FOCAL + 'px', Math.max(c1.drift.px, c1.drift.py) <= EPS_FOCAL,
+          'dx=' + round(c1.drift.px) + ' dy=' + round(c1.drift.py));
+        near(check, 'C1 放大后仍居中', c1.centerDev.dx, 0);
+      } else check('C1 平移后放大不漂移', false, '缺少步骤 C1');
+      if (c2 && c2.drift) {
+        check('C2 平移后缩小不漂移 < ' + EPS_FOCAL + 'px', Math.max(c2.drift.px, c2.drift.py) <= EPS_FOCAL,
+          'dx=' + round(c2.drift.px) + ' dy=' + round(c2.drift.py));
+      } else check('C2 平移后缩小不漂移', false, '缺少步骤 C2');
+
+      // C3 夹取精确、不露白
+      const c3 = step('C3 clamp-exact');
+      if (c3 && c3.noWhiteGap) {
+        check('C3 大图不露白（左）', c3.noWhiteGap.left <= EPS, 'gap=' + round(c3.noWhiteGap.left));
+        check('C3 大图不露白（上）', c3.noWhiteGap.top <= EPS, 'gap=' + round(c3.noWhiteGap.top));
+      } else check('C3 夹取不露白', false, '缺少步骤 C3');
+
+      // D 放大态下旋转 4 个角度都居中，且包围盒长宽互换
+      const d1 = step('D1 rotate@zoomed');
+      if (d1 && d1.each) {
+        let bad = 0;
+        d1.each.forEach(function (r) { if (Math.abs(r.dev.dx) > EPS || Math.abs(r.dev.dy) > EPS) bad++; });
+        check('D1 放大态旋转 0/90/180/270 全部居中', bad === 0, bad + '/' + d1.each.length + ' 偏离');
+      } else check('D1 旋转居中', false, '缺少步骤 D1');
+
+      // E 平移态旋转：fit 复位平移且居中
+      const e1 = step('E1 rotate@panned');
+      if (e1) {
+        near(check, 'E1 旋转后居中（横）', e1.dev.dx, 0);
+        near(check, 'E1 旋转后居中（纵）', e1.dev.dy, 0);
+      } else check('E1 旋转后居中', false, '缺少步骤 E1');
+
+      // F 缩到装得下：受自由上限约束、不飞出视野
+      const f1 = step('F1 shrink-bounded');
+      if (f1) {
+        check('F1 缩小后仍完整可见（图像小于舞台）', f1.fitsNow === true);
+        check('F1 平移量被夹在自由上限内', d.invariants && d.invariants.shrinkBounded && d.invariants.shrinkBounded.withinFreeLimit === true,
+          d.invariants && d.invariants.shrinkBounded ? 'tx=' + d.invariants.shrinkBounded.tx + ' limit=' + d.invariants.shrinkBounded.freeLimit : '无数据');
+      } else check('F1 缩小后边界约束', false, '缺少步骤 F1');
+
+      // G 大图四方向拖动 + 极限精确贴边
+      const g1 = step('G1 big-pan-4dir');
+      if (g1 && g1.dirs) {
+        const moved = {};
+        g1.dirs.forEach(function (x) { moved[x.dir] = x; });
+        check('G1 上拖生效', moved.up && moved.up.moved.dy < -50, moved.up ? 'dy=' + moved.up.moved.dy : '');
+        check('G1 下拖生效', moved.down && moved.down.moved.dy > 50, moved.down ? 'dy=' + moved.down.moved.dy : '');
+        check('G1 左拖生效', moved.left && moved.left.moved.dx < -50, moved.left ? 'dx=' + moved.left.moved.dx : '');
+        check('G1 右拖生效', moved.right && moved.right.moved.dx > 50, moved.right ? 'dx=' + moved.right.moved.dx : '');
+        const allGrabbed = g1.dirs.every(function (x) { return x.grabbed === true; });
+        const allReleased = g1.dirs.every(function (x) { return x.released === true; });
+        check('G1 拖动过程进入抓取态', allGrabbed);
+        check('G1 松手后退出抓取态', allReleased);
+        check('G1 拖到极限精确贴边（不露白）', g1.edgeGap.left <= EPS && g1.edgeGap.top <= EPS,
+          'left=' + round(g1.edgeGap.left) + ' top=' + round(g1.edgeGap.top));
+      } else check('G1 四方向拖动', false, '缺少步骤 G1');
+
+      // H 小图仍可拖动（用户明确要求：不管多大都能拖）
+      const h1 = step('H1 small-pan');
+      if (h1) {
+        check('H1 小图确实小于舞台（前置条件）', h1.canPanSmall === false);
+        check('H1 小图可拖动', Math.abs(h1.moved.dx - 120) <= 1 && Math.abs(h1.moved.dy - 80) <= 1,
+          'dx=' + h1.moved.dx + ' dy=' + h1.moved.dy);
+        check('H1 小图拖动时进入抓取态', h1.grabbed === true);
+      } else check('H1 小图可拖动', false, '缺少步骤 H1');
+
+      // I 混合序列（缩放→平移→旋转→缩放→平移）
+      const i1 = step('I1 mixed-sequence');
+      if (i1 && i1.seq) {
+        const bad = i1.seq.filter(function (r) { return Math.abs(r.dev.dx) > EPS || Math.abs(r.dev.dy) > EPS; });
+        check('I1 混合序列每一步都居中（' + i1.seq.length + ' 步）', bad.length === 0,
+          bad.map(function (r) { return r.step + '(' + r.dev.dx + ',' + r.dev.dy + ')'; }).join(' '));
+      } else check('I1 混合序列', false, '缺少步骤 I1');
+
+      // 公式自洽：解析包围盒 == 实测矩形
+      if (d.invariants && d.invariants.lastBox && d.invariants.lastRect) {
+        near(check, '包围盒解析值与实测值一致（宽）', d.invariants.lastRect.w, d.invariants.lastBox.w, 1.5);
+        near(check, '包围盒解析值与实测值一致（高）', d.invariants.lastRect.h, d.invariants.lastBox.h, 1.5);
+      }
+    },
+  },
+
+  /* ---------- 3. 居中定点 ---------- */
+  {
+    id: 'center',
+    title: '居中定点 · 缩放/旋转后中心是否恒等于「舞台中心 + 平移量」',
+    kind: 'probe',
+    script: 'probe_center.js',
+    key: 'CHECK ',
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!Array.isArray(d)) { check('探针返回数据', false, '未解析到 CHECK 输出'); return; }
+      let bad = [];
+      let skipped = 0;
+      d.forEach(function (r) {
+        // 探针中显式设定平移量的行，其期望值即为设定值（探针已自证），不参与「居中」断言
+        if (/panned|expect offset/i.test(r.label)) { skipped++; return; }
+        if (Math.abs(r.d.dx) > EPS || Math.abs(r.d.dy) > EPS) bad.push(r.label + '(' + r.d.dx + ',' + r.d.dy + ')');
+      });
+      check('非平移状态全部居中（' + (d.length - skipped) + ' 个）', bad.length === 0, bad.join(' '));
+    },
+  },
+
+  /* ---------- 4. 旋转矩阵 ---------- */
+  {
+    id: 'rot',
+    title: '旋转几何 · 用 DOMMatrix 解四角反推中心与包围盒',
+    kind: 'probe',
+    script: 'probe_rot_matrix.js',
+    key: 'MX ',
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!Array.isArray(d)) { check('探针返回数据', false, '未解析到 MX 输出'); return; }
+      let bad = [];
+      d.forEach(function (r) {
+        // 探针中显式设定平移量的行，允许非零偏差（其期望值即为设定值）
+        if (/panned/i.test(r.label)) return;
+        if (Math.abs(r.dev.dx) > EPS || Math.abs(r.dev.dy) > EPS) bad.push(r.label + '(' + r.dev.dx + ',' + r.dev.dy + ')');
+      });
+      check('非平移状态全部居中', bad.length === 0, bad.join(' '));
+      // 旋转 90° 时包围盒必须「换向」。注意 rotate() 会顺带重新适应窗口，
+      // 缩放倍数同时变化，所以不能比绝对尺寸，要比「长宽比取倒数 + 横竖朝向翻转」。
+      const r0 = d.find(function (r) { return r.label === 'fit rot0'; });
+      const r90 = d.find(function (r) { return r.label === 'rot90'; });
+      if (r0 && r90 && r0.quad && r90.quad) {
+        const ar0 = r0.quad.w / r0.quad.h;
+        const ar90 = r90.quad.w / r90.quad.h;
+        check('旋转 90° 后包围盒长宽比取倒数', Math.abs(ar90 - 1 / ar0) < 0.01,
+          ar0.toFixed(4) + ' → ' + ar90.toFixed(4));
+        check('旋转 90° 后横竖朝向翻转', r0.quad.w > r0.quad.h && r90.quad.h > r90.quad.w,
+          r0.quad.w + 'x' + r0.quad.h + ' → ' + r90.quad.w + 'x' + r90.quad.h);
+      } else check('旋转 90° 换向', false, '缺少 rot0 / rot90 数据');
+    },
+  },
+
+  /* ---------- 5. 缩放与拖动 ---------- */
+  {
+    id: 'zoom',
+    title: '缩放与拖动 · 滚轮零漂移 / 小图可拖 / 极限贴边',
+    kind: 'probe',
+    script: 'probe_zoom.js',
+    key: 'RESULT ',
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.s1_initial) { check('探针返回数据', false, '未解析到 RESULT 输出'); return; }
+      near(check, 'S1 初始打开居中（横）', d.s1_initial.dev.dx, 0);
+      near(check, 'S1 初始打开居中（纵）', d.s1_initial.dev.dy, 0);
+      if (d.s2_wheel_center) {
+        near(check, 'S2 滚轮缩放零漂移（横）', d.s2_wheel_center.drift.dx, 0);
+        near(check, 'S2 滚轮缩放零漂移（纵）', d.s2_wheel_center.drift.dy, 0);
+      }
+      if (d.s3_zoom_out_center) {
+        near(check, 'S3 缩小到适应比例以下仍居中（横）', d.s3_zoom_out_center.dev.dx, 0);
+        near(check, 'S3 缩小到适应比例以下仍居中（纵）', d.s3_zoom_out_center.dev.dy, 0);
+      }
+      if (d.s4_fit_recenter) {
+        near(check, 'S4 按「适应」后回正（横）', d.s4_fit_recenter.afterFit.dx, 0);
+        near(check, 'S4 按「适应」后回正（纵）', d.s4_fit_recenter.afterFit.dy, 0);
+      }
+      if (d.s5_small_pan) {
+        check('S5 小图可拖动', Math.abs(d.s5_small_pan.moved.dx) > 50 && Math.abs(d.s5_small_pan.moved.dy) > 40,
+          'dx=' + d.s5_small_pan.moved.dx + ' dy=' + d.s5_small_pan.moved.dy);
+      }
+      if (d.s6_big_pan) {
+        check('S6 大图可拖动', Math.abs(d.s6_big_pan.dragFwd.dx) > 50, 'dx=' + d.s6_big_pan.dragFwd.dx);
+      }
+      if (Array.isArray(d.s7_4dir)) {
+        const bad = d.s7_4dir.filter(function (x) { return Math.abs(x.dx) + Math.abs(x.dy) < 50; });
+        check('S7 四方向拖动全部生效', bad.length === 0, bad.map(function (x) { return x.dir; }).join(','));
+      }
+      if (d.s7b_bounds && d.s7b_bounds.edgeGap) {
+        check('S7b 拖到极限精确贴边', (d.s7b_bounds.edgeGap.left || 0) <= EPS && (d.s7b_bounds.edgeGap.top || 0) <= EPS,
+          JSON.stringify(d.s7b_bounds.edgeGap));
+      }
+      if (d.s9_rot_center) {
+        near(check, 'S9 旋转后居中（横）', d.s9_rot_center.afterRotDev.dx, 0);
+        near(check, 'S9 旋转后居中（纵）', d.s9_rot_center.afterRotDev.dy, 0);
+      }
+    },
+  },
+
+  /* ---------- 6. 双指缩放（触控板捏合 + 触摸屏）---------- */
+  {
+    id: 'pinch',
+    title: '双指缩放 · 触控板捏合 / 触摸屏双指 / 与滚轮模式互不干扰',
+    kind: 'probe',
+    script: 'probe_pinch.js',
+    key: 'PINCH ',
+    tags: ['core'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.ctrlWheel) { check('探针返回数据', false, '未解析到 PINCH 输出'); return; }
+
+      // 触控板捏合（ctrlKey + wheel）
+      const cw = d.ctrlWheel;
+      check('触控板捏合放大', cw.afterIn.scale > cw.before.scale,
+        cw.before.scale + ' → ' + cw.afterIn.scale);
+      check('触控板捏合缩小', cw.afterOut.scale < cw.afterIn.scale,
+        cw.afterIn.scale + ' → ' + cw.afterOut.scale);
+      near(check, '捏合过程中保持居中（横）', cw.centerDev.dx, 0);
+      near(check, '捏合过程中保持居中（纵）', cw.centerDev.dy, 0);
+
+      // 捏合中心为不动点
+      if (d.ctrlWheelFocal) {
+        check('触控板捏合以光标为不动点', Math.max(d.ctrlWheelFocal.px, d.ctrlWheelFocal.py) <= EPS_FOCAL,
+          'dx=' + round(d.ctrlWheelFocal.px) + ' dy=' + round(d.ctrlWheelFocal.py));
+      } else check('触控板捏合不动点', false, '缺少 ctrlWheelFocal');
+
+      // 触摸屏双指
+      const tp = d.touchPinch;
+      if (tp) {
+        // 先确认前提成立：这一轮测的确实是一张已解码、有尺寸的图。
+        // 少了这一条，"图还没加载完就量几何"会伪装成"居中坏了"。
+        check('前置：切图后新图已解码完成（有真实尺寸）',
+          tp.loaded === true && tp.naturalW > 0 && tp.lw > 0,
+          'loaded=' + tp.loaded + ' naturalW=' + tp.naturalW + ' L.nw=' + tp.lw);
+        near(check, '双指张开倍数与指距比一致', tp.spreadRatio, tp.expectedSpread, 0.02, '×');
+        near(check, '双指捏合倍数与指距比一致', tp.pinchRatio, tp.expectedPinch, 0.02, '×');
+        near(check, '双指缩放过程居中（横）', tp.centerDev.dx, 0);
+        near(check, '双指缩放过程居中（纵）', tp.centerDev.dy, 0);
+      } else check('触摸屏双指缩放', false, '缺少 touchPinch');
+      if (d.touchFocal) {
+        check('双指中点是不动点', Math.max(d.touchFocal.px, d.touchFocal.py) <= EPS_FOCAL,
+          'dx=' + round(d.touchFocal.px) + ' dy=' + round(d.touchFocal.py));
+      } else check('双指中点不动点', false, '缺少 touchFocal');
+
+      // 与滚轮模式互不干扰
+      if (d.pinchVsNavMode) {
+        check('nav 滚轮模式下捏合仍缩放（手势优先）',
+          d.pinchVsNavMode.afterScale > d.pinchVsNavMode.beforeScale && d.pinchVsNavMode.navUnchanged === true,
+          'scale ' + d.pinchVsNavMode.beforeScale + ' → ' + d.pinchVsNavMode.afterScale + '，切图 ' + d.pinchVsNavMode.idxBefore + '→' + d.pinchVsNavMode.idxAfter);
+      } else check('nav 模式下捏合仍缩放', false, '缺少 pinchVsNavMode');
+      if (d.navWheelStillWorks) {
+        check('nav 模式下普通滚轮仍切图（回归）', d.navWheelStillWorks.navigated === true);
+      }
+
+      // 手势互斥与拖动回归
+      const pc = d.pinchCancelsDrag;
+      if (pc) {
+        check('双指落下前单指拖动处于进行中（前置条件）', pc.draggingMid === true);
+        check('双指落下即中止单指拖动', pc.draggingAfterTouch === false);
+        check('捏合期间不再发生平移', pc.movedDuringPinch.dx === 0 && pc.movedDuringPinch.dy === 0,
+          'dx=' + pc.movedDuringPinch.dx + ' dy=' + pc.movedDuringPinch.dy);
+      } else check('双指与单指拖动互斥', false, '缺少 pinchCancelsDrag');
+      if (d.singleDragStillWorks) {
+        near(check, '单指拖动仍生效（回归·横）', d.singleDragStillWorks.dx, -90, 1);
+        near(check, '单指拖动仍生效（回归·纵）', d.singleDragStillWorks.dy, -70, 1);
+      }
+
+      // 缩放上下限
+      if (d.clamped) {
+        near(check, '连续捏合放大被上限夹住', d.clamped.max, d.clamped.maxAllowed, 0.01, '×');
+        near(check, '连续捏合缩小被下限夹住', d.clamped.min, d.clamped.minAllowed, 0.01, '×');
+      }
+    },
+  },
+
+  /* ---------- 7. 全屏贴边 ---------- */
+  {
+    id: 'fs',
+    title: '全屏 · 图片长边是否贴到屏幕边缘',
+    kind: 'probe',
+    script: 'probe_fs.js',
+    key: 'FS ',
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !Array.isArray(d.cases)) { check('探针返回数据', false, '未解析到 FS 输出'); return; }
+      let bad = [];
+      d.cases.forEach(function (c) {
+        const m = c.inFs;
+        if (!m) { bad.push(c.name + '(缺少全屏数据)'); return; }
+        const g = m.gap;
+        // 长边贴边：上下或左右必须有一对接近 0
+        const vertEdge = Math.abs(g.top) <= 1.5 && Math.abs(g.bottom) <= 1.5;
+        const horizEdge = Math.abs(g.left) <= 1.5 && Math.abs(g.right) <= 1.5;
+        if (!vertEdge && !horizEdge) bad.push(c.name + '(留白 ' + g.left + '/' + g.top + '/' + g.right + '/' + g.bottom + ')');
+        if (m.ctr && (Math.abs(m.ctr.dx) > EPS || Math.abs(m.ctr.dy) > EPS)) bad.push(c.name + '(未居中)');
+      });
+      check('全部 ' + d.cases.length + ' 张照片全屏后长边贴边且居中', bad.length === 0, bad.join(' '));
+    },
+  },
+
+  /* ---------- 8. 设置面板 ---------- */
+  {
+    id: 'settings',
+    title: '设置面板 · 开合 / 逐项生效 / 持久化 / 双向同步 / 清除缓存 / 关于 / 恢复默认',
+    kind: 'probe',
+    script: 'probe_settings.js',
+    keys: ['S1 ', 'S2 ', 'S3 ', 'S4 ', 'S5 ', 'S6 ', 'S7 ', 'S8 '],
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check;
+      const s1 = ctx.keys['S1 '], s2 = ctx.keys['S2 '], s3 = ctx.keys['S3 '],
+        s4 = ctx.keys['S4 '], s5 = ctx.keys['S5 '], s6 = ctx.keys['S6 '], s7 = ctx.keys['S7 '],
+        s8 = ctx.keys['S8 '];
+      if (!s1) { check('探针返回数据', false, '未解析到 S1 输出'); return; }
+      /* s2…s8 每一块都被 `if (sX)` 包着 —— 探针某一步抛错时 sX 为 undefined，
+         那一整段断言就**静默不跑**，套件照样全绿。所以先显式断言"每一步都有输出"。
+         这正是 v1.11.0 查到的假绿：`window.State.defaults()`（它其实是 getter，
+         不是函数）让 S8 整段消失，于是"相框转正"的断言**一条都没执行过**。 */
+      const stepMiss = [['S2', s2], ['S3', s3], ['S4', s4], ['S5', s5],
+        ['S6', s6], ['S7', s7], ['S8', s8]]
+        .filter(function (p) { return !p[1]; }).map(function (p) { return p[0]; });
+      check('探针每一步都有输出（缺步 = 那一段断言被静默跳过）',
+        stepMiss.length === 0, '缺失: ' + (stepMiss.join(',') || '无'));
+      check('设置面板可打开', s1.panelOpen === true);
+      check('面板挂载在 body（规避 overflow 裁剪）', s1.panelParent === 'BODY');
+      check('面板在视口内', s1.inViewport === true);
+      check('面板可命中点击（未被遮挡）', s1.hitInsidePanel === true);
+      // 分组数由「设置项定义」推导，加分组不必再改断言
+      const ex = s1.expect || {};
+      check('分组数与定义一致', s1.groups.length === ex.groupCount,
+        'DOM ' + s1.groups.length + ' vs 定义 ' + ex.groupCount + ' [' + s1.groups.join('/') + ']');
+      check('面板行数与定义一致', s1.rowCount === ex.rows, 'DOM ' + s1.rowCount + ' vs 定义 ' + ex.rows);
+      check('开关 / 分段 / 数字控件数量与定义一致',
+        s1.switches === ex.switches && s1.segs === ex.segs && s1.nums === ex.nums,
+        'DOM ' + s1.switches + '/' + s1.segs + '/' + s1.nums + ' vs 定义 ' + ex.switches + '/' + ex.segs + '/' + ex.nums);
+      check('P1-4 旋转记录入口已就位',
+        Array.isArray(ex.keys) && ex.keys.indexOf('__clearRots') >= 0,
+        JSON.stringify(ex.keys));
+      /* 按钮必须"有线可接" —— 每个 type:'button' 的键都要在 Settings.actions 里有实现。
+         这就是 v1.6.0「清空缩略图缓存」静默失效的根因防线：
+         当时按钮定义在、DOM 也在，只是点击分支漏了它，任何"面板渲染正确"的断言都发现不了。 */
+      const btnKeys = ex.buttonKeys || [], actKeys = ex.actionKeys || [];
+      const unWired = btnKeys.filter(function (k) { return actKeys.indexOf(k) < 0; });
+      check('每个按钮类设置项都有对应实现（无静默失效按钮）',
+        btnKeys.length >= 4 && unWired.length === 0,
+        'buttons=' + btnKeys.join(',') + ' | 未接线=' + (unWired.join(',') || '无'));
+      check('v1.7.0 新入口就位（清除缓存 / 关于 / 窗口置顶）',
+        ['清除缓存', '关于 Atrium', '窗口置顶'].every(function (n) { return (s1.rowNames || []).indexOf(n) >= 0; }),
+        (s1.rowNames || []).join('/'));
+      if (s2) {
+        check('主题切换生效（状态 + DOM）', s2.themeSetting === 'dark' && s2.bodyTheme === 'dark');
+        check('深色主题背景变量生效', s2.bgDark === 'rgb(23, 22, 20)', s2.bgDark);
+        check('紧凑密度生效（顶栏变矮）', s2.densitySetting === 'compact' && s2.bodyDensity === 'compact' && parseFloat(s2.topbarH) <= 52, s2.topbarH);
+        check('文件名常显生效（状态与 DOM 一致）', String(s2.showNames ? 1 : 0) === s2.bodyShowNames,
+          'setting=' + s2.showNames + ' body[data-show-names]=' + s2.bodyShowNames);
+        check('数量角标开关生效（状态与 DOM 一致）', (s2.showCnt === false) === (s2.cntDisplay === 'none'),
+          'setting=' + s2.showCnt + ' display=' + s2.cntDisplay);
+        check('滚轮模式生效（nav）', s2.wheelMode === 'nav' && s2.lbWheelMode === 'nav');
+        check('切换动画关闭生效', s2.animOn === false && s2.bodyAnim === '0');
+        check('幻灯片间隔生效（6000ms）', s2.slideshowMs === 6000 && s2.lbPlayMs === 6000);
+        check('删除二次确认关闭生效', s2.confirmDelete === false);
+      }
+      if (s3) {
+        check('设置已持久化到 localStorage', s3.theme === 'dark' && s3.density === 'compact' && s3.slideshowMs === 6000);
+      }
+      if (s4) {
+        check('顶栏眼睛 ↔ 面板开关双向同步', s4.switchSynced === true);
+        check('恢复默认后与 defaults() 完全一致', s4.defaultsMatch === true);
+        check('Esc 可关闭面板', s4.closedByEsc === true);
+      }
+      if (s5) {
+        check('窄窗口下仍可打开', s5.open === true && s5.inViewport === true);
+        check('窄窗口下面板可点击', s5.clickable === true);
+      }
+      if (s6) {
+        /* 清除缓存：造缩略图 + 尺寸缓存 → 点按钮 → 确认 → 必须真的清零。
+           探针用的是持久分区，缓存条数会跨轮累计，所以"造得出来"只断言 ≥ 造入量，
+           真正的判据是「确认后归零」。 */
+        check('缓存造得出来（前置条件）', s6.beforeThumb >= 3 && s6.beforeDimMem >= 2,
+          'thumb=' + s6.beforeThumb + ' dimMem=' + s6.beforeDimMem);
+        check('「清除缓存」按钮存在且有可读文案',
+          s6.cacheRowExists === true && s6.cacheBtnLabel === '清除', 'label=' + s6.cacheBtnLabel);
+        check('点击后弹出确认层，并说明不会删除原图',
+          s6.cacheModalOpen === true && s6.cacheSaysNoPhotoDelete === true,
+          'title=' + s6.cacheModalTitle);
+        check('确认层报的条数来自真实统计',
+          s6.cacheShowsThumbCount === true && s6.cacheShowsDimCount === true,
+          (s6.cacheModalBody || '').slice(0, 90));
+        check('确认后缩略图落盘缓存真的被清空', s6.afterThumb === 0, 'after=' + s6.afterThumb);
+        check('确认后尺寸缓存（内存）也清空', s6.afterDimMem === 0, 'afterMem=' + s6.afterDimMem);
+        check('清完给出结果反馈（清除是异步的，轮询等待而不是固定等待）',
+          /已清除缓存/.test(s6.toastText || ''),
+          (s6.toastText || '(空)') + ' @' + s6.toastWaitMs + 'ms');
+        /* 关于面板 */
+        check('「关于 Atrium」入口存在', s6.aboutRowExists === true);
+        check('关于面板可打开，标题正确', s6.aboutOpen === true && s6.aboutTitle === '关于 Atrium', s6.aboutTitle);
+        check('关于面板带品牌名、版本号与版本身份',
+          s6.aboutBrand === 'Atrium' && /^v\d+\.\d+\.\d+$/.test(s6.aboutVersion || '') && !!s6.aboutTag,
+          'brand=' + s6.aboutBrand + ' ver=' + s6.aboutVersion + ' tag=' + s6.aboutTag);
+        check('版本号与 App.VERSION 一致（不是写死的字符串）',
+          /^\d+\.\d+\.\d+$/.test(s6.appVersionRaw || '') && s6.aboutVersion === 'v' + s6.appVersionRaw,
+          'about=' + s6.aboutVersion + ' app=v' + s6.appVersionRaw);
+        check('关于面板含功能/隐私/数据/技术四段介绍',
+          ['能做什么', '隐私', '数据放在哪', '技术'].every(function (t) { return (s6.aboutSections || []).indexOf(t) >= 0; }),
+          (s6.aboutSections || []).join('/'));
+        check('关于面板有能力清单且无占位符残留',
+          (s6.aboutBullets || 0) >= 5 && s6.aboutHasPlaceholder === false,
+          'bullets=' + s6.aboutBullets + ' placeholder=' + s6.aboutHasPlaceholder);
+        check('关于是单按钮弹窗（不需要"取消/确定"二选一）', s6.aboutActionBtns === 1, 'btns=' + s6.aboutActionBtns);
+        check('关于面板不超出视口', s6.aboutFitsViewport === true);
+        check('关于弹窗截图时仍保持打开（用于留档）', s6.aboutStillOpen === true);
+        if (s7) {
+          check('关于面板可关闭，且只有一个动作按钮',
+            s7.hadCard === true && s7.count === 1 && s7.closed === true,
+            'btns=' + s7.count + ' label=' + s7.firstLabel + ' closed=' + s7.closed);
+        }
+        /* 相框：v1.11.0 起**转为正式功能**（默认开启）。v1.8.1~v1.10.0 期间它是
+           "实验功能、默认隐藏"，那几条断言在此**反向**而不是删除 ——
+           否则会出现"代码转了正、断言还锁着旧行为"的矛盾。 */
+        if (s8) {
+          check('相框默认开启（已转正）：defaults().showFrame 为 true，分组标题不再写「实验」',
+            s8.defaultShowFrame === true
+              && s8.hasFrameGroup === true
+              && s8.frameGroupTitle === '相框',
+            'default=' + s8.defaultShowFrame + ' title=' + s8.frameGroupTitle);
+          check('显式关掉后：分组只露「显示相框入口」一个开关',
+            (s8.rowsCollapsed || []).length === 0
+              && s8.switchRowPresent === true
+              && s8.settingAfterForceOff === true,
+            'title=' + s8.frameGroupTitle + ' collapsedRows=' + (s8.rowsCollapsed || []).join('/')
+              + ' switch=' + s8.switchRowPresent + ' setting=' + s8.settingAfterForceOff);
+          check('关掉后顶栏图标隐藏',
+            s8.iconHiddenAfterForceOff === true);
+          check('打开开关后五项回来（相册/间隔/填充/停靠边/开始）+ 图标出现 + 落盘',
+            (s8.rowsAfterEnable || []).length === 5
+              && s8.iconShownAfterEnable === true
+              && s8.settingAfterEnable === true
+              && s8.persistedShowFrame === true,
+            (s8.rowsAfterEnable || []).join('/') + ' icon=' + s8.iconShownAfterEnable
+              + ' state=' + s8.settingAfterEnable + ' ls=' + s8.persistedShowFrame);
+          check('关掉开关后分组重新收起、图标重新隐藏',
+            (s8.rowsAfterDisable || []).length === 0
+              && s8.iconHiddenAfterDisable === true && s8.settingAfterDisable === false,
+            'rows=' + (s8.rowsAfterDisable || []).join('/') + ' icon='
+              + s8.iconHiddenAfterDisable + ' setting=' + s8.settingAfterDisable);
+          check('相框相册可选「全部图片 / 只看收藏 / 每个文件夹」',
+            s8.selectExists === true && s8.hasAll === true && s8.hasFav === true
+              && s8.folderOpts === 2 && s8.folderNames === true,
+            (s8.optionTexts || []).join(' | '));
+          check('选定文件夹后写入设置并落盘',
+            s8.srcAfterPick === 's1' && s8.persisted === 's1',
+            'state=' + s8.srcAfterPick + ' ls=' + s8.persisted);
+          check('文件夹被移除后下拉重建，旧值回落「全部图片」',
+            (s8.optionsAfterRemove || []).indexOf('s1') < 0
+              && s8.selectValueAfterRemove === 'all' && s8.srcAfterRemove === 'all',
+            JSON.stringify({ opts: s8.optionsAfterRemove, val: s8.selectValueAfterRemove, src: s8.srcAfterRemove }));
+          check('更换间隔以「秒」呈现、写入毫秒',
+            !!s8.msInput && s8.msInput.value === '6' && s8.msInput.min === '2'
+              && s8.msSet === 15000,
+            JSON.stringify(s8.msInput) + ' set=' + s8.msSet);
+          check('填充方式有「适应 / 填满」且能切换',
+            (s8.fitOptions || []).join('/') === '适应/填满' && s8.fitSet === 'cover',
+            (s8.fitOptions || []).join('/') + ' set=' + s8.fitSet);
+          /* v1.9.0：窗口停靠边 —— 拖动吸附与设置锁边是同一个值 */
+          check('设置里有「窗口停靠边」，选项为不吸附 / 四边，默认不吸附',
+            s8.dockRowExists === true && s8.dockOptionsOk === true && s8.dockDefaultNone === true,
+            (s8.dockOptionValues || []).join(',') + ' default=' + s8.dockDefaultNone);
+          check('选定停靠边后写入设置并落盘，改回「不吸附」也能复位',
+            s8.dockAfterPick === 'right' && s8.dockPersisted === 'right' && s8.dockResetTo === 'none',
+            'pick=' + s8.dockAfterPick + ' ls=' + s8.dockPersisted + ' reset=' + s8.dockResetTo);
+          check('「开始相框」按钮已接线且有对应实现',
+            s8.frameKeyIsButton === true && s8.frameActionWired === true);
+          /* 「恢复默认」的重放表（Settings.ALL_KEYS）必须覆盖相框这几项。
+             frameDisplay 是 v1.11.0 新键，第一版就漏登记了 —— 而它的 applySetting
+             分支只在"相框正开着"时才有动作，漏了完全无声：点恢复默认，输出屏幕纹丝不动。
+             这类"漏登记"已栽过四次（MEMORY.md §22），故加一条断言直接锁表。 */
+          check('「恢复默认」重放表覆盖相框设置键（含 v1.11.0 新增的输出屏幕）',
+            Array.isArray(s8.allKeys)
+              && ['showFrame', 'frameDock', 'frameDisplay'].every(function (k) {
+                return s8.allKeys.indexOf(k) >= 0;
+              }),
+            JSON.stringify(s8.allKeys));
+        }
+        /* 窗口置顶：设置里的开关与顶栏按钮同一状态（仅桌面版） */
+        check('设置里的「窗口置顶」开关生效并同步到顶栏按钮',
+          s6.pinRowExists === true && s6.pinSetting === true && s6.pinBtnOn === true,
+          JSON.stringify({ row: s6.pinRowExists, setting: s6.pinSetting, btnOn: s6.pinBtnOn }));
+        check('再次切换可取消置顶', s6.pinRestored === false, 'setting=' + s6.pinRestored);
+      }
+    },
+  },
+
+  /* ---------- 9. 顶栏布局 ---------- */
+  {
+    id: 'topbar',
+    title: '顶栏布局 · 品牌文案已移除 / 眼睛按钮并入右侧 / 置顶按钮就位 / 窄窗不换行',
+    kind: 'probe',
+    script: 'probe_topbar.js',
+    keys: ['INJECT ', 'EYE ', 'PIN ', 'PIN2 ', 'NARROW ', 'GEO '],
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check;
+      const inj = ctx.keys['INJECT '], eye = ctx.keys['EYE '], pin = ctx.keys['PIN '],
+        pin2 = ctx.keys['PIN2 '], narrow = ctx.keys['NARROW '], geo = ctx.keys['GEO '];
+      if (!geo) { check('探针返回数据', false, '未解析到 GEO 输出'); return; }
+      check('顶栏已移除品牌文案', geo.brandTextPresent === false);
+      check('眼睛按钮位于右侧控件簇内', geo.eyeInCtrls === true);
+      check('眼睛按钮位于最近删除之后', geo.eyeAfterTrash === true && geo.eyeIdx > geo.trashIdx,
+        'trashIdx=' + geo.trashIdx + ' eyeIdx=' + geo.eyeIdx);
+      check('顶栏左侧只有来源栏 + 间距 + 控件簇',
+        Array.isArray(geo.topbarLeftChildren) && geo.topbarLeftChildren.length === 3,
+        JSON.stringify(geo.topbarLeftChildren));
+      check('紧凑高度规则已注入', geo.hasFitRule === true);
+      if (eye) {
+        check('眼睛按钮可切换模糊预览', eye.before === false && eye.after === true && eye.blurred === true);
+      }
+      /* 相框 v1.11.0 起为**正式功能**：顶栏图标默认可见；且无论显隐节点都留在 .ctrls 里
+         （用 hidden 属性而不是摘节点，否则上面的 ctrlCount / pinIsLast / pinIdx 全会变） */
+      check('相框已转正：defaults() 为开、顶栏图标可见且节点仍在控件簇内',
+        geo.frameDefaultOn === true && geo.frameVisible === true && geo.frameIdx >= 0,
+        'default=' + geo.frameDefaultOn + ' visible=' + geo.frameVisible
+          + ' idx=' + geo.frameIdx + ' total=' + geo.ctrlCount);
+      /* 置顶按钮（v1.7.0）：位置在最右端（紧邻系统窗口按钮）、点击真的调到原生桥、状态双向同步 */
+      if (pin) {
+        check('置顶按钮位于控件簇内、且是最右一个',
+          geo.pinInCtrls === true && geo.pinAfterSet === true && geo.pinIsLast === true,
+          'setIdx=' + geo.setIdx + ' pinIdx=' + geo.pinIdx + ' total=' + geo.ctrlCount);
+        check('桌面版下置顶按钮可见且有可读标签',
+          pin.visible === true && pin.canPin === true && /置顶/.test(pin.label || ''),
+          'visible=' + pin.visible + ' canPin=' + pin.canPin + ' label=' + pin.label);
+        check('点击置顶按钮真的调用到原生桥（不是只改了个样式）',
+          pin.ipcCalls >= 1 && pin.ipcLast === true,
+          'calls=' + pin.ipcCalls + ' last=' + pin.ipcLast);
+        check('置顶状态：设置 / 图标 / aria / 高亮 四者一致',
+          pin.settingOn === true && pin.afterPressed === 'true'
+            && pin.afterIcon === '#i-pin-on' && pin.isOnClass === true,
+          JSON.stringify({ setting: pin.settingOn, aria: pin.afterPressed, icon: pin.afterIcon, on: pin.isOnClass }));
+        if (pin2) {
+          check('再次点击可取消置顶并回到未选中态',
+            pin2.pressed === 'false' && pin2.setting === false
+              && pin2.icon === '#i-pin' && pin2.isOnClass === false && pin2.ipcLast === false,
+            JSON.stringify({ aria: pin2.pressed, setting: pin2.setting, icon: pin2.icon, last: pin2.ipcLast }));
+        }
+      }
+      if (narrow) {
+        check('窄窗口下来源栏与控件簇同排', narrow.sameRow === true);
+        check('窄窗口下不换行', narrow.noWrap === true);
+        check('窄窗口下两者高度一致', narrow.srcbarH === narrow.ctrlsH, narrow.srcbarH + ' vs ' + narrow.ctrlsH);
+      }
+    },
+  },
+
+  /* ---------- 10. 网格布局 · contain 之后几何仍正确 ---------- */
+  {
+    id: 'grid',
+    title: '网格布局 · 瓦片尺寸/行距/定位在 contain 之后仍正确',
+    kind: 'probe',
+    script: 'probe_grid.js',
+    key: 'GRID ',
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.wide || !d.narrow) { check('探针返回数据', false, '未解析到 GRID 输出'); return; }
+      const w0 = d.wide, n0 = d.narrow;
+      check('瓦片已渲染且无零尺寸', w0.tiles > 0 && w0.zero === 0, 'tiles=' + w0.tiles + ' zero=' + w0.zero);
+      check('contain: layout paint 已生效', d.noContain === 0 && /layout/.test(d.containSample) && /paint/.test(d.containSample),
+        'sample="' + d.containSample + '" missing=' + d.noContain);
+      check('瓦片仍为绝对定位（contain 未改变定位模型）', d.notAbs === 0, 'notAbsolute=' + d.notAbs);
+      check('实测包围盒与内联宽高一致（未误加 contain:size）', d.rectMismatch === 0, 'mismatch=' + d.rectMismatch);
+      check('宽窗下同行瓦片互不重叠', w0.overlap === 0, 'overlap=' + w0.overlap + ' worstGap=' + w0.worstGap);
+      check('宽窗下多行、行间不叠压', w0.rows >= 2 && w0.vOverlap === 0, 'rows=' + w0.rows + ' vOverlap=' + w0.vOverlap);
+      check('窄窗重排后仍无重叠/无零尺寸', n0.tiles > 0 && n0.overlap === 0 && n0.zero === 0,
+        'tiles=' + n0.tiles + ' overlap=' + n0.overlap + ' zero=' + n0.zero);
+    },
+  },
+
+  /* ---------- 10b. 排列模式设置项 · 换排法要真的换几何（v1.12.0） ----------
+     这一套的重点是「断言落在结果上」：设置面板点『瀑布流』之后，必须
+     **几何真的变了**（等宽列 / 高度不等 / 不重叠），而不只是"控件存在"。
+     另外锁住瀑布流的两条坐标不变量 —— y 单调可二分、y+h 不单调故必须用 yMax。 */
+  {
+    id: 'masonry',
+    title: '排列模式 · 设置面板换『瀑布流』真的换几何 / 等宽列·不等高·不重叠 / yMax 不变量',
+    kind: 'probe',
+    script: 'probe_masonry.js',
+    key: 'MASONRY ',
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.gridA || !d.masB || !d.invB) { check('探针返回数据', false, '未解析到 MASONRY 输出'); return; }
+      // 前提：设置面板里的通路确实被驱动了（否则后面的断言全是假绿）
+      check('设置面板『排列模式』按钮齐全（4 项）', d.segButtons === 4 && d.clickB === 'ok',
+        'buttons=' + d.segButtons + ' clickB=' + d.clickB + ' clickA=' + d.clickA);
+      check('面板点『中图』→ 模式真的变为 medium', d.modeA === 'medium', 'modeA=' + d.modeA);
+      check('面板点『瀑布流』→ 模式真的变为 masonry', d.modeB === 'masonry', 'modeB=' + d.modeB);
+      check('换排法后瓦片几何真的变了（不是只改了状态值）', d.changed === true);
+
+      // 两种排法结构不同：等高网格宽度不一，瀑布流等宽列
+      check('基线网格宽度不一（前置条件）', d.gridA.uniqW > 1, 'gridA.uniqW=' + d.gridA.uniqW);
+      check('瀑布流：所有瓦片等宽（= 等宽列）', d.masB.uniqW === 1, 'masB.uniqW=' + d.masB.uniqW);
+      check('瀑布流：高度不止一种（真的不等高）', d.masB.uniqH >= 2,
+        'masB.uniqH=' + d.masB.uniqH + '（原图宽度比共 4 种）');
+      check('瀑布流：列数 ≥ 2 且与实测列坐标数一致', d.masB.colXCount === d.colsB && d.colsB >= 2,
+        'colXCount=' + d.masB.colXCount + ' colsB=' + d.colsB);
+      check('瀑布流：列宽恰好填满容器（右侧无余缝）', Math.abs(d.colWFills - d.stageWB) <= 1,
+        'colWFills=' + d.colWFills + ' stageW=' + d.stageWB + ' colW=' + d.colWB);
+      check('瀑布流：瓦片互不重叠且无零尺寸', d.masB.tiles > 0 && d.masB.overlap === 0 && d.masB.zero === 0,
+        'tiles=' + d.masB.tiles + ' overlap=' + d.masB.overlap + ' zero=' + d.masB.zero);
+
+      // 坐标不变量（grid.js 的窗口化 / 锚点 / 框选三处都建在这上面）
+      check('瀑布流：y 单调不减（可安全二分）', d.invB.ok === true && d.invB.yMono === true,
+        JSON.stringify(d.invB));
+      check('瀑布流：yMax 单调且等于 [0..i] 前缀最大底边', d.invB.yMaxMono === true && d.invB.yMaxOk === true,
+        JSON.stringify(d.invB));
+      check('瀑布流：本布局确实出现 y+h 非单调（yMax 的必要性已复现）', d.invB.yPlusHNotMono === true,
+        '若这里为 false，说明这组图没能逼出非单调，yMax 分支实际未被覆盖');
+
+      // 两个入口是同一个状态
+      check('顶栏与设置面板的选中态一致（都是 masonry）',
+        d.topbarOnB === 'masonry' && d.segOnB === 'masonry',
+        'topbar=' + d.topbarOnB + ' seg=' + d.segOnB);
+      check('顶栏点『单列』→ 模式与顶栏高亮都变 single，重开面板选中项也是 single',
+        d.modeD === 'single' && d.topbarOnD === 'single' && d.segOnD === 'single',
+        'modeD=' + d.modeD + ' topbar=' + d.topbarOnD + ' seg(重开)=' + d.segOnD);
+
+      // 变窄重排
+      check('窗口变窄 → 列数变少且仍不重叠', d.colsC < d.colsB && d.colsC >= 1 && d.masC.overlap === 0 && d.masC.zero === 0,
+        'cols ' + d.colsB + '→' + d.colsC + ' overlap=' + d.masC.overlap + ' zero=' + d.masC.zero + ' stageW=' + d.stageWC);
+
+      check('探针过程中无页面报错', (d.pageErrs || []).length === 0, JSON.stringify((d.pageErrs || []).slice(0, 3)));
+      check('收尾已还原默认排列模式', d.restored === d.defaultMode, 'restored=' + d.restored + ' default=' + d.defaultMode);
+    },
+  },
+
+  /* ---------- 11. 旋转持久化与导出（P1-4） ---------- */
+  {
+    id: 'rotpersist',
+    title: '旋转持久化与导出 · 记住朝向 / 网格换向 / 烘焙像素 / 落盘导出 / 重开一致',
+    kind: 'probe',
+    script: 'probe_rot_persist.js',
+    key: 'RP ',
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.A || !d.G) { check('探针返回数据', false, '未解析到 RP 输出'); return; }
+      const A = d.A, B0 = d.B0, B1 = d.B1, C = d.C, D = d.D, E = d.E, F1 = d.F1, F2 = d.F2, G = d.G;
+
+      // 90° 顺时针旋转在 CSS 里表现为 matrix(0, s, -s, 0, …)
+      const isRot90 = (tf) => {
+        const m = /matrix\(([-\d.e]+),\s*([-\d.e]+),\s*([-\d.e]+),\s*([-\d.e]+)/.exec(tf || '');
+        if (!m) return false;
+        const a = +m[1], b = +m[2], c = +m[3], dd = +m[4];
+        return Math.abs(a) < 1e-6 && Math.abs(dd) < 1e-6 && b > 0 && c < 0 && Math.abs(Math.abs(b) - Math.abs(c)) < 1e-6;
+      };
+
+      check('初始无旋转记录且旋转 API 就绪', A.lsKey === null && A.count === 0 && A.stateRot === 0 && A.hasApi === true,
+        'count=' + A.count + ' hsApi=' + A.hasApi);
+      check('灯箱打开时按「已保存朝向」显示（首次为 0°）',
+        B0 && B0.open === true && B0.rot === 0 && B0.nw > 0, 'rot=' + (B0 && B0.rot) + ' nw=' + (B0 && B0.nw));
+
+      check('旋转 90° 后被记住（State + localStorage 双写）',
+        B1 && B1.lbRot === 90 && B1.stateRot === 90 && B1.count === 1 && B1.ls && B1.ls[d.portrait.path] === 90,
+        'lbRot=' + (B1 && B1.lbRot) + ' ls=' + JSON.stringify(B1 && B1.ls));
+      check('灯箱里的图确实转了 90°', isRot90(B1 && B1.tf), String(B1 && B1.tf).slice(0, 48));
+
+      check('网格瓦片跟着换向（r90 类 + data-rot）',
+        C && C.found === true && C.r90 === true && C.dataRot === '90' && C.capUpright === true,
+        'cls=' + (C && C.cls));
+      check('旋转后网格占位框宽高与瓦片宽高严格对调',
+        C && Math.abs(C.phW - C.tileH) <= 1 && Math.abs(C.phH - C.tileW) <= 1,
+        'tile=' + (C && C.tileW) + '×' + (C && C.tileH) + ' ph=' + (C && C.phW) + '×' + (C && C.phH));
+
+      check('竖图旋转 90° 后烘焙成横图（像素宽高对调）',
+        D && D.ok === true && D.bakedW === B0.nh && D.bakedH === B0.nw,
+        '原 ' + B0.nw + '×' + B0.nh + ' → 烘焙 ' + (D && D.bakedW) + '×' + (D && D.bakedH));
+
+      // 真实 IPC 导出 → 落盘校验
+      const dir = d.exportDir;
+      let wrote = null, dupName = null;
+      if (E && E.ok && Array.isArray(E.results)) {
+        wrote = E.results.filter((r) => r.ok).map((r) => r.out);
+        dupName = E.dup && E.dup[0] && E.dup[0].out;
+      }
+      check('IPC 导出把「原图副本 + 烘焙图」都写到磁盘',
+        !!wrote && wrote.length === 2, JSON.stringify(E && E.results));
+      check('同名导出自动加 “ (2)”，不覆盖已有文件',
+        !!dupName && /\(2\)/.test(dupName) && dupName !== 'copy-' + d.portrait.name,
+        String(dupName));
+
+      if (dir && wrote) {
+        const copyP = path.join(dir, 'copy-' + d.portrait.name);
+        const bakedP = path.join(dir, 'baked-90.png');
+        let sameBytes = false, pngDim = null;
+        try {
+          const a1 = fs.readFileSync(copyP), a2 = fs.readFileSync(d.portrait.path);
+          sameBytes = a1.length === a2.length && a1.equals(a2);
+        } catch (e) { sameBytes = false; }
+        try {
+          const b = fs.readFileSync(bakedP);
+          const isPng = b.slice(1, 4).toString() === 'PNG';
+          pngDim = isPng ? { w: b.readUInt32BE(16), h: b.readUInt32BE(20) } : null;
+        } catch (e) { pngDim = null; }
+        check('未旋转的图是逐字节复制（无损）', sameBytes === true);
+        check('磁盘上的烘焙图 PNG 头尺寸 = 转置后的原图尺寸',
+          !!pngDim && pngDim.w === B0.nh && pngDim.h === B0.nw,
+          pngDim ? pngDim.w + '×' + pngDim.h : '未能读取');
+      }
+
+      // ---- 走「选择条按钮」那条真实用户路径（App.exportSelected 编排） ----
+      const e2 = d.E2;
+      check('导出编排：结束后 _exporting 已复位（不自我锁死）',
+        !!e2 && e2.exporting === false, 'exporting=' + (e2 && e2.exporting));
+      check('导出编排：旋转过的走烘焙、未旋转的走复制',
+        !!e2 && e2.rotatedRot === 90 && e2.plainRot === 0,
+        'rotated=' + (e2 && e2.rotatedRot) + ' plain=' + (e2 && e2.plainRot));
+      if (dir && e2) {
+        let bakedUI = null, plainSame = false;
+        try {
+          const b = fs.readFileSync(path.join(dir, e2.rotatedName));
+          bakedUI = b.slice(1, 4).toString() === 'PNG' ? { w: b.readUInt32BE(16), h: b.readUInt32BE(20) } : null;
+        } catch (e) { bakedUI = null; }
+        try {
+          // 用相对路径定位源文件（素材里有子目录）
+          const src = fs.readFileSync(path.join(HERE, 'fixtures', '照片夹', e2.plainRel || e2.plainName));
+          const out = fs.readFileSync(path.join(dir, e2.plainName));
+          plainSame = src.length === out.length && src.equals(out);
+        } catch (e) { plainSame = false; }
+        check('点「导出所选」后，旋转图按摆正后的像素落盘',
+          !!bakedUI && bakedUI.w === B0.nh && bakedUI.h === B0.nw,
+          'rotated=' + e2.rotatedName + ' → ' + (bakedUI ? bakedUI.w + '×' + bakedUI.h : '未能读取'));
+        check('点「导出所选」后，未旋转图逐字节等于原文件',
+          plainSame === true, 'plain=' + e2.plainName);
+      }
+
+      check('转满一圈回到 0° 后记录被清除',
+        F1 && F1.lbRot === 0 && F1.stateRot === 0 && F1.lsKeys === 0,
+        'rot=' + (F1 && F1.stateRot) + ' lsKeys=' + (F1 && F1.lsKeys));
+      check('resetRot() 一键复原并清掉记录',
+        F2 && F2.mid === 180 && F2.after === 0 && F2.lbRot === 0 && F2.lsKeys === 0,
+        'mid=' + (F2 && F2.mid) + ' after=' + (F2 && F2.after));
+
+      check('重开应用后旋转记录仍在（localStorage 持久化）',
+        G.G0 && G.G0.count === 1 && G.G1 && G.G1.stateRot === 90,
+        'count=' + (G.G0 && G.G0.count) + ' stateRot=' + (G.G1 && G.G1.stateRot));
+      check('重开后打开灯箱自动恢复该朝向',
+        G.G2 && G.G2.lbRot === 90 && isRot90(G.G2.tf), 'lbRot=' + (G.G2 && G.G2.lbRot));
+      check('重开后网格瓦片也是旋转后的朝向', G.G3 && G.G3.r90 === true, 'r90=' + (G.G3 && G.G3.r90));
+    },
+  },
+
+  /* ---------- 12. HEIC/HEIF 能力探测（P1-2） ---------- */
+  {
+    id: 'heic',
+    title: 'HEIC/HEIF · 能力探测取代无条件判死 / 条目不丢 / 两条分支 / 文案可读',
+    kind: 'probe',
+    script: 'probe_heic.js',
+    key: 'HEIC ',
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.A || !d.BC) { check('探针返回数据', false, '未解析到 HEIC 输出'); return; }
+      const A = d.A, BC = d.BC, D = d.D, E = d.E;
+
+      check('启动即完成能力探测，同步可读布尔结论',
+        typeof A.status === 'boolean' && A.supported === A.status,
+        'status=' + A.status + ' supported=' + A.supported);
+      check('探测走的是 WebCodecs 能力查询（ImageDecoder）',
+        A.hasImageDecoder === true && A.hasReady === true &&
+        A.types && typeof A.types.heic === 'boolean' && typeof A.types.heif === 'boolean',
+        JSON.stringify(A.types));
+      check('HEIC/HEIF 扩展名识别正确且不被过滤',
+        JSON.stringify(A.isHeic) === JSON.stringify([true, true, false]) && A.isImageExt === true,
+        JSON.stringify(A.isHeic) + ' isImageExt=' + A.isImageExt);
+
+      check('含 HEIC 的文件夹条目一个不丢', BC.total === 3 && BC.heics === 2,
+        'total=' + BC.total + ' heics=' + BC.heics);
+      check('HEIC 条目的 bad 与本机探测结论一致（不再无条件判死）',
+        Array.isArray(BC.heicAll) && BC.heicAll.every((m) => m.bad === !BC.supported),
+        'supported=' + BC.supported + ' ' + JSON.stringify(BC.heicAll));
+      check('非 HEIC 条目完全不受影响', Array.isArray(BC.others) && BC.others.every((m) => m.bad === false),
+        JSON.stringify(BC.others));
+
+      check('本机可解时：摘掉 bad，交给 <img> 真解码',
+        D && D.capable && D.capable.heicBads.every((b) => b === false) &&
+        D.capable.okFlags.every((f) => f === true) && D.capable.pngBad === false,
+        JSON.stringify(D && D.capable));
+      check('本机不可解时：保持 bad，网格显示不可用占位',
+        D && D.incapable && D.incapable.heicBads.every((b) => b === true) &&
+        D.incapable.okFlags.every((f) => f === false) && D.incapable.pngBad === false,
+        JSON.stringify(D && D.incapable));
+
+      check('失败原因能区分「本机缺解码器」与「文件损坏」',
+        E && /HEVC|解码器/.test(E.whenUnsupported || '') && /损坏/.test(E.whenSupported || '') &&
+        E.whenUnsupported !== E.whenSupported && !!E.plain,
+        'unsupported="' + (E && E.whenUnsupported) + '" supported="' + (E && E.whenSupported) + '"');
+      check('真实 HEIC 条目的 bad 与真实探测一致', E && E.heicMetaBad === !BC.supported,
+        'bad=' + (E && E.heicMetaBad) + ' supported=' + BC.supported);
+    },
+  },
+
+  /* ---------- 15b. 无障碍：焦点陷阱 / 播报区 / 语义（真实 Chromium） ---------- */
+  {
+    id: 'a11yui',
+    title: '无障碍 · 播报真的发生 / 焦点真的被圈住 / 关闭真的还原 / 相框控制条键盘可达',
+    kind: 'probe',
+    script: 'probe_a11y.js',
+    keys: ['A11YSEM ', 'A11YLIVE ', 'A11YMODAL ', 'A11YSP ', 'A11YLBOX ', 'A11YFRAME '],
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check;
+      const sem = ctx.keys['A11YSEM '], live = ctx.keys['A11YLIVE '],
+        modal = ctx.keys['A11YMODAL '], sp = ctx.keys['A11YSP '],
+        lb = ctx.keys['A11YLBOX '], fr = ctx.keys['A11YFRAME '];
+      if (!sem) { check('探针返回数据', false, '未解析到 A11YSEM 输出'); return; }
+
+      /* 一段 Tab 序列是否"真的被圈住"。两个条件缺一不可：
+         ① 每一步焦点都还在容器内；② **至少真的移动过一次**。
+         只看 ① 会假通过 —— Tab 完全没生效时焦点一直没动，inside 会全是 true。 */
+      const trapped = function (steps) {
+        if (!Array.isArray(steps) || !steps.length) return false;
+        const allInside = steps.every(function (s) { return s.inside === true; });
+        const moved = steps.some(function (s) { return s.moved === true; });
+        return allInside && moved;
+      };
+
+      /* --- 1) 静态语义 --- */
+      check('无障碍共用件已进包', sem.moduleLoaded === true);
+      /* 这条断言同时是"启动期有没有人乱发 urgent 播报"的哨兵：
+         播报区静止态必须是 polite/status。若这里读到 alert/assertive，
+         说明启动过程中有人调了 A11y.live(msg, {urgent:true}) —— 而 A11y.live
+         按 urgency 改档、改完不复位，于是静止态被永久改成 assertive。
+         历史原因就是 App.init() 重放 trayOn/hotkeyOn 时，假宿主没桩那两条 IPC
+         → 设置"假失败" → 回滚 + urgent 播报。所以失败信息里要带上"播报了几条、最后一条是什么"，
+         否则只看到 alert/assertive 根本查不出是谁干的。 */
+      check('常驻播报区带 role / aria-live / aria-atomic',
+        sem.liveExists === true && sem.liveRole === 'status'
+        && sem.liveMode === 'polite' && sem.liveAtomic === 'true',
+        [sem.liveRole, sem.liveMode, sem.liveAtomic].join('/')
+          + ' | 启动后已播报 ' + sem.liveCount + ' 条，最后一条="' + (sem.liveLast || '') + '"');
+      check('播报区视觉不可见但留在无障碍树（不是 display:none 那种摘树做法）',
+        sem.liveDisplay !== 'none' && sem.liveVisibility !== 'hidden'
+        && sem.liveW <= 1 && sem.liveH <= 1,
+        'display=' + sem.liveDisplay + ' visibility=' + sem.liveVisibility
+        + ' ' + sem.liveW + 'x' + sem.liveH);
+      check('灯箱补齐对话框语义（role / aria-modal / 可及名称）',
+        sem.lbRole === 'dialog' && sem.lbModal === 'true' && !!sem.lbLabel,
+        [sem.lbRole, sem.lbModal, sem.lbLabel].join('/'));
+      check('设置面板声明 aria-modal',
+        sem.spRole === 'dialog' && sem.spModal === 'true',
+        [sem.spRole, sem.spModal].join('/'));
+
+      /* --- 2) 播报区：50 处 toast 靠它被读屏听见 --- */
+      if (live) {
+        check('toast 真的写进播报区（计数递增且内容正确）',
+          live.okCount === live.beforeCount + 1 && /已移入回收站/.test(live.okText || ''),
+          'before=' + live.beforeCount + ' after=' + live.okCount + ' text=' + live.okText);
+        check('完成类提示走 polite + role=status',
+          live.okRole === 'status' && live.okMode === 'polite', live.okRole + '/' + live.okMode);
+        check('失败类提示走 assertive + role=alert（urgent 档真的被调用）',
+          live.ugRole === 'alert' && live.ugMode === 'assertive', live.ugRole + '/' + live.ugMode);
+        check('同一条消息连播两次仍产生变更（否则第二次静默）',
+          live.twiceCount === live.okCount + 2 && live.twiceText === live.ugText,
+          'count=' + live.twiceCount + ' text=' + live.twiceText);
+        check('播报内容与 DOM 实际文本一致', live.domText === live.twiceText,
+          'dom=' + live.domText + ' snapshot=' + live.twiceText);
+      }
+
+      /* --- 3) 删除确认弹层 --- */
+      if (modal) {
+        const mo = modal.open || {}, mc = modal.closed || {};
+        check('确认弹层打开时焦点真的移进容器',
+          mo.exists === true && mo.activeInside === true, 'inside=' + mo.activeInside);
+        check('默认焦点落在「取消」（危险操作不该回车即触发）',
+          mo.activeAct === 'cancel', 'act=' + mo.activeAct);
+        check('确认弹层有 role=dialog + aria-modal',
+          mo.role === 'dialog' && mo.ariaModal === 'true', mo.role + '/' + mo.ariaModal);
+        check('确认弹层的可及名称指向真实标题',
+          !!mo.labelledby && mo.labelResolves === true && /移入回收站/.test(mo.labelText || ''),
+          'labelledby=' + mo.labelledby + ' text=' + mo.labelText);
+        check('正向 Tab 被圈在弹层内（连按 6 次）', trapped(modal.tabs),
+          JSON.stringify(modal.tabs));
+        check('反向 Shift+Tab 同样被圈住（连按 3 次）', trapped(modal.backs),
+          JSON.stringify(modal.backs));
+        /* 这条同时锁一个老 bug：「取消」按钮的点击处理曾经绑在
+           document.body.appendChild(wrap) 之前，那时 noBtn.isConnected 恒为 false，
+           于是按钮从来没绑上 —— 点了什么都不发生、弹层赖着不走。
+           所以这里断言的是"弹层真的没了且焦点回来了"，不是"取消按钮存在"。 */
+        check('点「取消」真的关掉弹层，且焦点还原到出发控件',
+          mc.stillOpen === false && mc.restored === true,
+          'stillOpen=' + mc.stillOpen + ' active=' + mc.activeId + ' from=' + mc.fromId);
+      }
+
+      /* --- 4) 设置面板 --- */
+      if (sp) {
+        const so = sp.open || {}, sc = sp.closed || {};
+        check('设置面板打开时焦点移入面板容器', so.open === true && so.activeIsPanel === true,
+          'active=' + so.activeTag + '#' + so.activeId);
+        check('设置面板容器可接收程序化焦点（tabindex=-1）', so.tabindex === '-1', so.tabindex);
+        check('设置面板 Tab 被圈住（连按 5 次）', trapped(sp.tabs), JSON.stringify(sp.tabs));
+        check('设置面板关闭后焦点回到顶栏齿轮',
+          sc.closed === true && sc.onBtn === true, 'active=' + sc.activeId);
+      }
+
+      /* --- 5) 灯箱 --- */
+      if (lb) {
+        const lo = lb.open || {}, lc = lb.closed || {};
+        check('灯箱打开时焦点移入灯箱容器', lo.open === true && lo.activeIsLb === true,
+          'inside=' + lo.activeInside);
+        check('灯箱内确实有可聚焦控件（陷阱不是空圈）',
+          typeof lo.focusableCount === 'number' && lo.focusableCount >= 3,
+          'focusables=' + lo.focusableCount);
+        check('灯箱 Tab 被圈住（连按 6 次）', trapped(lb.tabs), JSON.stringify(lb.tabs));
+        check('Esc 关闭灯箱后焦点回到网格瓦片',
+          lc.open === false && lc.onTile === true, 'active=' + lc.activeCls);
+      }
+
+      /* --- 6) 相框页内浮层 --- */
+      if (fr) {
+        const fb = fr.base || {}, ff = fr.focus || {}, fbl = fr.blur || {};
+        check('相框浮层带对话框语义',
+          fb.exists === true && fb.role === 'dialog' && fb.label === '相框模式',
+          [fb.role, fb.label].join('/'));
+        check('相框控制条默认隐藏，且隐藏时不进 Tab 序',
+          fb.barOn === false && fb.barVisibility === 'hidden' && fb.focusablesWhileHidden === 0,
+          'barOn=' + fb.barOn + ' vis=' + fb.barVisibility + ' focusables=' + fb.focusablesWhileHidden);
+        check('键盘焦点进入相框即亮出控制条（原本只有 hover 能唤出）',
+          ff.barOn === true && ff.visAfterSettle === 'visible' && ff.hotOpen === '1',
+          'barOn=' + ff.barOn + ' vis=' + ff.visAfterSettle + ' hotOpen=' + ff.hotOpen);
+        check('控制条亮出后其中的按钮真的可聚焦',
+          ff.btnFocusable === true && ff.focusablesWhileShown >= 3,
+          'btnFocused=' + ff.btnFocusable + ' focusables=' + ff.focusablesWhileShown);
+        check('焦点离开相框后控制条收起',
+          fbl.barOnAfterBlur === false && fbl.visAfterBlur === 'hidden',
+          'barOn=' + fbl.barOnAfterBlur + ' vis=' + fbl.visAfterBlur);
+        check('相框可正常退出且陷阱随容器一起解掉',
+          !!(fr.closed && fr.closed.gone === true));
+      }
+    },
+  },
+
+  /* ---------- 15b. 桌面集成：真实 Electron 里真的建菜单/托盘/任务栏/快捷键 ----------
+     与上面那套纯函数测试的分工：纯函数证明"数据写对了"，这一套证明
+     "Electron 真的接受了"。加速键拼错时 Electron 不抛错、只是注册不上，
+     只有回头问 getMenuItemById 才看得出来。 */
+  {
+    id: 'desktopui',
+    title: '桌面集成 · 真实 Electron：菜单与加速键 / 托盘 / 任务栏按钮与进度 / JumpList / 全局快捷键 / 右键菜单',
+    kind: 'probe',
+    script: 'probe_desktop.js',
+    key: 'DESKTOP ',
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d) { check('探针返回数据', false, '未解析到 DESKTOP 输出'); return; }
+      check('探针没有自报问题', d.ok === true && (d.problems || []).length === 0,
+        JSON.stringify(d.problems || []));
+
+      /* --- 应用菜单：问 Electron，而不是读自己的模板 --- */
+      const m = d.appMenu || {};
+      check('推状态真的重建了菜单', m.statePushed === true, JSON.stringify(m.statePushed));
+      check('顶层菜单是 文件/编辑/视图/窗口/帮助',
+        JSON.stringify(m.topLevel) === JSON.stringify(['文件', '编辑', '视图', '窗口', '帮助']),
+        JSON.stringify(m.topLevel));
+      check('「打开文件夹…」真的挂在 CmdOrCtrl+O 上',
+        !!(m.openFolder && m.openFolder.accel === 'CmdOrCtrl+O' && m.openFolder.label === '打开文件夹…'),
+        JSON.stringify(m.openFolder));
+      check('「导出选中的图片…」真的挂在 CmdOrCtrl+E 上',
+        !!(m.exportSel && m.exportSel.accel === 'CmdOrCtrl+E'), JSON.stringify(m.exportSel));
+      check('排列模式是 radio，且只有当前模式被勾中',
+        !!(m.modeMasonry && m.modeMasonry.type === 'radio' && m.modeMasonry.checked === true
+          && m.modeSmall && m.modeSmall.checked === false),
+        JSON.stringify([m.modeMasonry, m.modeSmall]));
+      check('只看收藏 / 模糊预览 / 窗口置顶 的勾选态跟随状态',
+        !!(m.favOnly && m.favOnly.checked === true
+          && m.blur && m.blur.checked === true
+          && m.pin && m.pin.checked === true),
+        JSON.stringify([m.favOnly, m.blur, m.pin]));
+      check('「全选当前页」用 CmdOrCtrl+Shift+A（不抢图库的 Ctrl+A）',
+        !!(m.selectAll && m.selectAll.accel === 'CmdOrCtrl+Shift+A'), JSON.stringify(m.selectAll));
+      check('单键加速键 F1 被 Electron 接受',
+        !!(m.shortcuts && m.shortcuts.accel === 'F1'), JSON.stringify(m.shortcuts));
+      check('帮助菜单里有「关于 Atrium」',
+        !!(m.about && m.about.label === '关于 Atrium'), JSON.stringify(m.about));
+
+      /* --- 右键菜单 --- */
+      const cm = d.ctxMenuBuild || {};
+      check('右键菜单模板能被 Electron 建出来', cm.count > 5 && Array.isArray(cm.labels),
+        JSON.stringify(cm));
+      check('图库右键菜单第一项是「打开」', (cm.labels || [])[0] === '打开', JSON.stringify(cm.labels));
+      const p = d.ctxPopup || {};
+      check('右键菜单真的弹出、并能在无人操作时被关掉',
+        !!(p.popped === true && p.closedByApi === true && p.resolved === true && p.value === null),
+        JSON.stringify(p));
+
+      /* --- 缩略图按钮图标 --- */
+      const g = d.glyph || {};
+      check('三颗缩略图按钮图标都是合法的 16×16 位图',
+        ['prev', 'next', 'frame'].every(function (k) {
+          return g[k] && g[k].w === 16 && g[k].h === 16 && g[k].empty === false && g[k].pngBytes > 0;
+        }), JSON.stringify(g));
+
+      /* --- 托盘 --- */
+      const t = d.trayCreate || {};
+      check('托盘真的建起来了', t.alive === true && t.trayAlive === true, JSON.stringify(t));
+      check('托盘能把主窗口藏起来', t.afterHide === false, JSON.stringify(t));
+      check('托盘能把主窗口请回来', t.backAgain === true, JSON.stringify(t));
+      check('关掉托盘后托盘真的被销毁', t.aliveAfterDestroy === false, JSON.stringify(t));
+
+      /* --- 任务栏 --- */
+      check('任务栏缩略图按钮设置成功', !!(d.thumbar && d.thumbar.set === true), JSON.stringify(d.thumbar));
+      check('任务栏进度条能设置（含不确定模式）也能收起',
+        !!(d.progress && d.progress.normal === true && d.progress.indeterminate === true && d.progress.cleared === true),
+        JSON.stringify(d.progress));
+      check('JumpList 设置成功', !!(d.jumpList && d.jumpList.ok === true), JSON.stringify(d.jumpList));
+
+      /* --- 全局快捷键 --- */
+      const h = d.hotkey || {};
+      check('全局快捷键 Ctrl+Alt+A 真的注册上了',
+        !!(h.register && h.register.registered === true && h.isRegistered === true), JSON.stringify(h));
+      check('注销之后真的不再是注册状态', h.afterDispose === false, JSON.stringify(h.afterDispose));
+      check('拼错的加速键被自家校验挡下（反向用例）',
+        !!(h.badAccel && h.badAccel.ok === false), JSON.stringify(h.badAccel));
+
+      /* --- 菜单勾选态跟随状态 --- */
+      const s = d.menuState || {};
+      check('切模式后菜单里的 radio 真的跟着换',
+        !!(s.changed === true && s.mediumBefore === false && s.mediumAfter === true && s.masonryAfter === false),
+        JSON.stringify(s));
+      check('没有选中时「导出选中的图片…」自动置灰', s.exportDisabledWhenNoSel === true, JSON.stringify(s));
+      check('状态没变时不重建菜单（避免菜单白闪）', s.noopWhenUnchanged === true, JSON.stringify(s));
+    },
+  },
+
+  /* ---------- 16. 打包后的 exe 自带自检（最接近真实用户的一步） ---------- */
+  {
+    id: 'appself',
+    title: '打包产物自检 · 跑装进包里的 exe：引导→索引→解码→删除→还原→灯箱',
+    kind: 'app',
+    exe: path.join(ROOT, 'deploy', 'dist-electron', 'Atrium_Electron版', 'Atrium.exe'),
+    tags: ['slow', 'artifact'],
+    run: function (ctx) {
+      const check = ctx.check, r = ctx.app;
+      if (!r || !fs.existsSync(this.exe)) {
+        check('打包产物存在（先跑 npm run build:electron）', false, this.exe);
+        return;
+      }
+      check('exe 自检进程正常退出', r.code === 0 && !r.error, 'code=' + r.code + (r.error ? ' | ' + r.error.message : ''));
+
+      /* --- exe 资源段盖章：**字节级证据**（v1.13.0） ---
+         assemble.js 收尾用 rcedit 把 brand/icon.ico 写进 RT_ICON / RT_GROUP_ICON。
+         这条**不能**用"构建没报错"当判据：rcedit 的版本信息键名写错时是**静默无效**的
+         （历史上 InternalName 被写成 InternalFilename，exe 里悄悄留着 electron.exe），
+         而图标写没写进去更是从日志里完全看不出来。
+
+         所以判据取最硬的一种：把 icon.ico 里每一张内嵌 PNG 的字节拿去 exe 里 indexOf，
+         **全中**才算真写进去了。同一个字节串在原始 electron.exe 里是找不到的（负向对照由
+         icon_gate 的 ico 校验兜住；这里只保证"至少真的进了 exe"）。
+         手工解析 PE 资源树试过 —— 偏移量容易算错、读出的值荒谬，所以不碰资源树。 */
+      try {
+        const icoPath = path.join(ROOT, 'brand', 'icon.ico');
+        const ico = fs.readFileSync(icoPath);
+        const exeBuf = fs.readFileSync(this.exe);
+        const n = ico.readUInt16LE(4);            // ICO 头：reserved(2) type(2) count(2)
+        const pngs = [];
+        for (let i = 0; i < n; i++) {
+          const off = 6 + i * 16;                 // 每条目录项 16 字节
+          const size = ico.readUInt32LE(off + 8);
+          const dataOff = ico.readUInt32LE(off + 12);
+          const bytes = ico.slice(dataOff, dataOff + size);
+          // 只取内嵌 PNG（magic \x89PNG）——ICO 也可能内嵌 BMP，那种 rcedit 会重编码
+          if (bytes.length > 8 && bytes[0] === 0x89 && bytes.toString('latin1', 1, 4) === 'PNG') {
+            pngs.push({ w: ico[off] || 256, bytes });
+          }
+        }
+        check('icon.ico 里解析出多张内嵌 PNG（七尺寸）', pngs.length >= 7,
+          '解析到 ' + pngs.length + ' 张，目录项 ' + n + ' 条');
+        const hit = pngs.filter((p) => exeBuf.indexOf(p.bytes) >= 0);
+        check('exe 资源段真的盖了章（每张内嵌 PNG 都能在 exe 里按字节找到）',
+          pngs.length >= 7 && hit.length === pngs.length,
+          '命中 ' + hit.length + '/' + pngs.length + ' 张'
+            + (hit.length < pngs.length
+              ? '；缺 ' + pngs.filter((p) => hit.indexOf(p) < 0).map((p) => p.w + 'px').join(',') : ''));
+      } catch (e) {
+        check('icon.ico 可读且能读出内嵌 PNG（资源盖章判据的前提）', false, String(e && e.message || e));
+      }
+
+      const s = r.result && r.result.snap;
+      if (!r.result || r.result.pass !== true || !s) {
+        check('自检整体通过', false, JSON.stringify(r.result && r.result.err || '无结果'));
+        return;
+      }
+      check('自检整体通过', true);
+      check('无控制台报错', Array.isArray(r.result.consoleErrors) && r.result.consoleErrors.length === 0,
+        JSON.stringify((r.result.consoleErrors || []).slice(0, 2)));
+      check('索引到素材并全部解码完成', s.items > 0 && s.allDecoded === true,
+        'items=' + s.items + ' allDecoded=' + s.allDecoded);
+      check('灯箱能打开真实图片', s.lbW > 0 && typeof s.lbName === 'string', s.lbName + ' w=' + s.lbW);
+      check('原生桥可用（磁盘路径 + 文件头读取）', s.nativePath === true && s.readHeadOk === true);
+      check('持久化可用（localStorage + IndexedDB）', s.ls === true && s.idb === true);
+      check('删除 → 回收站 → 撤销完整闭环',
+        s.delOk === true && s.delGone === true && s.undoOk === true && s.undoBack === true,
+        'del=' + s.delOk + ' undo=' + s.undoOk + ' back=' + s.undoBack);
+      check('批量删除 → 批量撤销完整闭环',
+        s.batchDelOk === true && s.batchGone === true && s.batchUndoOk === true && s.batchBack === true);
+      check('框选与选择条可用', s.selAll > 0 && s.selBarShown === true && s.selOne === true);
+      check('EXIF 解析不抛异常', s.exifNoThrow === true);
+      /* v1.7.0：置顶能力必须真的进包（preload 白名单 + 主进程 handler + 窗口本体） */
+      check('窗口置顶 IPC 端到端可用（含真实窗口状态回读）',
+        s.pinApiOk === true && s.pinSet === true && s.pinReal === true
+          && s.pinUnset === false && s.pinRealOff === false,
+        JSON.stringify({ api: s.pinApiOk, set: s.pinSet, real: s.pinReal, off: s.pinRealOff, why: s.pinWhy }));
+      check('产物里顶栏置顶按钮可见，且界面入口能切换状态',
+        s.pinBtnVisible === true && s.pinAria === 'true' && s.pinBackAria === 'false'
+          && s.pinSetting === true && s.pinBackSetting === false,
+        'vis=' + s.pinBtnVisible + ' on=' + s.pinAria + ' off=' + s.pinBackAria);
+
+      /* v1.8.0：相框模式 —— 真的开了一个无边框、置顶、按图片比例的窗口 */
+      check('相框 IPC 端到端可用（open/data/fit/info 都在 preload 白名单里）',
+        s.frameApiOk === true, 'api=' + s.frameApiOk + ' why=' + (s.frameWhy || '-'));
+      /* v1.11.0：相框转为正式功能 —— 顶栏入口默认可见，关掉设置后才隐藏 */
+      check('相框已转正：产物里默认可见入口，关掉设置后图标隐藏',
+        s.frameBtnVisibleByDefault === true && s.frameBtnHiddenAfterDisable === true,
+        'defaultVisible=' + s.frameBtnVisibleByDefault + ' afterDisable=' + s.frameBtnHiddenAfterDisable);
+      check('相框入口可见且开着之前窗口不存在',
+        s.frameBtnVisibleByDefault === true && s.frameBeforeOpen && s.frameBeforeOpen.open === false,
+        'visible=' + s.frameBtnVisibleByDefault + ' before=' + JSON.stringify(s.frameBeforeOpen && s.frameBeforeOpen.open));
+      check('走真实界面入口能开出相框，并返回可播放张数',
+        s.frameOpened > 0 && s.frameExists === true,
+        'opened=' + s.frameOpened + ' exists=' + s.frameExists);
+      check('相框窗口确实无边框（拿 bounds 与 contentBounds 比，问的是操作系统）',
+        s.frameFrameless === true,
+        JSON.stringify({ bounds: s.frameBounds, content: s.frameContent }));
+      check('相框窗口确实置顶（开启即置顶）', s.frameOnTop === true);
+      check('相框出图后主窗口已隐藏（避免两个窗口抢镜）',
+        s.framePainted === true && s.frameMainHidden === true,
+        'painted=' + JSON.stringify(s.framePainted ? 'ok' : 'none') + ' mainHidden=' + s.frameMainHidden);
+      check('相框窗口按图片比例窗口化（宽高比对齐实际图片像素比）',
+        s.frameRatioOk === true,
+        'want=' + s.frameRatioWant + ' got=' + s.frameRatioGot);
+      check('相框窗口内部：拿到清单、正在播放、真的画出了图',
+        !!(s.frameInner && s.frameInner.on === true && s.frameInner.remote === true
+          && s.frameInner.items > 0 && s.frameInner.order === s.frameInner.items
+          && s.frameInner.playing === true && s.frameInner.curW > 0),
+        JSON.stringify(s.frameInner && {
+          on: s.frameInner.on, items: s.frameInner.items, order: s.frameInner.order,
+          playing: s.frameInner.playing, w: s.frameInner.curW, h: s.frameInner.curH,
+        }));
+      check('相框窗口里不渲染图库外壳（只留相框层）',
+        !!(s.frameInner && s.frameInner.mainHidden === true && s.frameInner.hasBar === true));
+      check('相框里的置顶按钮作用于相框窗口本身（与主窗口互不干扰）',
+        !!(s.framePinFlip && s.framePinFlip.before === true && s.framePinFlip.after === false
+          && s.framePinRestored === true),
+        JSON.stringify(s.framePinFlip));
+
+      /* v1.9.0 —— 控制条感应区 / 相册下拉 / 拖动吸附，都在**真实无边框窗口**里跑一遍 */
+      check('相框窗口里：控制条默认隐藏、是感应区子元素、带常驻抓手',
+        !!(s.frameUi && s.frameUi.barHiddenByDefault === true
+          && s.frameUi.barInsideHot === true && s.frameUi.hasGrip === true),
+        JSON.stringify(s.frameUi));
+      check('相框窗口里：指针移入下缘 → 控制条出现；移开 → 立刻收起',
+        !!(s.frameUi && s.frameUi.shownOnHotIn === true && s.frameUi.hiddenOnHotOut === true),
+        'in=' + (s.frameUi && s.frameUi.shownOnHotIn) + ' out=' + (s.frameUi && s.frameUi.hiddenOnHotOut));
+      check('相框窗口里：控制条带相册下拉（全部图片 / 只看收藏 / 文件夹）',
+        !!(s.frameUi && s.frameUi.hasSrcSel === true && s.frameUi.srcOptions >= 2),
+        'sel=' + (s.frameUi && s.frameUi.hasSrcSel) + ' options=' + (s.frameUi && s.frameUi.srcOptions));
+      check('拖到贴近屏幕边缘 → 真的吸附贴齐，并记下贴的是哪条边',
+        !!(s.frameSnap && s.frameSnap.flush === true && s.frameSnap.dock === 'left'),
+        JSON.stringify(s.frameSnap));
+      check('取消贴边后窗口停在原处，不会被硬拉回边缘',
+        s.frameUndock === 'none' && s.frameUndockStayed === true,
+        'dock=' + s.frameUndock + ' stayed=' + s.frameUndockStayed);
+      check('退出相框后窗口关闭、主窗口自动回来',
+        !!(s.frameAfterClose && s.frameAfterClose.open === false && s.frameAfterClose.mainShown === true),
+        JSON.stringify(s.frameAfterClose));
+      /* v1.11.0：三条新能力，断言都落在"结果"上 */
+      check('鼠标拖动相框：窗口真的被搬到预期位置；拖动不误触发换图、普通单击仍能换图',
+        !!(s.frameDrag && s.frameDrag.ok === true),
+        JSON.stringify(s.frameDrag ? {
+          dx: s.frameDrag.dx, dy: s.frameDrag.dy,
+          afterDrag: s.frameDrag.firedAfterDragClick, afterPlain: s.frameDrag.firedAfterPlainClick,
+        } : null));
+      check('多显示器：指定一块不存在的屏幕 → 回落到真实屏幕，窗口不出界',
+        !!(s.frameFallback && s.frameFallback.open === true && s.frameFallback.insideAny === true),
+        JSON.stringify(s.frameFallback ? { open: s.frameFallback.open, inside: s.frameFallback.insideAny } : null)
+          + ' displays=' + s.frameDisplayCount);
+      check('相框渲染进程崩溃 → 相框窗口被销毁、主窗口自动回来、且还能再开出来',
+        !!(s.frameCrash && s.frameCrash.killed === true && s.frameCrash.frameGone === true
+           && s.frameCrash.mainBack === true && s.frameCrash.reopenOk === true),
+        JSON.stringify(s.frameCrash));
+    },
+  },
+
+  /* ---------- 11. 打包产物终检：旋转（Electron 包） ---------- */
+  {
+    id: 'approt',
+    title: '打包产物终检 · 真实点击旋转按钮 4 次均居中（Electron 包）',
+    kind: 'probe',
+    script: 'probe_rot_final.js',
+    key: 'ROTFINAL ',
+    tags: ['slow', 'artifact'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!Array.isArray(d)) { check('探针返回数据', false, '未解析到 ROTFINAL 输出'); return; }
+      let bad = [];
+      d.forEach(function (r) {
+        if (Math.abs(r.dev.dx) > EPS || Math.abs(r.dev.dy) > EPS) bad.push(r.rot + '°(' + r.dev.dx + ',' + r.dev.dy + ')');
+        if (r.inView !== true) bad.push(r.rot + '°(超出视口)');
+      });
+      check('0/90/180/270 旋转全部居中且在视口内', bad.length === 0, bad.join(' '));
+    },
+  },
+];
+
+/* ============================================================
+   执行
+   ============================================================ */
+function runNodeSuite(s) {
+  const r = spawnSync(process.execPath, [s.script].concat(s.args || []), {
+    cwd: ROOT, encoding: 'utf8', timeout: 180000, windowsHide: true,
+  });
+  const out = (r.stdout || '') + (r.stderr || '');
+  const lines = out.trim().split('\n');
+  return { code: r.status, tail: lines[lines.length - 1] || '', raw: out };
+}
+
+function runProbeSuite(s) {
+  const r = runProbe(s.script, { timeout: 240000 });
+  const data = {};
+  if (s.keys) {
+    s.keys.forEach(function (k) {
+      const v = extractJSON(r.stdout, k);
+      if (v !== null) data[k] = v;
+    });
+  } else {
+    data[s.key] = extractJSON(r.stdout, s.key);
+  }
+  // 探针日志留档，便于失败后排查
+  try { fs.writeFileSync(path.join(LOGS, 'trace-' + s.script.replace(/\.js$/, '') + '.log'), r.stdout + (r.stderr ? '\n[stderr]\n' + r.stderr : '')); } catch (e) { }
+  return { code: r.code, stdout: r.stdout, stderr: r.stderr, data: data, error: r.error };
+}
+
+/**
+ * 递归复制目录。
+ * 注意：不要用 fs.cpSync —— 本机 Node 22.22.2 在含中文名的目录树上会直接段错误
+ * （exit 139，且无任何输出），排查成本很高。手写一份 20 行的版本更稳。
+ */
+function copyTree(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const name of fs.readdirSync(src)) {
+    const s = path.join(src, name), d = path.join(dst, name);
+    const st = fs.statSync(s);
+    if (st.isDirectory()) copyTree(s, d);
+    else if (st.isFile()) fs.copyFileSync(s, d);
+  }
+}
+
+/**
+ * 跑「打包后的 Electron 应用」自带自检。
+ * 两个必须注意的点：
+ *  1) fixtures 先整份复制到沙箱再喂给 exe —— 自检会真的删文件再还原，
+ *     绝不能让它碰仓库里的素材；
+ *  2) 沙箱必须放在**项目同一个盘**（这里用 logs/ 下）。
+ *     放到系统临时目录（C:）时，"移入回收站 → 撤销还原" 会因为回收站查不到而
+ *     报 not-found —— 那是卷/回收站的环境限制，不是产品缺陷，但会让门禁红。
+ */
+function runAppSuite(s) {
+  const fixtures = path.join(HERE, 'fixtures', '照片夹');
+  const sandbox = path.join(LOGS, 'sbx-' + Date.now());
+  const openDir = path.join(sandbox, '照片夹');
+  let r;
+  try {
+    copyTree(fixtures, openDir);
+    r = runAppSelftest(s.exe, { openDir: openDir, udRoot: sandbox, timeout: 240000 });
+  } finally {
+    try { fs.rmSync(sandbox, { recursive: true, force: true }); } catch (e) { /* 沙箱残留无所谓，logs/ 不入版本管理 */ }
+  }
+  try {
+    fs.writeFileSync(path.join(LOGS, 'trace-app-selftest.log'),
+      (r.stdout || '') + (r.stderr ? '\n[stderr]\n' + r.stderr : '') + '\n\n' + JSON.stringify(r.result, null, 1));
+  } catch (e) { }
+  return r;
+}
+
+function main() {
+  const argv = process.argv.slice(2);
+  const fast = argv.indexOf('--fast') >= 0;
+  const filters = argv.filter(function (a) { return a.charAt(0) !== '-'; });
+
+  let suites = SUITES.slice();
+  if (fast) suites = suites.filter(function (s) { return s.kind === 'node' || (s.tags || []).indexOf('joint') >= 0; });
+  if (filters.length) suites = suites.filter(function (s) { return filters.indexOf(s.id) >= 0; });
+  // 快测模式：让支持 quickFlag 的 node 套件走精简路径（zip 套件会跳过 268MB 大包）
+  if (fast) suites = suites.map(function (s) {
+    return (s.quickFlag && !(s.args || []).length) ? Object.assign({}, s, { args: ['--quick'] }) : s;
+  });
+
+  console.log('');
+  console.log('Atrium · 回归套件');
+  console.log('  项目根: ' + ROOT);
+  console.log('  套件数: ' + suites.length + (fast ? '（--fast 模式）' : ''));
+  console.log('='.repeat(78));
+
+  const results = [];
+  const t0 = Date.now();
+
+  suites.forEach(function (s) {
+    const check = makeChecker(s.title, results);
+    process.stdout.write('▶ ' + s.title + '\n');
+    const started = Date.now();
+    try {
+      if (s.kind === 'node') {
+        const ctx = runNodeSuite(s);
+        s.run({ check: check, code: ctx.code, tail: ctx.tail, raw: ctx.raw });
+      } else if (s.kind === 'app') {
+        const ctx = runAppSuite(s);
+        s.run.call(s, { check: check, code: ctx.code, app: ctx, result: ctx.result, error: ctx.error });
+      } else {
+        const ctx = runProbeSuite(s);
+        if (ctx.code !== 0) {
+          check('探针进程正常退出', false, '退出码 ' + ctx.code + (ctx.error ? ' | ' + ctx.error.message : ''));
+        }
+        s.run({ check: check, code: ctx.code, data: ctx.data && s.key ? ctx.data[s.key] : ctx.data, keys: ctx.data });
+      }
+    } catch (e) {
+      check('套件执行未抛出异常', false, e && e.message);
+    }
+    const mine = results.filter(function (r) { return r.suite === s.title; });
+    const failed = mine.filter(function (r) { return !r.ok; });
+    const ms = Date.now() - started;
+    console.log('   ' + (failed.length ? '✗ 失败 ' + failed.length + ' / ' : '✓ 通过 ') + mine.length + ' 项  (' + ms + ' ms)');
+    failed.forEach(function (f) { console.log('     ✗ ' + f.name + (f.detail ? '  → ' + f.detail : '')); });
+    console.log('');
+  });
+
+  const total = results.length;
+  const bad = results.filter(function (r) { return !r.ok; });
+  console.log('='.repeat(78));
+  console.log('断言合计: ' + total + ' 项，通过 ' + (total - bad.length) + '，失败 ' + bad.length +
+    '  |  用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
+  if (bad.length) {
+    console.log('');
+    console.log('失败清单:');
+    bad.forEach(function (f) { console.log('  ✗ [' + f.suite + '] ' + f.name + (f.detail ? '  → ' + f.detail : '')); });
+  }
+  console.log('='.repeat(78));
+  process.exit(bad.length ? 1 : 0);
+}
+
+if (require.main === module) main();
+
+module.exports = { SUITES, extractJSON };

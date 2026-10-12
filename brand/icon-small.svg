@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Atrium icon (small size)">
+  <!-- Atrium · 小尺寸专用稿（16 / 24 / 32 px）
+       与 icon.svg 同构，只做光学加粗：线宽 26 → 54、日轮 r 30 → 38、山脊抬高。
+       理由：细描边取景框在 16px 下角臂会糊成灰点，必须按字号另调。
+       内缘 = 中心线 ±27；角括号中心线在 131/381，故符号须落在 158–354 之内。 -->
+  <rect width="512" height="512" rx="116" ry="116" fill="#1b1a17"/>
+
+  <g fill="none" stroke="#f7f5f1" stroke-width="54" stroke-linecap="butt" stroke-linejoin="miter">
+    <path d="M131 211 V131 H211"/>
+    <path d="M301 131 H381 V211"/>
+    <path d="M381 301 V381 H301"/>
+    <path d="M211 381 H131 V301"/>
+  </g>
+
+  <circle cx="200" cy="206" r="38" fill="#b5842f"/>
+
+  <!-- 山脊：底边 162–350，中心 256；左右端各留 4px 不与角括号内缘（158/354）相撞 -->
+  <path d="M162 346 L224 244 L258 280 L300 208 L350 346 Z" fill="#f7f5f1"/>
+</svg>

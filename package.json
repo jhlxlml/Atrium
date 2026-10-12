@@ -1,0 +1,22 @@
+{
+  "name": "viewfinder",
+  "version": "1.13.0",
+  "description": "Atrium · 本地照片浏览器（Electron 便携版）",
+  "private": true,
+  "scripts": {
+    "test": "node deploy/electron-test/run_all.js",
+    "test:fast": "node deploy/electron-test/run_all.js --fast",
+    "test:transform": "node test/transform.test.js",
+    "probe": "node deploy/electron-test/run_probe.js",
+    "clean": "node deploy/clean.js",
+    "clean:dry": "node deploy/clean.js --dry",
+    "build": "node deploy/electron/assemble.js",
+    "build:electron": "node deploy/electron/assemble.js",
+    "pack": "node deploy/pack.js",
+    "verify:zip": "node deploy/verify_zip.js",
+    "release": "node deploy/electron/assemble.js && node deploy/pack.js && node deploy/verify_zip.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

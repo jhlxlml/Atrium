@@ -1,0 +1,38 @@
+# ============================================================
+# Atrium · Git 属性
+# ------------------------------------------------------------
+# 为什么是 `* -text`，而不是更常见的 `* text=auto eol=lf`：
+#
+# 项目里有**字节级**的回归断言 —— 把 brand/icon.ico 里 7 张内嵌 PNG
+# 拿去 exe 里 indexOf、以及「产物 MD5 与源码逐一对齐」。所以"检出的
+# 字节"必须与"验证过的字节"完全相同，任何行尾转换都是风险。
+#
+# 现状：绝大多数文本文件是 LF，但 deploy/electron/main.js 与
+# deploy/electron-test/fixtures/照片夹/说明.txt 是 CRLF。
+# 若用 `eol=lf` 归一，新克隆会拿到与当前工作区**不同**的 main.js ——
+# 而 deploy/dist-electron/ 里的产物正是用现在这份 CRLF 构建的，
+# 于是"产物与源码 MD5 一致"会凭空变红（假故障）。
+#
+# `-text` = 完全不做行尾转换，原样存取。这样 core.autocrlf 设成
+# true / false / input 都不影响检出结果 —— "验证过的就是检出的"。
+# ============================================================
+
+# 全部文件按字节原样存取，不做 CRLF/LF 转换
+* -text
+
+# 二进制：额外关闭文本 diff（避免把 PNG / ICO 当文本比对）
+*.ico    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.avif   binary
+*.bmp    binary
+*.zip    binary
+*.exe    binary
+*.dll    binary
+*.pak    binary
+*.bin    binary
+*.dat    binary
+*.asar   binary

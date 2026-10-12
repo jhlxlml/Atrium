@@ -1,0 +1,79 @@
+# ============================================================
+# Atrium · Git 忽略规则
+# ------------------------------------------------------------
+# 原则：**只忽略「可再生」或「只属于本机」的东西。**
+# 构建 / 回归 / 运行所需的输入一律纳入版本管理 —— 其中包括
+# brand/icon.ico 与 brand/icon-*.png：它们虽由 deploy/make_icons.js
+# 生成，但 assemble.js 要把它打进包、icon 套件要读它，而重新生成
+# 需要 Electron 工具链。宁可多带 20KB，也不让新克隆的仓库构建不了。
+#
+# 从零克隆后的标准流程：
+#   cd deploy/electron && npm i     # 装 electron + rcedit（被忽略，必须复原）
+#   cd ../.. && npm run build       # 生成 deploy/dist-electron/
+#   npm test                        # 全量回归（含产物自检）
+#
+# 注：本文件不支持行尾注释，说明一律独占一行。
+# ============================================================
+
+# ---------- 1. 依赖包 ----------
+# 匹配任意层级的 node_modules/，已覆盖 deploy/electron/node_modules
+# （约 269MB，内含 electron 运行时与 rcedit）。
+# 由 deploy/electron/package-lock.json 精确复原。
+node_modules/
+
+# ---------- 2. 构建产物 ----------
+# 便携包暂存目录（含约 180MB 的 Atrium.exe）。npm run build 再生。
+deploy/dist-electron/
+# 离线单文件版产物目录。该交付形态已于 v1.13.0 退役，此规则保留以防重建。
+deploy/dist/
+
+# ---------- 3. 发布包 ----------
+# 交付 ZIP（约 112MB）。npm run pack 再生。
+*.zip
+# 例外：测试夹具目录里的 ZIP 属回归用例的输入，必须入库。
+!deploy/electron-test/fixtures/**/*.zip
+
+# ---------- 4. 回归套件的运行期产物 ----------
+# 探针日志 + 每次运行新建的 ud_* userData 目录（无上限增长，曾达 200MB+）。
+# 目录由 run_probe.js 在跑探针前自动创建，不需要入库。
+deploy/electron-test/logs/
+# 探针截图与几何 JSON。
+deploy/electron-test/shots/
+*.log
+
+# ---------- 5. 本机调试残留 ----------
+# rcedit 版本信息的一次性转储（无任何脚本引用，可安全删除）。
+deploy/logs-verinfo.txt
+
+# ---------- 6. 环境变量 / 密钥 ----------
+.env
+.env.*
+!.env.example
+
+# ---------- 7. 编辑器 / IDE / 本地工具配置 ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# ---------- 8. AI 协作工具状态（本机）----------
+.workbuddy/
+.workbuddy-ai/
+
+# ---------- 9. 设计探索稿（未被任何代码或构建引用）----------
+brand/cand-*.png
+
+# ---------- 10. 缓存 / 构建中间态 ----------
+.cache/
+.eslintcache
+*.tsbuildinfo
+
+# ---------- 11. 操作系统杂物 ----------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

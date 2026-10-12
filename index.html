@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Atrium · 本地图片浏览</title>
+<meta name="description" content="Atrium · 本地图片浏览 — 选择文件夹，像翻阅作品集一样浏览你的照片。纯本地运行，不上传任何图片。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22%231b1a17%22%2F%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%23f7f5f1%22%20stroke-width%3D%2254%22%20stroke-linecap%3D%22butt%22%3E%3Cpath%20d%3D%22M131%20211V131H211%22%2F%3E%3Cpath%20d%3D%22M301%20131H381V211%22%2F%3E%3Cpath%20d%3D%22M381%20301V381H301%22%2F%3E%3Cpath%20d%3D%22M211%20381H131V301%22%2F%3E%3C%2Fg%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22206%22%20r%3D%2238%22%20fill%3D%22%23b5842f%22%2F%3E%3Cpath%20d%3D%22M162%20346L224%20244L258%20280L300%20208L350%20346Z%22%20fill%3D%22%23f7f5f1%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/lightbox.css">
+<link rel="stylesheet" href="css/frame.css">
+</head>
+<body data-booted="0">
+
+<!-- ============ SVG 图标精灵（内联，离线可用） ============ -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-11Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-grid-s" viewBox="0 0 24 24"><path d="M4 5h4v4H4zM10 5h4v4h-4zM16 5h4v4h-4zM4 11h4v4H4zM10 11h4v4h-4zM16 11h4v4h-4zM4 17h4v4H4zM10 17h4v4h-4zM16 17h4v4h-4z" fill="currentColor"/></symbol>
+  <symbol id="i-grid-m" viewBox="0 0 24 24"><path d="M4 5.5h7v7H4zM13 5.5h7v7h-7zM4 14.5h7v7H4zM13 14.5h7v7h-7z" fill="currentColor"/></symbol>
+  <symbol id="i-single" viewBox="0 0 24 24"><rect x="4" y="4.5" width="16" height="5" rx=".8" fill="currentColor"/><rect x="4" y="12" width="16" height="2.2" rx=".6" fill="currentColor" opacity=".35"/><rect x="4" y="16.6" width="16" height="2.2" rx=".6" fill="currentColor" opacity=".35"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15.2 15.2 21 21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <!-- v1.12.0 瀑布流：三列、每列两块、块顶不齐而列底齐平 —— 「不等高列」的最小图示 -->
+  <symbol id="i-masonry" viewBox="0 0 24 24"><rect x="4" y="4.5" width="4.4" height="7.5" rx=".8" fill="currentColor"/><rect x="4" y="13.5" width="4.4" height="6" rx=".8" fill="currentColor"/><rect x="9.8" y="4.5" width="4.4" height="5" rx=".8" fill="currentColor"/><rect x="9.8" y="11" width="4.4" height="8.5" rx=".8" fill="currentColor"/><rect x="15.6" y="4.5" width="4.4" height="9" rx=".8" fill="currentColor"/><rect x="15.6" y="15" width="4.4" height="4.5" rx=".8" fill="currentColor"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.6l2.5 5.1 5.6.8-4 4 1 5.6-5.1-2.7-5.1 2.7 1-5.6-4-4 5.6-.8L12 3.6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-star-fill" viewBox="0 0 24 24"><path d="M12 3.6l2.5 5.1 5.6.8-4 4 1 5.6-5.1-2.7-5.1 2.7 1-5.6-4-4 5.6-.8L12 3.6Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M14.5 5 7.5 12l7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="M9.5 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8.5 3.5H4.5a1 1 0 0 0-1 1v4M15.5 3.5h4a1 1 0 0 1 1 1v4M8.5 20.5h-4a1 1 0 0 1-1-1v-4M15.5 20.5h4a1 1 0 0 0 1-1v-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><rect x="4" y="4.5" width="16" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 9h16M4 15h16M9 4.5v15M15 4.5v15" stroke="currentColor" stroke-width="1.2"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.5v11.2M7.6 10.6 12 15l4.4-4.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 17.2v1.6A1.7 1.7 0 0 0 6.2 20.5h11.6a1.7 1.7 0 0 0 1.7-1.7v-1.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-dir" viewBox="0 0 24 24"><path d="M4 6.5A1.5 1.5 0 0 1 5.5 5H10l2 2h6.5A1.5 1.5 0 0 1 20 8.5v0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="3.5" y="9" width="17" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M2.5 12S6 5.8 12 5.8c1.6 0 3 .38 4.2.98M21.5 12s-1.2 2.1-3.3 3.6M9.9 9.9a2.8 2.8 0 0 0 3.9 3.9M4 4l16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M6.6 7.3C4.2 8.7 2.5 12 2.5 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-arrow-d" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="7" y="5" width="3.6" height="14" rx="1" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" rx="1" fill="currentColor"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 11v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.15" fill="currentColor"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11.2v5.6M14 11.2v5.6M6.4 7l.86 12.05a1.4 1.4 0 0 0 1.4 1.3h6.68a1.4 1.4 0 0 0 1.4-1.3L17.6 7M9.2 7V5.2a1.2 1.2 0 0 1 1.2-1.2h3.2a1.2 1.2 0 0 1 1.2 1.2V7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M4 9h9.6a4.7 4.7 0 0 1 0 9.4H8.2M4 9l4.1-4.1M4 9l4.1 4.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.8 12.6l4.7 4.7L19.2 7.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5M4.2 4.6v4.2h4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M19.4 12a7.4 7.4 0 1 1-2.27-5.33M16.9 4.7v4.1h-4.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-arrows-h" viewBox="0 0 24 24"><path d="M4 12h16M8.5 8l-4.5 4 4.5 4M15.5 8l4.5 4-4.5 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9.2 3.6h5.6l-.8 4.5 2.9 2.9a1 1 0 0 1-.71 1.71H7.81A1 1 0 0 1 7.1 11l2.9-2.9-.8-4.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 12.7v7.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-pin-on" viewBox="0 0 24 24"><path d="M9.2 3.6h5.6l-.8 4.5 2.9 2.9a1 1 0 0 1-.71 1.71H7.81A1 1 0 0 1 7.1 11l2.9-2.9-.8-4.5Z" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M12 12.7v7.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 14.2a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V20a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H4a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5.6 8.6a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V4a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H20a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4 17 7M7 17l-1.6 1.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.4 14.2A8.6 8.6 0 0 1 9.8 3.6a8.6 8.6 0 1 0 10.6 10.6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-frame" viewBox="0 0 24 24"><rect x="2.8" y="4.4" width="18.4" height="15.2" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="5.6" y="7.2" width="12.8" height="9.6" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="9.4" cy="10.4" r="1.35" fill="currentColor"/><path d="M5.9 16.4l3.6-4.2 2.6 3 2.3-2.4 3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3.6 7.2h3.1c1.5 0 2.4.7 3.3 1.9l3.9 5.6c.9 1.2 1.8 1.9 3.3 1.9h3.4M3.6 16.8h3.1c1.5 0 2.4-.7 3.3-1.9l1-1.4M14 7.2h6.4M17.2 4.2l3 3-3 3M17.2 13.4l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-hide" viewBox="0 0 24 24"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+</svg>
+
+<!-- ============ 顶栏 ============ -->
+<header class="topbar" id="topbar" hidden>
+  <div class="topbar-in">
+    <!-- 品牌 + 多文件夹来源：合并为与右侧控件同款的单一胶囊 -->
+    <div class="srcbar" id="srcbar" hidden>
+      <div class="src-scroll" id="srcScroll">
+        <div class="src-list" id="srcList" role="tablist" aria-label="图片来源筛选"></div>
+      </div>
+      <button type="button" class="src-add" id="btnAddFolder" title="添加文件夹" aria-label="添加文件夹">
+        <svg><use href="#i-plus"/></svg>
+        <span class="src-add-txt">添加文件夹</span>
+      </button>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="ctrls" id="ctrls">
+      <div class="seg" id="modeSeg" role="tablist" aria-label="浏览模式">
+        <button class="seg-btn" data-mode="small"  title="小图网格（密集）" aria-label="小图网格"><svg><use href="#i-grid-s"/></svg><span class="seg-txt">小</span></button>
+        <button class="seg-btn is-on" data-mode="medium" title="中图网格" aria-label="中图网格"><svg><use href="#i-grid-m"/></svg><span class="seg-txt">中</span></button>
+        <button class="seg-btn" data-mode="masonry" title="瀑布流（不等高列）" aria-label="瀑布流"><svg><use href="#i-masonry"/></svg><span class="seg-txt">瀑</span></button>
+        <button class="seg-btn" data-mode="single" title="单列整屏（逐张浏览）" aria-label="单列整屏"><svg><use href="#i-single"/></svg><span class="seg-txt">列</span></button>
+      </div>
+
+      <div class="sizectl" id="sizeCtl">
+        <button class="ico-btn" id="sizeMinus" title="缩小"><svg><use href="#i-minus"/></svg></button>
+        <input type="range" id="sizeRange" min="0" max="100" step="1" value="52" aria-label="图片显示大小">
+        <button class="ico-btn" id="sizePlus" title="放大"><svg><use href="#i-plus"/></svg></button>
+      </div>
+
+      <span class="sep"></span>
+
+      <label class="select-wrap">
+        <select id="sortKey" title="排序方式" aria-label="排序方式">
+          <option value="name" selected>按名称</option>
+          <option value="size">按大小</option>
+          <option value="time">按文件时间</option>
+          <option value="shot">拍摄时间</option>
+        </select>
+      </label>
+      <button class="ico-btn" id="sortDir" title="切换升序 / 降序" aria-label="切换排序方向"><svg><use href="#i-arrow-d"/></svg></button>
+
+      <span class="sep"></span>
+
+      <div class="search" id="searchBox">
+        <button type="button" class="ico-btn search-toggle" id="searchToggle" title="搜索文件名" aria-label="搜索文件名" aria-expanded="false">
+          <svg><use href="#i-search"/></svg>
+        </button>
+        <input type="text" id="searchInput" placeholder="搜索文件名…" autocomplete="off" spellcheck="false">
+        <button type="button" class="search-clear" id="searchClear" title="清除" aria-label="清除搜索" hidden>
+          <svg><use href="#i-x"/></svg>
+        </button>
+      </div>
+
+      <button class="ico-btn favbtn" id="favOnlyBtn" title="只看收藏" aria-label="只看收藏"><svg><use href="#i-star"/></svg></button>
+
+      <span class="sep"></span>
+
+      <div class="trash-wrap" id="trashWrap" hidden>
+        <button class="ico-btn" id="trashBtn" title="最近删除（可还原）" aria-label="最近删除">
+          <svg><use href="#i-undo"/></svg><span class="badge" id="trashBadge" hidden>0</span>
+        </button>
+        <div class="trash-panel" id="trashPanel" hidden>
+          <div class="tp-head">
+            <span>最近删除</span>
+            <button type="button" class="tp-clear" id="trashClear" title="只清空这里的记录，不动回收站里的文件">清空记录</button>
+          </div>
+          <div class="tp-list" id="trashList"></div>
+          <div class="tp-foot">
+            <button type="button" class="tp-viewall" id="trashViewAll">打开回收站…</button>
+            <button type="button" class="tp-open" id="trashOpenRb">系统回收站</button>
+            <span class="tp-tip">Ctrl+Z 撤销最近一次</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 隐私模式（闭眼模糊）—— 与「最近删除」同组，风格统一 -->
+      <button type="button" class="ico-btn" id="brandEye" title="闭眼：模糊预览（隐私模式）" aria-label="切换模糊预览" aria-pressed="false"><svg><use href="#i-eye"/></svg></button>
+
+      <span class="sep"></span>
+
+      <!-- 相框模式（实验功能，默认隐藏）：全屏随机轮播，桌面版会另开一个无边框置顶窗口。
+           初始带 hidden，等 App.applyFrameUI() 按设置决定是否亮出来 —— 与 #pinBtn
+           同一套"先藏后亮"策略，避免启动瞬间闪一下死图标。 -->
+      <button type="button" class="ico-btn" id="frameBtn" title="相框模式：随机轮播相册里的图片" aria-label="开启相框模式" aria-pressed="false" hidden>
+        <svg><use href="#i-frame"/></svg>
+      </button>
+
+      <!-- 设置：控件栏右端（与「最近删除」面板同款浮层） -->
+      <button type="button" class="ico-btn" id="setBtn" title="设置" aria-label="打开设置" aria-expanded="false" aria-haspopup="dialog">
+        <svg><use href="#i-gear"/></svg>
+      </button>
+
+      <!-- 窗口置顶（仅桌面版可见）：控件栏最右端，紧邻系统窗口按钮，
+           位置对应「窗口最小化左侧」这一直觉 -->
+      <button type="button" class="ico-btn pinbtn" id="pinBtn" title="窗口置顶：让 Atrium 始终浮在其它窗口之上" aria-label="窗口置顶" aria-pressed="false" hidden>
+        <svg><use href="#i-pin"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="prog" id="prog"><div class="prog-bar" id="progBar"></div></div>
+</header>
+
+<!-- ============ 设置面板（固定浮层，重挂 <body> 避开 .ctrls 裁剪） ============ -->
+<div class="set-panel" id="setPanel" hidden role="dialog" aria-modal="true" aria-label="设置">
+  <div class="sp-head">
+    <span class="sp-title">设置</span>
+    <button type="button" class="sp-close" id="setClose" title="关闭" aria-label="关闭设置"><svg><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sp-body" id="setBody"></div>
+  <div class="sp-foot">
+    <span class="sp-tip">设置自动保存在本机<span class="sp-ver" id="setVer"></span></span>
+    <button type="button" class="sp-reset" id="setReset">恢复默认</button>
+  </div>
+</div>
+
+<main id="main">
+
+  <!-- ============ 空态 / 引导 ============ -->
+  <section class="empty" id="emptyView">
+    <div class="empty-inner">
+      <div class="empty-art" aria-hidden="true">
+        <svg viewBox="0 0 220 150">
+          <rect x="18" y="18" width="184" height="122" rx="10" fill="#efece5" stroke="#ddd8cd" stroke-width="1.5"/>
+          <circle cx="112" cy="72" r="34" fill="none" stroke="#c9c3b6" stroke-width="3"/>
+          <path d="M42 118l34-44 24 30 22-24 40 38" fill="none" stroke="#c9c3b6" stroke-width="3" stroke-linejoin="round"/>
+          <circle cx="70" cy="56" r="7" fill="#d8d2c6"/>
+          <path d="M30 26l34-12 30 8" fill="none" stroke="#e6e1d6" stroke-width="4" stroke-linecap="round"/>
+          <path d="M60 14 48 2l-14 3" fill="none" stroke="#e6e1d6" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <p class="empty-kicker">LOCAL&nbsp;GALLERY</p>
+      <h1 class="empty-title">让照片回归<br>翻阅的乐趣</h1>
+      <p class="empty-desc">选择一个本地文件夹，像浏览作品集一样欣赏你的图片。<br>可以同时加载多个文件夹，随时在「全部图片」与各文件夹之间切换。<br>所有内容只在你的电脑里处理 —— 不联网、不上传、不复制。</p>
+      <div class="empty-actions">
+        <button class="btn btn-primary btn-lg" id="btnOpen1">
+          <svg><use href="#i-folder"/></svg><span>选择图片文件夹</span>
+        </button>
+      </div>
+      <p class="empty-hint">也可以直接把一个或多个文件夹 <strong>拖拽</strong> 到这里</p>
+      <ul class="empty-points">
+        <li>支持 JPG / PNG / GIF / WebP / BMP / AVIF / SVG 等</li>
+        <li>可同时加载多个文件夹 · 全部 / 分文件夹查看</li>
+        <li>大图查看 · 居中最大化 · 全屏幻灯片</li>
+        <li>小图 / 中图 / 瀑布流 / 单列整屏 四种浏览模式</li>
+        <li>按页浏览，每页显示数量可自由调节</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ 图库 ============ -->
+  <section class="gallery" id="galleryView" hidden>
+
+    <div class="statusline" id="statusline" hidden>
+      <span id="statusText">正在索引…</span>
+      <span class="status-count" id="statusCount"></span>
+    </div>
+    <div class="stage-wrap">
+      <div class="stage" id="stage"><div class="stage-inner" id="stageInner"></div></div>
+    </div>
+
+    <!-- 底部状态栏：每页数量 + 统计 + 翻页（单行吸底，下方不留白） -->
+    <footer class="viewbar" id="viewbar" hidden>
+      <div class="vb-left">
+        <span class="vb-cap">每页显示</span>
+        <label class="select-wrap">
+          <select id="pageSizeSel" aria-label="每页显示数量">
+            <option value="50">50 张</option>
+            <option value="100" selected>100 张</option>
+            <option value="200">200 张</option>
+            <option value="500">500 张</option>
+            <option value="1000">1000 张</option>
+            <option value="0">全部显示</option>
+          </select>
+        </label>
+        <span class="vb-page" id="pageInfo"></span>
+      </div>
+      <div class="vb-note" id="footNote"></div>
+      <div class="vb-err" id="footErr" hidden>部分图片无法解码（格式不支持或已损坏）</div>
+      <div class="vb-right">
+        <button class="btn btn-ghost btn-sm" id="pagePrev">上一页</button>
+        <button class="btn btn-ghost btn-sm" id="pageNext">下一页</button>
+      </div>
+    </footer>
+  </section>
+
+  <!-- ============ 回收站：删掉的图片在这里找回 ============ -->
+  <section class="trashview" id="trashView" hidden>
+    <header class="tv-top">
+      <button class="btn btn-ghost btn-sm" id="tvBack"><svg><use href="#i-left"/></svg><span>返回图库</span></button>
+      <h2 class="tv-title">回收站</h2>
+      <span class="tv-count" id="tvCount"></span>
+      <div class="spacer"></div>
+      <button class="btn btn-ghost btn-sm" id="tvSelectAll">全选</button>
+      <button class="btn btn-ghost btn-sm" id="tvInvert">反选</button>
+      <span class="tv-vsep"></span>
+      <button class="btn btn-primary btn-sm" id="tvRestore">还原所选</button>
+      <button class="btn btn-ghost btn-sm" id="tvForget">移除记录</button>
+      <button class="btn btn-ghost btn-sm" id="tvClear">清空记录</button>
+      <span class="tv-vsep"></span>
+      <button class="btn btn-ghost btn-sm" id="tvOpenRb">打开系统回收站</button>
+    </header>
+    <div class="tv-body">
+      <div class="tv-grid" id="tvGrid"></div>
+      <div class="tv-empty" id="tvEmpty" hidden>
+        <svg class="tv-empty-ic"><use href="#i-trash"/></svg>
+        <p class="tv-empty-title">回收站是空的</p>
+        <p class="tv-empty-desc">删掉的图片会出现在这里，可以随时还原回原来的文件夹。</p>
+      </div>
+    </div>
+    <p class="tv-foot-note">还原会把文件从系统回收站搬回原来的位置；「移除记录 / 清空记录」只清理这里的名单，磁盘文件不受影响。</p>
+  </section>
+
+  <!-- ============ 批量选择操作条（框选 / 勾选后出现） ============ -->
+  <div class="selbar" id="selBar" hidden>
+    <span class="sb-count" id="sbCount">已选 0 张</span>
+    <span class="sb-tip">拖拽空白处可框选 · Ctrl/⌘+点击可加选</span>
+    <span class="sb-sp"></span>
+    <button class="btn btn-ghost btn-sm" id="sbAll">全选本页</button>
+    <button class="btn btn-ghost btn-sm" id="sbInv">反选</button>
+    <button class="btn btn-ghost btn-sm" id="sbNone">取消</button>
+    <button class="btn btn-ghost btn-sm" id="sbExport"><svg><use href="#i-download"/></svg><span>导出所选</span></button>
+    <button class="btn btn-danger btn-sm" id="sbDel"><svg><use href="#i-trash"/></svg><span>删除所选</span></button>
+  </div>
+
+  <!-- 空结果提示（过滤无匹配时覆盖在舞台上） -->
+  <div class="noresult" id="noResult" hidden>
+    <p class="noresult-kicker">NO&nbsp;MATCH</p>
+    <p class="noresult-title" id="noResultText">没有匹配的图片</p>
+    <button class="btn btn-ghost btn-sm" id="clearFilters">清除过滤条件</button>
+  </div>
+
+</main>
+
+<!-- ============ 拖拽遮罩 ============ -->
+<div class="dropzone" id="dropZone" hidden>
+  <div class="dropzone-card">
+    <svg class="dropzone-ic"><use href="#i-folder"/></svg>
+    <p>松开以加载这些文件夹</p>
+  </div>
+</div>
+
+<!-- ============ Lightbox 大图查看 ============ -->
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="图片查看" aria-hidden="true" hidden>
+  <div class="lb-bg"></div>
+  <div class="lb-stage" id="lbStage">
+    <img class="lb-img" id="lbImg" alt="" draggable="false">
+    <div class="lb-spin" id="lbSpin"></div>
+    <div class="lb-err" id="lbErr" hidden>
+      <svg><use href="#i-eye"/></svg>
+      <p>无法解码这张图片<br><span id="lbErrName"></span><span class="lb-err-why" id="lbErrWhy"></span></p>
+    </div>
+  </div>
+
+  <button class="lb-close" id="lbClose" aria-label="关闭"><svg><use href="#i-x"/></svg></button>
+  <button class="lb-nav lb-prev" id="lbPrev" aria-label="上一张"><svg><use href="#i-left"/></svg></button>
+  <button class="lb-nav lb-next" id="lbNext" aria-label="下一张"><svg><use href="#i-right"/></svg></button>
+
+  <div class="lb-hud">
+    <div class="lb-file">
+      <span class="lb-name" id="lbName"></span>
+      <span class="lb-count" id="lbCount"></span>
+    </div>
+    <div class="lb-actions">
+      <button class="ico-btn" id="lbZoomOut" title="缩小" aria-label="缩小"><svg><use href="#i-minus"/></svg></button>
+      <button class="lb-pct" id="lbPct" title="双击图片可在适应与 100% 之间切换">100%</button>
+      <button class="ico-btn" id="lbZoomIn" title="放大" aria-label="放大"><svg><use href="#i-plus"/></svg></button>
+      <button class="ico-btn" id="lbFit" title="适应窗口（尽量放大整张显示）" aria-label="适应窗口"><svg><use href="#i-fit"/></svg></button>
+      <button class="ico-btn" id="lbRotL" title="逆时针旋转 90°（Shift+R）· 旋转会被记住，按 Z 可复原" aria-label="逆时针旋转"><svg class="flip-x"><use href="#i-rotate"></use></svg></button>
+      <button class="ico-btn" id="lbRotR" title="顺时针旋转 90°（R）· 旋转会被记住，按 Z 可复原" aria-label="顺时针旋转"><svg><use href="#i-rotate"></use></svg></button>
+      <button class="ico-btn" id="lbWheel" title="滚轮：缩放图片（点击切换为切换图片）" aria-label="滚轮模式：缩放"><svg><use href="#i-search"></use></svg></button>
+      <span class="lb-sep"></span>
+      <button class="ico-btn" id="lbInfo" title="图片信息（I）" aria-label="图片信息"><svg><use href="#i-info"/></svg></button>
+      <button class="ico-btn" id="lbFav" title="收藏（F）" aria-label="收藏"><svg><use href="#i-star"/></svg></button>
+      <button class="ico-btn" id="lbStripBtn" title="缩略图条（H）" aria-label="缩略图条"><svg><use href="#i-film"/></svg></button>
+      <span class="lb-sep"></span>
+      <button class="ico-btn" id="lbPlay" title="幻灯片播放（P）" aria-label="幻灯片播放"><svg><use href="#i-play"/></svg></button>
+      <button class="ico-btn" id="lbFs" title="全屏显示" aria-label="全屏显示"><svg><use href="#i-expand"/></svg></button>
+      <span class="lb-sep"></span>
+      <button class="ico-btn lb-del" id="lbDel" title="删除（Delete）" aria-label="删除这张图片"><svg><use href="#i-trash"/></svg></button>
+    </div>
+  </div>
+
+  <div class="lb-strip" id="lbStrip" hidden></div>
+
+  <aside class="lb-info" id="lbInfoPane" hidden aria-label="图片信息">
+    <div class="lb-info-body" id="lbInfoBody"></div>
+  </aside>
+</div>
+
+
+<!-- ============ 无障碍：常驻播报区 ============
+     屏幕外的活区。toast() 的每一处调用都会往这里写一条 —— "已移入回收站"
+     "已还原 3 张""导出失败"这类操作**除了这条提示没有别的视觉痕迹**，
+     不播报对读屏用户就等于"按下去什么都没发生"。
+     role/aria-live 会被 A11y.live() 按 urgency 改档（polite / assertive）。 -->
+<div class="sr-only" id="a11yLive" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<script src="js/util.js"></script>
+<script src="js/a11y.js"></script>
+<script src="js/native.js"></script>
+<script src="js/state.js"></script>
+<script src="js/loader.js"></script>
+<script src="js/exif.js"></script>
+<script src="js/transform.js"></script>
+<script src="js/thumb.js"></script>
+<script src="js/masonry.js"></script>
+<script src="js/grid.js"></script>
+<script src="js/trash.js"></script>
+<script src="js/lightbox.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/frame.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

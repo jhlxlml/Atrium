@@ -1,0 +1,13 @@
+{
+  "name": "viewfinder-photos",
+  "productName": "Atrium",
+  "version": "1.13.0",
+  "description": "Atrium · 独立桌面版（本地照片浏览，无网络依赖）",
+  "main": "main.js",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "rcedit": "^5.0.2"
+  }
+}

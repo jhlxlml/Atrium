@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Viewfinder icon">
+  <!-- 取景 · 深墨底矢量主版（Atrium）
+       配色直接取自 css/main.css 的自定义属性：
+         近墨 #1b1a17 底色 · 暖纸 #f7f5f1 取景框与山 · 暖金 #b5842f 日轮
+       几何：内容安全区 104-408（占 59%），线宽 26 保证 16px 下仍可辨。
+       坑：XML 注释里不能出现连续两个减号，否则 XML 解析器直接拒绝整个 SVG
+       （症状是 Image 加载失败、favicon 不显示）。所以此处不写 CSS 变量原名。 -->
+  <defs>
+    <linearGradient id="vf-bg" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#2b2822"/>
+      <stop offset="0.52" stop-color="#1b1a17"/>
+      <stop offset="1" stop-color="#131210"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="116" ry="116" fill="url(#vf-bg)"/>
+
+  <!-- 取景框四角（中心线内缩 13 = 半个线宽，使外缘恰好落在 104/408） -->
+  <g fill="none" stroke="#f7f5f1" stroke-width="26" stroke-linecap="butt" stroke-linejoin="miter">
+    <path d="M117 197 V117 H197"/>
+    <path d="M315 117 H395 V197"/>
+    <path d="M395 315 V395 H315"/>
+    <path d="M197 395 H117 V315"/>
+  </g>
+
+  <!-- 暖金日轮 -->
+  <circle cx="196" cy="200" r="30" fill="#b5842f"/>
+
+  <!-- 双峰山脊（底边左端 152 / 右端 360，中心 256；左右距角括号各 35，对称） -->
+  <path d="M152 368 L214 270 L246 298 L288 228 L360 368 Z" fill="#f7f5f1"/>
+</svg>

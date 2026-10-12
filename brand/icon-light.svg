@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Viewfinder icon (light)">
+  <!-- 取景 · 暖纸底矢量版（浅色场景 / 文档 / 浅色任务栏）
+       与 icon.svg 完全同构，仅互换底色与墨色。 -->
+  <rect width="512" height="512" rx="116" ry="116" fill="#f7f5f1"/>
+
+  <g fill="none" stroke="#1b1a17" stroke-width="26" stroke-linecap="butt" stroke-linejoin="miter">
+    <path d="M117 197 V117 H197"/>
+    <path d="M315 117 H395 V197"/>
+    <path d="M395 315 V395 H315"/>
+    <path d="M197 395 H117 V315"/>
+  </g>
+
+  <circle cx="196" cy="200" r="30" fill="#b5842f"/>
+  <path d="M152 368 L214 270 L246 298 L288 228 L360 368 Z" fill="#1b1a17"/>
+</svg>

@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>取景 · 图标与英文名候选</title>
+<style>
+  :root{
+    --paper:#f7f5f1; --surface:#fffdf9; --ink:#1b1a17; --ink2:#55524b;
+    --muted:#8d897e; --line:#e5e1d8; --line2:#d9d4c8; --sel:#b5842f;
+    --serif:Georgia,"Times New Roman","Songti SC",SimSun,serif;
+    --ui:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;padding:56px 32px 96px;background:var(--paper);color:var(--ink);
+    font-family:var(--ui);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-family:var(--serif);font-size:30px;font-weight:400;letter-spacing:.01em;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:12px}
+  .rule{height:1px;background:var(--line);margin:40px 0 28px}
+  h2{font-family:var(--serif);font-size:19px;font-weight:400;margin:0 0 4px}
+  .note{color:var(--muted);font-size:12.5px;margin:0 0 20px}
+  .note b{color:var(--ink2);font-weight:600}
+
+  /* ---------- 图标展示 ---------- */
+  .hero{display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap}
+  .big{width:208px;height:208px;flex:0 0 auto;border-radius:47px;overflow:hidden;
+       box-shadow:0 18px 46px -22px rgba(27,26,23,.42)}
+  .big svg{display:block;width:100%;height:100%}
+  .sizes{display:flex;align-items:flex-end;gap:22px;padding-bottom:10px}
+  .sizes figure{margin:0;text-align:center}
+  .sizes .box{border-radius:14px;overflow:hidden;box-shadow:0 6px 18px -10px rgba(27,26,23,.4);
+              display:block}
+  .sizes .box svg{display:block;width:100%;height:100%}
+  .sizes figcaption{font-size:10.5px;color:var(--muted);margin-top:7px;letter-spacing:.04em}
+
+  table.cmp{width:100%;border-collapse:collapse;margin-top:6px}
+  table.cmp th{text-align:left;font-weight:600;font-size:11px;letter-spacing:.09em;
+               text-transform:uppercase;color:var(--muted);padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
+  table.cmp td{padding:14px 10px 14px 0;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}
+  table.cmp td:first-child{width:120px}
+
+  /* ---------- 名字候选 ---------- */
+  .names{display:grid;gap:14px}
+  .name{
+    display:flex;gap:18px;align-items:center;background:var(--surface);
+    border:1px solid var(--line);border-radius:14px;padding:16px 18px;
+  }
+  .name.pick{border-color:var(--sel);box-shadow:0 0 0 3px rgba(181,132,47,.13)}
+  .mk{flex:0 0 auto;width:46px;height:46px;border-radius:11px;overflow:hidden}
+  .mk svg{display:block;width:100%;height:100%}
+  .nm{font-family:var(--serif);font-size:24px;line-height:1.15;letter-spacing:.005em}
+  .ipa{font-size:11.5px;color:var(--muted);letter-spacing:.02em;margin-top:1px}
+  .why{color:var(--ink2);font-size:13px;margin-top:7px}
+  .why em{font-style:normal;color:var(--sel);font-weight:600}
+  .badge{display:inline-block;font-size:10px;letter-spacing:.08em;color:var(--sel);
+         border:1px solid var(--sel);border-radius:20px;padding:1px 8px;margin-left:10px;
+         vertical-align:3px;font-family:var(--ui)}
+  .risk{font-size:12px;color:var(--muted);margin-top:4px}
+
+  /* ---------- 方向稿 ---------- */
+  .drafts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .drafts figure{margin:0}
+  .drafts img{width:100%;aspect-ratio:1;object-fit:cover;display:block;
+              border-radius:14px;border:1px solid var(--line)}
+  .drafts figcaption{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.45}
+  .drafts figcaption b{color:var(--ink2);font-weight:600;display:block;font-size:12.5px;margin-bottom:1px}
+
+  @media (max-width:720px){
+    body{padding:32px 18px 64px}
+    .drafts{grid-template-columns:repeat(2,1fr)}
+    .name{flex-wrap:wrap}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>取景 · 图标与英文名候选</h1>
+  <div class="sub">配色直接取自 <code>css/main.css</code>：近墨 <code>#1b1a17</code> · 暖纸 <code>#f7f5f1</code> · 暖金 <code>#b5842f</code></div>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="mark-dark" viewBox="0 0 512 512">
+      <rect width="512" height="512" rx="116" fill="#1b1a17"/>
+      <g fill="none" stroke="#f7f5f1" stroke-width="26">
+        <path d="M117 197 V117 H197"/><path d="M315 117 H395 V197"/>
+        <path d="M395 315 V395 H315"/><path d="M197 395 H117 V315"/>
+      </g>
+      <circle cx="196" cy="200" r="30" fill="#b5842f"/>
+      <path d="M152 368 L214 270 L246 298 L288 228 L360 368 Z" fill="#f7f5f1"/>
+    </symbol>
+    <symbol id="mark-light" viewBox="0 0 512 512">
+      <rect width="512" height="512" rx="116" fill="#f7f5f1"/>
+      <g fill="none" stroke="#1b1a17" stroke-width="26">
+        <path d="M117 197 V117 H197"/><path d="M315 117 H395 V197"/>
+        <path d="M395 315 V395 H315"/><path d="M197 395 H117 V315"/>
+      </g>
+      <circle cx="196" cy="200" r="30" fill="#b5842f"/>
+      <path d="M152 368 L214 270 L246 298 L288 228 L360 368 Z" fill="#1b1a17"/>
+    </symbol>
+    <symbol id="mark-sm" viewBox="0 0 512 512">
+      <rect width="512" height="512" rx="116" fill="#1b1a17"/>
+      <g fill="none" stroke="#f7f5f1" stroke-width="54">
+        <path d="M133 214 V133 H214"/><path d="M298 133 H379 V214"/>
+        <path d="M379 298 V379 H298"/><path d="M214 379 H133 V298"/>
+      </g>
+      <circle cx="200" cy="205" r="40" fill="#b5842f"/>
+      <path d="M146 356 L216 250 L252 284 L294 212 L370 356 Z" fill="#f7f5f1"/>
+    </symbol>
+  </svg>
+
+  <div class="rule"></div>
+
+  <h2>图标 · 矢量终稿</h2>
+  <p class="note">手写 SVG，无生成水印、任意缩放清晰，可直接导出 <b>.ico</b> 多尺寸与内联 favicon。</p>
+
+  <div class="hero">
+    <div class="big"><svg><use href="#mark-dark"/></svg></div>
+    <div class="big" style="box-shadow:0 18px 46px -22px rgba(27,26,23,.22);border:1px solid var(--line)">
+      <svg><use href="#mark-light"/></svg>
+    </div>
+    <div class="sizes">
+      <figure><span class="box" style="width:64px;height:64px"><svg><use href="#mark-dark"/></svg></span><figcaption>64</figcaption></figure>
+      <figure><span class="box" style="width:48px;height:48px"><svg><use href="#mark-dark"/></svg></span><figcaption>48</figcaption></figure>
+      <figure><span class="box" style="width:32px;height:32px"><svg><use href="#mark-dark"/></svg></span><figcaption>32</figcaption></figure>
+      <figure><span class="box" style="width:16px;height:16px"><svg><use href="#mark-dark"/></svg></span><figcaption>16</figcaption></figure>
+    </div>
+  </div>
+
+  <p class="note" style="margin-top:26px">
+    <b>16px 的问题与对策</b>：细描边的取景框在 16px 下会发灰、角臂糊掉。所以另出一版<b>小尺寸专用稿</b>——
+    线宽由 26 加到 54、日轮放大、山脉抬高，符号结构不变，只在 16/24/32px 下使用。
+  </p>
+  <div class="sizes" style="padding-bottom:0">
+    <figure><span class="box" style="width:64px;height:64px"><svg><use href="#mark-sm"/></svg></span><figcaption>小尺寸稿 64</figcaption></figure>
+    <figure><span class="box" style="width:32px;height:32px"><svg><use href="#mark-sm"/></svg></span><figcaption>32</figcaption></figure>
+    <figure><span class="box" style="width:16px;height:16px"><svg><use href="#mark-sm"/></svg></span><figcaption>16</figcaption></figure>
+    <figure><span class="box" style="width:24px;height:24px"><svg><use href="#mark-sm"/></svg></span><figcaption>24</figcaption></figure>
+  </div>
+
+  <div class="rule"></div>
+
+  <h2>图标 · 生成方向稿</h2>
+  <p class="note">四条不同视觉路线，供对比取舍（位图稿仅作方向参考，含右下角生成水印，不会直接使用）。</p>
+  <div class="drafts">
+    <figure><img src="cand-04-viewfinder.png" alt="取景框与山景"><figcaption><b>A · 取景框</b>取景框 + 山脊 + 暖金日。延续现有 favicon 基因，已在上面矢量化。最克制。</figcaption></figure>
+    <figure><img src="cand-02-frame.png" alt="相框与暖光"><figcaption><b>B · 相框</b>画架相框 + 内部暖光渐变。直接指向桌面版"相框模式"这个独占功能。</figcaption></figure>
+    <figure><img src="cand-01-stack.png" alt="错落相纸堆"><figcaption><b>C · 相纸堆</b>三张照片错落叠放。呼应四种排列 / 瀑布流，暖纸底，安静。</figcaption></figure>
+    <figure><img src="cand-03-aperture.png" alt="光圈"><figcaption><b>D · 光圈</b>光阑叶片 + 暖金中心。摄影语汇最直白，但和一堆相机 App 撞脸。</figcaption></figure>
+  </div>
+
+  <div class="rule"></div>
+
+  <h2>英文名 · 六个候选</h2>
+  <p class="note">先说明为什么不直接用 <b>Viewfinder</b>：11 个字母，任务栏和文件名里都嫌长，且已被 NTT 及若干工具占用。</p>
+
+  <div class="names">
+
+    <div class="name pick">
+      <span class="mk"><svg><use href="#mark-dark"/></svg></span>
+      <div>
+        <div class="nm">Atrium<span class="badge">首选</span></div>
+        <div class="ipa">/ˈeɪtriəm/ · 中庭</div>
+        <div class="why">天光从高处落下、照亮整片陈列空间的地方——照片墙就是中庭。气质和这套"摄影作品集"UI 最合，罕见、好念、基本不撞名，桌面版相框模式也像"房间里挂着照片"。</div>
+      </div>
+    </div>
+
+    <div class="name pick">
+      <span class="mk"><svg><use href="#mark-dark"/></svg></span>
+      <div>
+        <div class="nm">Tessera<span class="badge">首选</span></div>
+        <div class="ipa">/ˈtesərə/ · 马赛克小块</div>
+        <div class="why">一块块小方块拼成整幅画面——<em>正好是四种排列在做的事</em>，尤其瀑布流那种错落。拉丁词根，有古典来历，显得有手艺。代价是第一眼念法要教一次。</div>
+      </div>
+    </div>
+
+    <div class="name">
+      <span class="mk"><svg><use href="#mark-light"/></svg></span>
+      <div>
+        <div class="nm">Lumen</div>
+        <div class="ipa">/ˈluːmən/ · 流明（光通量单位）</div>
+        <div class="why">照片本来就是光。短、美、一读就对，拉丁语原意就是"光"。</div>
+        <div class="risk">撞名风险：已归档的 PHP 框架 Lumen、NASA 若干项目。搜出来的第一屏未必是你。</div>
+      </div>
+    </div>
+
+    <div class="name">
+      <span class="mk"><svg><use href="#mark-light"/></svg></span>
+      <div>
+        <div class="nm">Folio</div>
+        <div class="ipa">/ˈfoʊlioʊ/ · 对开本 / 作品集</div>
+        <div class="why">同时说清"一册照片"和"作品集"两层意思，和界面调性直接呼应。稳、正式、好念。</div>
+        <div class="risk">撞名风险：澳洲一个金融 App、若干文档工具。气质偏出版/商务，少一点温度。</div>
+      </div>
+    </div>
+
+    <div class="name">
+      <span class="mk"><svg><use href="#mark-dark"/></svg></span>
+      <div>
+        <div class="nm">Nook</div>
+        <div class="ipa">/nʊk/ · 安静的角落</div>
+        <div class="why">精准命中"纯本地、不联网、私密"这一点——你的照片待在自己的角落里。短、暖。</div>
+        <div class="risk">撞名风险：Barnes &amp; Noble 的 Nook 阅读器，联想较强。</div>
+      </div>
+    </div>
+
+    <div class="name">
+      <span class="mk"><svg><use href="#mark-dark"/></svg></span>
+      <div>
+        <div class="nm">Lume</div>
+        <div class="ipa">/luːm/ · 造词（lumen 的柔化短形）</div>
+        <div class="why">四个字母，柔和不刺。造词的好处是<b style="font-weight:600">没有撞名包袱</b>，搜索独占。</div>
+        <div class="risk">代价是含义要自己赋予，不自带画面感。</div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="note" style="margin-top:26px">
+    选定后我会把整套资产落地：<b>.ico</b> 多尺寸（16/24/32/48/64/128/256）、离线版内联 favicon 替换、
+    Electron 窗口与任务栏图标、关于面板署名，并跑一遍回归确认没碰坏现有断言。
+  </p>
+
+</div>
+</body>
+</html>
