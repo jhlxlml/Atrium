@@ -225,6 +225,9 @@ Atrium/
 | [`Atrium_问题清单与修复优先级.md`](Atrium_问题清单与修复优先级.md) | 一次全项目体检：问题分级、修复记录与验证方式 |
 | [`deploy/release/RELEASE.md`](deploy/release/RELEASE.md) | 发布流程：固定顺序、验收标准、打包高危坑 |
 
-## 许可
+## 许可证
 
-见 [`LICENSE`](LICENSE)。
+项目采用 [GNU GPL v3](LICENSE)。
+
+便携包内含 Electron / Chromium 运行时，它们遵循各自的许可证（Electron 为 MIT，Chromium 另附第三方许可清单）；
+本仓库的源码部分以 GPL-3.0 授权。

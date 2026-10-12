@@ -229,4 +229,8 @@ Atrium/
 
 ## License
 
-See [`LICENSE`](LICENSE).
+This project is licensed under the [GNU GPL v3](LICENSE).
+
+The portable build bundles the Electron / Chromium runtime, which is covered by its own licenses
+(Electron is MIT; Chromium ships its own third-party license notices). The source code in this
+repository is licensed under GPL-3.0.
