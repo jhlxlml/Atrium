@@ -72,6 +72,13 @@ function stubWindowChannels() {
   let aot = false;
   ipcMain.handle('vf:alwaysOnTop', (e, v) => { aot = !!v; return aot; });
   ipcMain.handle('vf:getAlwaysOnTop', () => aot);
+  /* 标题栏浮层（v1.15.0，Windows WCO）。渲染进程只在**真有 WCO** 时才推配色
+     （见 App.wireCapOverlay），而探针窗口没有 WCO，所以正常情况下这两个通道
+     根本不会被调到；仍然补上桩：探针若哪天给窗口加上 WCO 选项，
+     少了桩就会变成一条 `No handler registered` 的页面错误 ——
+     那会连带染红所有「探针过程中无页面报错」的断言，且症状离原因很远。 */
+  ipcMain.handle('vf:titleBarOverlay', () => true);
+  ipcMain.handle('vf:toggleMaximize', () => false);
   /* 返回 1 块屏（真实桌面就是这样）。1 块屏时设置面板不会出现「输出屏幕」那一行
      （它要求 >1 块屏），所以对现有断言是行为中性的。 */
   ipcMain.handle('vf:listDisplays', () => [

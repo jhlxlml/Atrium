@@ -31,6 +31,7 @@
   --micro: 11px;
   --topbar-h: 58px;
   --bar-h: 54px;              /* 底部状态栏高度 */
+  --cap-h: 34px;              /* 窗口标题栏高度（须与 main.js 的 CAP_H 一致） */
 }
 
 /* ---------- 基础 ---------- */
@@ -88,6 +89,65 @@ svg { width: 1em; height: 1em; display: block; }
 ::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-thumb { background: #cfc9bb; border: 4px solid var(--paper); border-radius: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   窗口标题栏（Windows：Window Controls Overlay）
+   ------------------------------------------------------------
+   原生最小化 / 最大化 / 关闭由 Electron 画成右上角浮层，标题栏本体归我们画。
+   置顶按钮落在「最小化」左侧、和窗口控制键成为一组 —— 这是它唯一合理的邻居：
+   它不是浏览动作，而是窗口动作。
+   为什么用 env(titlebar-area-*) 而不是写死 138px：三个原生按钮的宽度随 DPI 变
+   （本机 175% 下仍是 138 CSS px，但这是实测值、不是保证），env() 由 Chromium
+   按真实几何给出，最大化 / 换屏 / 改缩放都自动跟上。
+   ============================================================ */
+.capbar { display: none; }
+body.has-wco .capbar {
+  display: flex; align-items: center;
+  position: fixed; top: 0; left: 0; right: 0; height: var(--cap-h);
+  z-index: 120;                      /* 高于灯箱(100)，低于浮层(240)与弹层(300)：
+                                        窗口内看大图时标题栏照旧可见（原生标题栏
+                                        时期就是这样），置顶按钮也一直留在手边 */
+  background: var(--paper);          /* 与主进程浮层色一致（见 App.syncCapOverlay） */
+  -webkit-app-region: drag;          /* 整条可拖窗口 */
+  user-select: none;
+}
+.cap-title {
+  padding-left: 14px;
+  font-size: 12px; color: var(--ink-2);
+  letter-spacing: .01em; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+/* 右侧按钮组：右缘距原生按钮左缘 8px（= 100% - 可绘区右边界） */
+.cap-right {
+  position: absolute; top: 0; height: 100%;
+  right: calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%) + 8px);
+  display: flex; align-items: center;
+}
+/* 标题栏里的置顶按钮：按窗口控制键的规格来（28px 高、方角软圆、悬停浅底），
+   而不是顶栏那套 32px 圆角图标按钮 —— 「统一」在这里指与相邻的最小化/关闭一致 */
+body.has-wco .cap-right .ico-btn {
+  width: 38px; height: 28px; border-radius: 6px;
+  border-color: transparent; color: var(--ink-2);
+  -webkit-app-region: no-drag;       /* 拖拽区里的按钮必须显式可点 */
+}
+body.has-wco .cap-right .ico-btn svg { width: 15px; height: 15px; }
+body.has-wco .cap-right .ico-btn:hover { background: rgba(27,26,23,.07); border-color: transparent; color: var(--ink); }
+body.has-wco .cap-right .ico-btn:active { transform: none; background: rgba(27,26,23,.12); }
+body.has-wco .cap-right .ico-btn.is-on { color: var(--sel); background: var(--sel-soft); border-color: transparent; }
+body[data-theme="dark"] .cap-right .ico-btn:hover { background: rgba(242,239,232,.10); color: var(--ink); }
+body[data-theme="dark"] .cap-right .ico-btn:active { background: rgba(242,239,232,.16); }
+/* 标题栏占掉 34px：顶栏吸顶位置与各视图的满屏高度都要跟着让位 */
+body.has-wco { padding-top: var(--cap-h); }
+body.has-wco .topbar { top: var(--cap-h); }
+body.has-wco .gallery { min-height: calc(100vh - var(--topbar-h) - var(--cap-h)); }
+body.has-wco .empty,
+body.has-wco .trashview { min-height: calc(100vh - var(--cap-h)); }
+/* 灯箱（窗口内看大图）：从标题栏下方铺开，标题栏不被吞掉 —— 与原生标题栏时期
+   的行为一致。**全屏看大图时标题栏让位**（HTML 全屏下原生按钮本来也被系统隐藏），
+   否则会在全屏图片顶上留一条 34px 的浅色带。 */
+body.has-wco .lightbox { top: var(--cap-h); }
+body:has(.lightbox:fullscreen) .capbar { display: none; }
+body:has(.lightbox:fullscreen) .lightbox { top: 0; }
 
 /* ============================================================
    顶栏

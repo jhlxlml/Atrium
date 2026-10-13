@@ -35,8 +35,16 @@ app.whenReady().then(async () => {
     catch (e) { return new Response('404', { status: 404 }); }
   });
 
-  const w = new BrowserWindow({ width: 1500, height: 860, show: true,
-    webPreferences: { preload: path.join(APPDIR, 'deploy', 'electron', 'preload.js'), contextIsolation: true } });
+  /* 窗口选项**镜像生产**（main.js 的 WCO 分支）：Windows 上主窗口有 Window Controls
+     Overlay，灯箱因此被标题栏下压 34px —— 而"居中"正是最容易被打偏的东西，
+     所以这个探针必须跑在生产配置上，否则它测的是一套用户看不到的布局。 */
+  const winOpts = { width: 1500, height: 860, show: true,
+    webPreferences: { preload: path.join(APPDIR, 'deploy', 'electron', 'preload.js'), contextIsolation: true } };
+  if (process.platform === 'win32') {
+    winOpts.titleBarStyle = 'hidden';
+    winOpts.titleBarOverlay = { color: '#f7f5f1', symbolColor: '#3a372f', height: 34 };
+  }
+  const w = new BrowserWindow(winOpts);
   await w.loadURL('vf://app/index.html');
   await new Promise((r) => setTimeout(r, 900));
 

@@ -125,6 +125,12 @@
    *   4) translate(-hw,-hh)            坐标还原
    *   5) scale(scale)                  以左上角为基准缩放
    * → 显示中心恒为 (舞台中心 + t)，任何倍率、任何角度都严格居中。
+   *
+   * `originX/originY` = 舞台（图片的包含块）左上角在**视口**中的坐标。
+   * 为什么需要它：CSS transform 的坐标原点永远是**元素自身布局盒的左上角**，
+   * 而舞台左上角不一定与视口原点重合 —— Windows 上标题栏把灯箱整体下压 34px
+   * 之后就不重合了，此时若仍按视口坐标写位移，图片会整幅偏移掉那 34px
+   * （实测：居中套件报"纵向下偏 34px"）。传 0（默认）即老行为，逐像素不变。
    */
   function computeTransform(opts) {
     const baseW = opts.baseW, baseH = opts.baseH, scale = opts.scale, rot = opts.rot || 0;
@@ -132,8 +138,11 @@
     const hw = w / 2, hh = h / 2;
     const ox = opts.stageCx + opts.tx - hw;
     const oy = opts.stageCy + opts.ty - hh;
+    // 写进 transform 的位移要减掉舞台原点（ox/oy 本身仍按视口坐标返回，语义不变）
+    const lx = ox - (opts.originX || 0);
+    const ly = oy - (opts.originY || 0);
     const transform =
-      'translate(' + ox + 'px,' + oy + 'px) ' +
+      'translate(' + lx + 'px,' + ly + 'px) ' +
       'translate(' + hw + 'px,' + hh + 'px) rotate(' + rot + 'deg) ' +
       'translate(' + (-hw) + 'px,' + (-hh) + 'px) scale(' + scale + ')';
     return {

@@ -411,12 +411,16 @@
     _stageGeom() {
       if (this.isFs()) {
         const w = global.innerWidth, h = global.innerHeight;
-        return { x: w / 2, y: h / 2, w, h };
+        return { x: w / 2, y: h / 2, w, h, left: 0, top: 0 };
       }
       const r = this.stage && this.stage.getBoundingClientRect ? this.stage.getBoundingClientRect() : null;
       const w = (r && r.width) || global.innerWidth;
       const h = (r && r.height) || global.innerHeight;
-      return { x: (r ? r.left : 0) + w / 2, y: (r ? r.top : 0) + h / 2, w, h };
+      // left/top：舞台左上角在视口里的位置。图片的包含块就是它，而 CSS transform
+      // 以包含块左上角为原点 —— 所以 apply() 必须把这两个值交给 computeTransform，
+      // 否则舞台一旦不与视口原点重合（Windows 标题栏把灯箱下压 34px），图片整体偏掉。
+      return { x: (r ? r.left : 0) + w / 2, y: (r ? r.top : 0) + h / 2, w, h,
+               left: (r ? r.left : 0), top: (r ? r.top : 0) };
     },
 
     /** 舞台中心 —— 一切居中计算的基准 */
@@ -474,6 +478,7 @@
       const t = T.computeTransform({
         baseW: b.w, baseH: b.h, scale: this.scale, rot: this.rot,
         tx: this.tx, ty: this.ty, stageCx: g.x, stageCy: g.y,
+        originX: g.left, originY: g.top,   // 舞台原点：transform 是相对包含块左上角的
       });
       this.img.style.transform = t.transform;
       this._updPct();

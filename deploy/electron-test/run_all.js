@@ -1074,15 +1074,15 @@ const SUITES = [
 
   /* ---------- 9. 顶栏布局 ---------- */
   {
-    id: 'topbar',    title: '顶栏布局 · 品牌文案已移除 / 眼睛按钮并入右侧 / 置顶按钮就位 / 窄窗不换行',
+    id: 'topbar',    title: '顶栏布局 · 品牌文案已移除 / 眼睛按钮并入右侧 / 置顶按钮归位到窗口标题栏 / 窄窗不换行',
     kind: 'probe',
     script: 'probe_topbar.js',
-    keys: ['INJECT ', 'EYE ', 'PIN ', 'PIN2 ', 'NARROW ', 'GEO '],
+    keys: ['INJECT ', 'EYE ', 'PIN ', 'PIN2 ', 'CAP ', 'NARROW ', 'GEO '],
     tags: ['slow'],
     run: function (ctx) {
       const check = ctx.check;
       const inj = ctx.keys['INJECT '], eye = ctx.keys['EYE '], pin = ctx.keys['PIN '],
-        pin2 = ctx.keys['PIN2 '], narrow = ctx.keys['NARROW '], geo = ctx.keys['GEO '];
+        pin2 = ctx.keys['PIN2 '], cap = ctx.keys['CAP '], narrow = ctx.keys['NARROW '], geo = ctx.keys['GEO '];
       if (!geo) { check('探针返回数据', false, '未解析到 GEO 输出'); return; }
       check('顶栏已移除品牌文案', geo.brandTextPresent === false);
       check('眼睛按钮位于右侧控件簇内', geo.eyeInCtrls === true);
@@ -1101,11 +1101,44 @@ const SUITES = [
         geo.frameDefaultOn === true && geo.frameVisible === true && geo.frameIdx >= 0,
         'default=' + geo.frameDefaultOn + ' visible=' + geo.frameVisible
           + ' idx=' + geo.frameIdx + ' total=' + geo.ctrlCount);
-      /* 置顶按钮（v1.7.0）：位置在最右端（紧邻系统窗口按钮）、点击真的调到原生桥、状态双向同步 */
+      /* 置顶按钮（v1.7.0；v1.15.0 起在 Windows 上归位到窗口标题栏）：
+         原生标题栏被 Window Controls Overlay 取代后，置顶按钮移进标题栏、
+         落在「最小化」**左边** —— 它不是浏览动作而是窗口动作，邻居只能是窗口控制键。
+         非 Windows 没有 WCO，按钮留在控件簇最右端（老布局）。两条路都得认，
+         因为"探针跑在哪个平台"不该决定代码里有没有这条断言。 */
+      if (cap && cap.wco) {
+        check('有 WCO 时置顶按钮在窗口标题栏里（不再挂在控件簇上）',
+          cap.pinInBar === true && cap.barVisible === true
+            && geo.pinInCtrls === false && geo.hasWcoClass === true && geo.capbarHidden === false,
+          JSON.stringify({ inBar: cap.pinInBar, barVisible: cap.barVisible,
+            inCtrls: geo.pinInCtrls, cls: geo.hasWcoClass, parent: geo.pinParentId }));
+        check('置顶按钮在「最小化」左侧（右缘落在原生按钮区之内）',
+          cap.pinLeftOfNative === true,
+          'pin=' + JSON.stringify(cap.pinRect) + ' area=' + JSON.stringify(cap.areaRect));
+        check('置顶按钮没被标题栏浮层吞掉（命中测试拿到的是它自己）',
+          cap.pinHit === true, 'hit=' + cap.pinHit);
+        check('标题栏空白处是拖拽区（能拖窗口）', cap.barHit === true, 'barHit=' + cap.barHit);
+        check('双击标题栏调到原生「最大化/还原」桥，且双击按钮不会误触发',
+          cap.maxCalls === 1, 'calls=' + cap.maxCalls);
+        check('切换主题会把标题栏浮层配色推给主进程（深色主题推深色）',
+          Array.isArray(cap.capSync) && cap.capSync.length >= 2
+            && cap.capSync.some((o) => o.color === '#171614')
+            && cap.capSync[cap.capSync.length - 1].color === cap.expectedNow,
+          JSON.stringify(cap.capSync) + ' expectedNow=' + cap.expectedNow);
+        check('标题栏把页面整体压下（顶栏吸顶位置 = 标题栏高度）',
+          cap.capH === 34 && cap.topbarTop === cap.capH,
+          'capH=' + cap.capH + ' topbarTop=' + cap.topbarTop);
+        check('窗口内打开灯箱从标题栏下方铺开（标题栏不被吞掉）',
+          cap.lbErr === undefined && cap.lbTop === cap.capH && cap.lbBottom === cap.lbWinH,
+          'lbTop=' + cap.lbTop + ' lbBottom=' + cap.lbBottom + ' winH=' + cap.lbWinH + ' err=' + cap.lbErr);
+      } else {
+        check('无 WCO 时置顶按钮留在控件簇最右端',
+          geo.pinInCtrls === true && geo.pinAfterSet === true && geo.pinIsLast === true
+            && geo.hasWcoClass === false && geo.capbarHidden === true,
+          'setIdx=' + geo.setIdx + ' pinIdx=' + geo.pinIdx + ' total=' + geo.ctrlCount
+            + ' capbarHidden=' + geo.capbarHidden);
+      }
       if (pin) {
-        check('置顶按钮位于控件簇内、且是最右一个',
-          geo.pinInCtrls === true && geo.pinAfterSet === true && geo.pinIsLast === true,
-          'setIdx=' + geo.setIdx + ' pinIdx=' + geo.pinIdx + ' total=' + geo.ctrlCount);
         check('桌面版下置顶按钮可见且有可读标签',
           pin.visible === true && pin.canPin === true && /置顶/.test(pin.label || ''),
           'visible=' + pin.visible + ' canPin=' + pin.canPin + ' label=' + pin.label);

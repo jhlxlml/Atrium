@@ -275,6 +275,15 @@ rot  rotpersist  settings  tf  topbar  unit  update  zip  zoom
 
 - **绝不并行 `Edit` 同一文件**（第二次基于旧内容写回、抹掉第一次，且两次都报成功——已咬 3 次）。**串行改 + 立刻 grep；大改直接整篇 `Write`。**
 - 隐藏顶栏按钮**只用 `hidden` 属性，绝不摘节点**（顶栏几何断言按 `children` 下标算）。
+  唯一的例外是**窗口置顶按钮**（v1.15.0）：Windows 上它被 `App.relocatePin()` 在启动时
+  移进窗口标题栏（`#capRight`），因为原生标题栏已换成 Window Controls Overlay、
+  标题栏归渲染进程画。这条移动是**一次性、启动期、由平台事实决定**的
+  （判据是 `navigator.windowControlsOverlay.visible` **为真** —— 注意**不是**"这个
+  API 存不存在"：Electron 在**所有**窗口里都注入它，没有浮层的窗口只是
+  `visible === false`、`getTitlebarAreaRect()` 全 0；按存在性判断会把没有浮层的
+  窗口也当成有，页面被整体压下 34px 而界面什么都不缺，只有几何断言会发现），不是"按需增删"；
+  相应地，`topbar` 套件不再断言它在 `.ctrls` 里的下标，而是断言
+  「它落在哪个容器」+「右缘是否在原生按钮区之内」——**浮层挂 body 之后，坐标下标本就没有意义**。
 - **改默认值 = 改语义**：`showFrame` 翻 `true` 时，四处"默认隐藏"断言必须**反向**（不是删掉）。
 - **凡吞异常处，都要有另一条通路把失败说出来**。
 - 根目录历史版本解压目录必须清掉（全仓 `grep` 会命中陈旧副本、真源码命中被淹没）。
@@ -466,6 +475,9 @@ EXIF 检索（按机型/日期区间/尺寸）· 视频支持 · 图片内编辑
 | 探针"跑得起来但没输出"                                        | 失败集合 = "会写 `shots/` 的探针"                                         | **先 `cat logs/trace-<probe>.log` 的 `ERR` 行，别猜环境**                  |
 | 探针中途崩溃 → 设置污染留给下一个探针                                | `mode` 被留成非默认                                                    | 跑一次 `run_all.js masonry` 用它自己的还原路径写回默认，**别手工改 leveldb**            |
 | 探针缺 IPC handler → 假报错                                | 日志里出现 `[native] setAlwaysOnTop 失败…No handler registered`         | 给探针补桩：`require('./_desktop_stub').stubWindowChannels()`            |
+| **`capturePage` 抓不到系统绘制的那一层**                     | 核验原生标题栏 / 窗口圆角 / 系统按钮时，截图里那块是**黑的**（页面截图只有 web 层）  | 截**物理屏幕**（Pillow `ImageGrab`，本机隔离 venv 里已装）；**坐标必须乘 DPI 系数**：python 是 DPI-unaware，`GetWindowRect` 给逻辑坐标、`BitBlt` 给物理像素（本机 175% → ×1.75），直接拿去 crop 会截到屏幕另一块地方。另外后台进程调 `SetForegroundWindow` 会被系统忽略，窗口可能被压在别的窗口下面 |
+| **`navigator.windowControlsOverlay` 在所有窗口都存在**       | 按"API 存不存在"判断有没有标题栏浮层 → 无浮层的窗口也被加 `has-wco`、页面整体压下 34px；**界面看不出缺什么**，只有几何类断言报"纵向下偏 34px"（居中 / 三路径套件成片红）  | 判据必须用 **`.visible`**：`navigator.windowControlsOverlay.visible === true` 才算真有浮层；无浮层时 `getTitlebarAreaRect()` 全 0。诊断法：开两个窗口分别打印 `{visible, rect}` 对比（PLAIN `visible:false` / WCO `visible:true`） |
+| **CSS `transform` 的坐标原点是「元素包含块左上角」，不是视口原点** | 舞台被下压（标题栏 34px）后与视口原点不再重合 → 图片整幅偏移那 34px；`computeTransform` 按视口坐标写位移就错  | 把舞台左上角的视口坐标（`getBoundingClientRect().left/top`）作为 `originX/originY` 传进 `computeTransform`，写 `translate` 时减掉它；`originX/originY=0` 即老行为、逐像素不变 |
 | XML 注释里连续两个减号 → 整个 SVG 被拒                           | canvas 报 `svg decode failed`；favicon **静默不显示**                   | 注释里别写 `--` 开头的 CSS 变量名                                             |
 | Electron 33 拒绝顶层 `data:` URL 导航                     | `ERR_FAILED (-2)`                                                | 加 `no-sandbox`，**不要**调 `disableHardwareAcceleration()`             |
 | `.cmd` 里的中文注释变成乱码命令                                 | `cmd //c xxx.cmd` 报 `'」—?' 不是内部或外部命令`                            | **`.cmd` 一律纯 ASCII + CRLF**                                         |

@@ -285,6 +285,23 @@
       return bridge.getAlwaysOnTop().catch((e) => { warnOnce('getAlwaysOnTop', e); return false; });
     },
 
+    /* ---------- 窗口标题栏浮层（Windows：Window Controls Overlay） ----------
+       原生标题栏被浮层取代后，标题栏的配色由系统画、读不到 CSS 变量，只能推过去。
+       这属于**状态对齐类**：失败的症状是「深色主题下标题栏还是浅色的」，
+       不会崩、也不会误报成功，所以留一次痕即可（见文件头的失败留痕策略）。 */
+    /** 同步浮层配色（{color, symbolColor}）；返回是否真的生效（非 Windows 恒 false） */
+    syncTitleBarOverlay(opt) {
+      if (!bridge || typeof bridge.syncTitleBarOverlay !== 'function') return Promise.resolve(false);
+      return bridge.syncTitleBarOverlay(opt || {})
+        .catch((e) => { warnOnce('syncTitleBarOverlay', e); return false; });
+    },
+
+    /** 双击标题栏 → 最大化 / 还原（原生标题栏没了，这个习惯动作要自己补） */
+    toggleMaximize() {
+      if (!bridge || typeof bridge.toggleMaximize !== 'function') return Promise.resolve(false);
+      return bridge.toggleMaximize().catch((e) => { warnOnce('toggleMaximize', e); return false; });
+    },
+
     /* ---------- 相框模式（仅桌面版能开独立的无边框窗口） ----------
        浏览器里没有「窗口」这个概念，改不了形状也置不了顶，于是在当前页面
        里铺一层整屏浮层（Frame.boot），随机轮播的部分两种形态完全一致。 */

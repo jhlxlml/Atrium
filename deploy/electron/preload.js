@@ -81,6 +81,14 @@ contextBridge.exposeInMainWorld('vfNative', {
   /** 查询当前是否置顶（启动时与真实窗口状态对齐） */
   getAlwaysOnTop: () => ipcRenderer.invoke('vf:getAlwaysOnTop'),
 
+  /* ---------- 窗口标题栏（Windows：Window Controls Overlay） ---------- */
+  /** 同步标题栏浮层配色（随主题切换）。opt={color,symbolColor}；
+      返回是否真的生效（非 Windows / 没有浮层时为 false，调用方可忽略）。 */
+  syncTitleBarOverlay: (opt) => ipcRenderer.invoke('vf:titleBarOverlay', opt || {}),
+
+  /** 双击标题栏 → 最大化 / 还原。原生标题栏被浮层取代后，这个行为得自己补上 */
+  toggleMaximize: () => ipcRenderer.invoke('vf:toggleMaximize'),
+
   /* ---------- 相框模式（独立无边框窗口） ---------- */
   /** 打开相框窗口。payload={ms,fit,src,dock,sources,items:[{p,n,w,h,r,sid,id,fav,bad}]}
       → {ok} 或 {ok:false,reason}。items 是**全部**条目（不只当前相册），

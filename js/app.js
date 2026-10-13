@@ -47,6 +47,8 @@
       E.searchClear = $('#searchClear');
       E.brandEye = $('#brandEye');
       E.pinBtn = $('#pinBtn');
+      E.capbar = $('#capbar');
+      E.capRight = $('#capRight');
       E.frameBtn = $('#frameBtn');
       E.favOnlyBtn = $('#favOnlyBtn');
       E.srcbar = $('#srcbar');
@@ -118,6 +120,9 @@
       this.syncSortUI();
       // 隐私模式（闭眼模糊）恢复上次状态
       this.applyBlurUI();
+      // 窗口标题栏：先把置顶按钮归位（有 WCO 就进标题栏，见 relocatePin），
+      // 再与真实窗口状态对齐 —— 顺序反了会让按钮先按顶栏样式亮一下再跳位置。
+      this.relocatePin();
       // 窗口置顶（仅桌面版）：先把按钮摆好，再与真实窗口状态对齐
       this.applyPinUI();
       // 相框：按设置决定顶栏图标显隐。
@@ -147,6 +152,8 @@
       }
       // 外观类设置（主题 / 密度 / 文件名 / 数量角标）启动时先应用一次
       for (const k of ['theme', 'density', 'showNames', 'showCnt']) this.applySetting(k, State.settings[k]);
+      // 主题定下来之后再推标题栏配色（浮层是系统画的，读不到 CSS 变量）
+      this.wireCapOverlay();
       this.applySetting('wheelMode', State.settings.wheelMode);
       this.applySetting('animOn', State.settings.animOn);
       // 桌面集成（托盘 / 关闭行为 / 全局快捷键）：与真实系统状态对齐。
@@ -437,6 +444,66 @@
     toggleBlur() {
       State.setSetting('blurPreview', !State.settings.blurPreview);
       this.applyBlurUI();
+    },
+
+    /* ================= 窗口标题栏（Windows：Window Controls Overlay） =================
+       主进程用 titleBarStyle:'hidden' + titleBarOverlay 把原生最小化/最大化/关闭
+       变成右上角浮层，标题栏本体交给这里画（见 index.html 的 .capbar）。
+
+       置顶按钮的归属就靠这一段决定：有 WCO → 移进标题栏，正好落在「最小化」左侧，
+       和窗口控制键成为一组；没有 WCO（非 Windows）→ 留在顶栏控件簇里，维持原样。
+
+       判断依据是 `navigator.windowControlsOverlay` 存不存在 —— 这是渲染进程自己
+       就能拿到的事实，不必让主进程再同步一遍「你有没有标题栏」。 */
+    relocatePin() {
+      const E = this.el;
+      if (!E.pinBtn || !E.capbar) return;
+      /* 判据是 **visible**，不是"这个 API 存不存在"：Electron 在**所有**窗口里都注入
+         navigator.windowControlsOverlay，没有浮层的窗口只是 `visible === false`、
+         getTitlebarAreaRect() 全 0（实测）。按存在性判断会把"没有标题栏浮层"的窗口
+         也当成有浮层 —— 页面整体被压下 34px，界面上什么都不会缺，
+         只有几何类断言会发现（居中套件当场报"纵向下偏 34px"）。 */
+      const wco = !!(navigator.windowControlsOverlay && navigator.windowControlsOverlay.visible);
+      document.body.classList.toggle('has-wco', wco);
+      E.capbar.hidden = !wco;
+      if (wco && E.capRight && E.pinBtn.parentElement !== E.capRight) {
+        E.capRight.appendChild(E.pinBtn);
+      }
+      // 标题栏整条可拖窗口，但双击要能最大化/还原 —— 原生标题栏被浮层取代后
+      // 系统不再提供这个行为，得自己补（见 preload 的 toggleMaximize）。
+      if (wco && !E.capbar.dataset.wired) {
+        E.capbar.dataset.wired = '1';
+        E.capbar.addEventListener('dblclick', (ev) => {
+          // 只认标题栏空白与标题文字：双击按钮不应最大化
+          if (ev.target.closest('button')) return;
+          if (global.Native && global.Native.toggleMaximize) global.Native.toggleMaximize();
+        });
+      }
+    },
+
+    /** 把当前主题的标题栏配色推给主进程（浮层是系统画的，不吃 CSS 变量）。
+        监听 body[data-theme] 的变化而不是在 applySetting 里各写一处 ——
+        主题有三条来路（设置项、auto 跟随系统、启动重放），盯属性只有一处。
+
+        **没有标题栏浮层时直接不推**（非 Windows / 没有 WCO）：推了也没有接收方，
+        而在探针那种只有最小主进程的环境里，这会变成一条 `No handler registered`
+        的页面错误 —— 顶栏之外的所有套件都有「探针过程中无页面报错」这条断言，
+        于是"多推一次无用的 IPC"会把无关套件全部染红。 */
+    wireCapOverlay() {
+      if (!global.Native || !global.Native.syncTitleBarOverlay) return;
+      if (!document.body.classList.contains('has-wco')) return;
+      const push = () => {
+        const cs = getComputedStyle(document.body);
+        const color = cs.getPropertyValue('--paper').trim();
+        const symbolColor = cs.getPropertyValue('--ink-2').trim();
+        if (!color || !symbolColor) return;
+        global.Native.syncTitleBarOverlay({ color, symbolColor });
+      };
+      this._syncCapOverlay = push;
+      try {
+        new MutationObserver(push).observe(document.body, { attributes: true, attributeFilter: ['data-theme'] });
+      } catch (e) { /* 老引擎没有 MutationObserver：下面 init 时至少推一次 */ }
+      push();
     },
 
     /* ================= 窗口置顶 =================

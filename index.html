@@ -12,6 +12,20 @@
 </head>
 <body data-booted="0">
 
+<!-- ============ 窗口标题栏（Windows：Window Controls Overlay） ============
+     原生最小化 / 最大化 / 关闭由 Electron 画成右上角浮层（见 main.js 的
+     titleBarOverlay），这一条是标题栏**本体**：左边应用名，右边置顶按钮 ——
+     置顶按钮因此正好落在「最小化」左侧，和窗口控制键成为一组，
+     而不是孤零零挂在顶栏控件簇的最右端。
+     只有 Windows 上才出现（body.has-wco 由 App.relocatePin() 判定）：
+     非 Windows 没有 WCO，保持系统原生标题栏，此时置顶按钮留在顶栏控件簇里。
+     整条是拖拽区（-webkit-app-region: drag），里面的按钮必须显式 no-drag，
+     否则会被拖拽区吞掉点击 —— 按钮在「看得见但点不动」这一档上是最难查的。 -->
+<div class="capbar" id="capbar" hidden>
+  <span class="cap-title">Atrium · 本地图片浏览</span>
+  <div class="cap-right" id="capRight"></div>
+</div>
+
 <!-- ============ SVG 图标精灵（内联，离线可用） ============ -->
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-11Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>

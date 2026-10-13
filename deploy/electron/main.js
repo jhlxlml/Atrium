@@ -630,6 +630,30 @@ function wireIpc() {
       return !!(w && !w.isDestroyed() && w.isAlwaysOnTop());
     } catch (err) { return false; }
   });
+  /* ---------- 标题栏浮层（Windows WCO，v1.15.0） ----------
+     浮层配色必须跟着主题走（浅色主题纸色 + 深色符号，深色主题反过来），
+     而主题是渲染进程算出来的（含 auto 跟随系统），主进程不可能自己知道 ——
+     所以由渲染进程在主题变化时推过来。返回是否真的生效，便于调用方判断能力。 */
+  ipcMain.handle('vf:titleBarOverlay', (e, opt) => {
+    try {
+      if (!WCO || !mainWin || mainWin.isDestroyed()) return false;
+      const color = (opt && typeof opt.color === 'string' && opt.color) ? opt.color : CAP_BG;
+      const symbolColor = (opt && typeof opt.symbolColor === 'string' && opt.symbolColor) ? opt.symbolColor : CAP_FG;
+      mainWin.setTitleBarOverlay({ color, symbolColor, height: CAP_H });
+      return true;
+    } catch (err) { return false; }
+  });
+
+  /* 双击标题栏 = 最大化 / 还原。原生标题栏被浮层取代后系统不再提供这个行为，
+     而它是 Windows 上最根深蒂固的操作习惯之一，必须补回来。 */
+  ipcMain.handle('vf:toggleMaximize', (e) => {
+    try {
+      const w = winOf(e) || mainWin;
+      if (!w || w.isDestroyed()) return false;
+      if (w.isMaximized()) w.unmaximize(); else w.maximize();
+      return w.isMaximized();
+    } catch (err) { return false; }
+  });
 
   wireFrameIpc();
 }
@@ -989,9 +1013,21 @@ function ensureFrameWindow(target) {
   }
 }
 
+/* ---------- 窗口标题栏（v1.15.0） ----------
+   Windows 用 Window Controls Overlay：原生最小化/最大化/关闭由系统画成右上角浮层，
+   标题栏本体交给渲染进程（左边应用名 + 右边置顶按钮）—— 置顶按钮因此正好落在
+   「最小化」左边，和窗口控制键成为一组，而不是孤零零挂在顶栏控件簇的最右端。
+   非 Windows 平台没有 WCO，保持原生标题栏；置顶按钮留在顶栏控件簇里
+   （渲染进程按 navigator.windowControlsOverlay 是否存在自行归位）。
+   CAP_H 必须与 css 的 --cap-h / .capbar 高度一致，否则浮层配色会和标题栏错位。 */
+const WCO = process.platform === 'win32';
+const CAP_H = 34;
+const CAP_BG = '#f7f5f1';      // 浅色主题的纸色；深色主题由渲染进程再推一次
+const CAP_FG = '#3a372f';      // 浮层三个符号的颜色
+
 /* ---------- 窗口 ---------- */
 function createWindow() {
-  mainWin = new BrowserWindow({
+  const opts = {
     width: 1280,
     height: 860,
     minWidth: 780,
@@ -1008,7 +1044,12 @@ function createWindow() {
       sandbox: true,
       spellcheck: false,
     },
-  });
+  };
+  if (WCO) {
+    opts.titleBarStyle = 'hidden';
+    opts.titleBarOverlay = { color: CAP_BG, symbolColor: CAP_FG, height: CAP_H };
+  }
+  mainWin = new BrowserWindow(opts);
 
   mainWin.setMenuBarVisibility(false);
   mainWin.once('ready-to-show', () => mainWin.show());
