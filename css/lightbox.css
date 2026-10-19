@@ -1,19 +1,22 @@
 /* ============================================================
-   Atrium · lightbox.css — 深色沉浸式大图查看层
+   Atrium · lightbox.css — 沉浸式大图查看层
+   ------------------------------------------------------------
+   语汇：Apple Photos。纯黑底让照片成为唯一主角；控件是浮在
+   照片之上的半透明材质，而不是压在下缘的渐变条。
    ============================================================ */
 
 .lightbox {
   position: fixed; inset: 0; z-index: 100;
-  background: #0c0b09;
-  color: #eee9e0;
+  background: #000;
+  color: #f5f5f7;
   user-select: none;
 }
 .lb-bg {
   position: absolute; inset: 0;
   background:
-    radial-gradient(140% 90% at 50% 0%, #171512 0%, #0c0b09 55%);
+    radial-gradient(120% 80% at 50% -10%, rgba(255, 255, 255, .05) 0%, transparent 60%);
 }
-body.lb-open .lightbox { animation: lb-fade .22s ease both; }
+body.lb-open .lightbox { animation: lb-fade .22s var(--ease, cubic-bezier(.25,.1,.25,1)) both; }
 @keyframes lb-fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* 舞台（图片置于其中并做变换） */
@@ -25,7 +28,7 @@ body.lb-open .lightbox { animation: lb-fade .22s ease both; }
 }
 .lb-stage.grabbing { cursor: grabbing; }
 
-/* 图片的“基准位置”由 JS 用绝对像素对齐舞台中心，缩放以图片自身中心为基准。
+/* 图片的"基准位置"由 JS 用绝对像素对齐舞台中心，缩放以图片自身中心为基准。
    不用 top/left:50% + translate(-50%)：百分比位移在替换元素上的解析基准
    不稳定（实测会按未缩放尺寸的一半偏移，导致图片整体跑向右下角）。 */
 .lb-img {
@@ -44,16 +47,16 @@ body.lb-open .lightbox { animation: lb-fade .22s ease both; }
 svg.flip-x { transform: scaleX(-1); }
 
 /* 打开缩略图条时 HUD 上移 */
-.lightbox.with-strip .lb-hud { bottom: 92px; }
-.lightbox.with-strip .lb-nav { bottom: 120px; top: auto; transform: none; }
+.lightbox.with-strip .lb-hud { bottom: 96px; }
+.lightbox.with-strip .lb-nav { bottom: 124px; top: auto; transform: none; }
 
 /* 加载动画 */
 .lb-spin {
   position: absolute; top: 50%; left: 50%;
-  width: 34px; height: 34px; margin: -17px 0 0 -17px;
+  width: 32px; height: 32px; margin: -16px 0 0 -16px;
   border-radius: 50%;
-  border: 2px solid rgba(238,233,224,.16);
-  border-top-color: rgba(238,233,224,.85);
+  border: 2px solid rgba(255, 255, 255, .14);
+  border-top-color: rgba(255, 255, 255, .85);
   animation: lb-spin .8s linear infinite;
 }
 .lb-spin.hide { display: none; }
@@ -62,95 +65,111 @@ svg.flip-x { transform: scaleX(-1); }
 /* 解码失败提示 */
 .lb-err {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  text-align: center; color: rgba(238,233,224,.55);
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  text-align: center; color: rgba(255, 255, 255, .55);
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
 }
-.lb-err svg { width: 34px; height: 34px; opacity: .6; }
+.lb-err svg { width: 36px; height: 36px; opacity: .6; }
 .lb-err p { font-size: 13px; line-height: 1.7; }
-.lb-err span { color: rgba(238,233,224,.4); font-size: 12px; word-break: break-all; }
+.lb-err span { color: rgba(255, 255, 255, .4); font-size: 12px; word-break: break-all; }
 /* 失败原因（比文件名更值得读）：单独一行、更亮一点、限宽可读 */
-.lb-err .lb-err-why { display: block; margin-top: 8px; max-width: 380px; color: rgba(238,233,224,.62); font-size: 12.5px; }
+.lb-err .lb-err-why { display: block; margin-top: 8px; max-width: 380px; color: rgba(255, 255, 255, .62); font-size: 12.5px; }
 
-/* 关闭 */
+/* 关闭：圆形材质按钮。
+   放在左上角而不是右上 —— 右上角是 Windows 原生窗口按钮（最小化/最大化/关闭）的地盘，
+   两个"✕"上下叠在同一列会被误读成一个控件组。左上角也是 macOS / iOS 全屏查看器的惯例。 */
 .lb-close {
-  position: absolute; top: 16px; right: 16px; z-index: 5;
+  position: absolute; top: 16px; left: 16px; z-index: 5;
   width: 40px; height: 40px; border-radius: 50%;
-  border: 0; background: rgba(20,18,14,.5);
-  color: #eee9e0;
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  border: .5px solid rgba(255, 255, 255, .14);
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%);
   display: flex; align-items: center; justify-content: center;
-  opacity: .85; transition: opacity .18s, background .18s, transform .18s;
+  opacity: .9; transition: opacity .18s var(--ease, ease), background .18s var(--ease, ease), transform .18s var(--ease, ease);
 }
-.lb-close svg { width: 17px; height: 17px; }
-.lb-close:hover { opacity: 1; background: rgba(20,18,14,.85); transform: scale(1.06); }
-.lb-close:active { transform: scale(.92); }
+.lb-close svg { width: 16px; height: 16px; }
+.lb-close:hover { opacity: 1; background: rgba(255, 255, 255, .22); transform: scale(1.04); }
+.lb-close:active { transform: scale(.94); }
 
-/* 左右导航 */
+/* 左右导航：圆形材质按钮，悬停才完全显形 */
 .lb-nav {
   position: absolute; top: 50%; transform: translateY(-50%); z-index: 5;
-  width: 52px; height: 76px; border: 0; background: transparent;
-  color: rgba(238,233,224,.5);
+  width: 44px; height: 44px; border-radius: 50%;
+  border: .5px solid rgba(255, 255, 255, .12);
+  background: rgba(255, 255, 255, .10);
+  -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%);
+  color: #fff;
   display: flex; align-items: center; justify-content: center;
-  transition: color .18s, transform .18s;
+  opacity: .62;
+  transition: opacity .18s var(--ease, ease), background .18s var(--ease, ease), transform .18s var(--ease, ease);
 }
-.lb-nav svg { width: 26px; height: 26px; }
-.lb-nav:hover { color: #fff; }
-.lb-nav:active { transform: translateY(-50%) scale(.94); }
+.lb-nav svg { width: 20px; height: 20px; }
+.lb-nav:hover { opacity: 1; background: rgba(255, 255, 255, .22); }
+.lb-nav:active { transform: translateY(-50%) scale(.92); }
 .lb-nav.disabled { opacity: 0; pointer-events: none; }
-.lb-prev { left: 8px; }
-.lb-next { right: 8px; }
+.lb-prev { left: 16px; }
+.lb-next { right: 16px; }
 
-/* 底部 HUD */
+/* 底部 HUD：悬浮材质条（不再用渐变压图） */
 .lb-hud {
-  position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  position: absolute; left: 16px; right: 16px; bottom: 16px; z-index: 6;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 54px 18px 14px;
-  background: linear-gradient(transparent, rgba(8,7,5,.66));
+  padding: 8px 10px 8px 16px;
+  border-radius: 16px;
+  background: rgba(28, 28, 30, .62);
+  -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
+  border: .5px solid rgba(255, 255, 255, .10);
+  box-shadow: 0 18px 50px -22px rgba(0, 0, 0, .9);
   font-size: 13px;
   pointer-events: none;
   overflow: hidden;
+  transition: bottom .24s var(--ease, ease);
 }
 .lb-hud > * { pointer-events: auto; }
-.lb-file { display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; }
+.lb-file { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
 .lb-name {
-  font-family: var(--font-serif, Georgia, serif);
-  font-size: 15.5px; color: #f2eee6;
+  font-family: var(--font-ui, -apple-system, "Segoe UI", sans-serif);
+  font-size: 13.5px; font-weight: 500; color: #f5f5f7;
+  letter-spacing: -.006em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: min(46vw, 380px);
+  max-width: min(42vw, 380px);
 }
 .lb-count {
-  color: rgba(238,233,224,.55); font-variant-numeric: tabular-nums;
-  letter-spacing: .05em; white-space: nowrap;
+  color: rgba(235, 235, 245, .55); font-variant-numeric: tabular-nums;
+  letter-spacing: .02em; white-space: nowrap; font-size: 12px;
 }
 
-.lb-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.lb-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .lb-actions .ico-btn {
-  color: rgba(238,233,224,.78); width: 34px; height: 34px; border-radius: 10px;
-  transition: background .18s, color .18s, transform .18s;
+  color: rgba(235, 235, 245, .82); width: 34px; height: 34px; border-radius: 9px;
+  border: 0; background: transparent;
+  transition: background .18s var(--ease, ease), color .18s var(--ease, ease), transform .18s var(--ease, ease);
 }
-.lb-actions .ico-btn:hover { background: rgba(238,233,224,.12); color: #fff; }
-.lb-actions .ico-btn:active { transform: scale(.9); background: rgba(238,233,224,.2); color: #fff; }
-.lb-actions .ico-btn.is-on { color: #ffd27a; background: rgba(255,210,122,.14); }
+.lb-actions .ico-btn:hover { background: rgba(255, 255, 255, .14); color: #fff; }
+.lb-actions .ico-btn:active { transform: scale(.9); background: rgba(255, 255, 255, .22); color: #fff; }
+.lb-actions .ico-btn.is-on { color: var(--favorite, #ffd60a); background: rgba(255, 214, 10, .16); }
+.lb-actions .ico-btn.is-play { color: var(--success, #34c759); background: rgba(52, 199, 89, .16); }
 .lb-actions .ico-btn.disabled { opacity: .3; pointer-events: none; }
 .lb-actions .ico-btn svg { width: 17px; height: 17px; }
 .lb-pct {
-  min-width: 54px; text-align: center;
-  border: 0; background: rgba(238,233,224,.08); border-radius: 8px;
-  color: #eee9e0; font-size: 11.5px; font-family: inherit;
-  padding: 6px 6px; font-variant-numeric: tabular-nums;
-  cursor: pointer; transition: background .18s;
+  min-width: 56px; text-align: center;
+  border: 0; background: rgba(255, 255, 255, .10); border-radius: 9px;
+  color: #f5f5f7; font-size: 11.5px; font-weight: 500; font-family: inherit;
+  padding: 7px 8px; font-variant-numeric: tabular-nums;
+  cursor: pointer; transition: background .18s var(--ease, ease);
 }
-.lb-pct:hover { background: rgba(238,233,224,.18); }
-.lb-sep { width: 1px; height: 18px; background: rgba(238,233,224,.16); margin: 0 4px; }
+.lb-pct:hover { background: rgba(255, 255, 255, .20); }
+.lb-sep { width: .5px; height: 18px; background: rgba(255, 255, 255, .16); margin: 0 4px; }
 
 /* 删除（危险操作：悬停显红；来源不支持删除时置灰不可点） */
-.lb-actions .ico-btn.lb-del:hover:not(:disabled) { background: rgba(196,84,66,.24); color: #ffb3a3; }
+.lb-actions .ico-btn.lb-del:hover:not(:disabled) { background: rgba(255, 69, 58, .24); color: #ffb3ab; }
 .lb-actions .ico-btn.lb-del:disabled { opacity: .28; pointer-events: none; }
 
 /* 窄窗口下隐藏次要按钮，保证核心操作（缩放/旋转/切换/收藏）始终可见 */
 @media (max-width: 760px) {
   .lb-actions .lb-sep  { display: none; }
   .lb-actions #lbPlay, .lb-actions #lbFs, .lb-actions #lbDel { display: none; }
+  .lb-hud { left: 10px; right: 10px; bottom: 10px; padding: 6px 8px 6px 12px; }
 }
 @media (max-width: 580px) {
   .lb-actions #lbInfo { display: none; }
@@ -159,21 +178,23 @@ svg.flip-x { transform: scaleX(-1); }
 
 /* 缩略图条 */
 .lb-strip {
-  position: absolute; left: 0; right: 0; bottom: 0; z-index: 7;
-  display: flex; gap: 8px; align-items: center;
-  padding: 10px 18px 14px;
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 7;
+  display: flex; gap: 6px; align-items: center;
+  padding: 10px 12px;
   overflow-x: auto; overflow-y: hidden;
-  background: linear-gradient(transparent, rgba(8,7,5,.8) 22%);
-  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  border-radius: 14px;
+  background: rgba(28, 28, 30, .72);
+  -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
+  border: .5px solid rgba(255, 255, 255, .10);
   scrollbar-width: thin;
 }
 .lb-strip::-webkit-scrollbar { height: 6px; }
-.lb-strip::-webkit-scrollbar-thumb { background: rgba(238,233,224,.28); border: 0; }
+.lb-strip::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .26); border: 0; }
 .lb-strip-item {
-  flex: none; width: 74px; height: 56px;
-  border-radius: 4px; overflow: hidden; border: 0; padding: 0;
-  background: #1b1916;
-  opacity: .62; transition: opacity .18s, transform .18s;
+  flex: none; width: 76px; height: 56px;
+  border-radius: 6px; overflow: hidden; border: 0; padding: 0;
+  background: rgba(255, 255, 255, .08);
+  opacity: .55; transition: opacity .18s var(--ease, ease), transform .18s var(--ease, ease), box-shadow .18s var(--ease, ease);
   position: relative;
 }
 .lb-strip-item img {
@@ -181,29 +202,25 @@ svg.flip-x { transform: scaleX(-1); }
   image-orientation: from-image;
 }
 .lb-strip-item:hover { opacity: 1; transform: translateY(-2px); }
-.lb-strip-item.is-cur { opacity: 1; outline: 2px solid #eee9e0; outline-offset: 1px; }
+.lb-strip-item.is-cur {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--accent, #0a84ff);
+}
 .lb-strip-item.is-fav::after {
   content: "★"; position: absolute; top: 2px; right: 5px;
-  color: #ffd27a; font-size: 10px;
+  color: var(--favorite, #ffd60a); font-size: 10px;
 }
-
-/* 键盘提示（桌面小幅提示可留白） */
 
 /* ============================================================
    全屏（幻灯片）状态
    ============================================================ */
 .lightbox:fullscreen { background: #000; }
-.lb-actions .ico-btn.is-play {
-  color: #7fe0c3;
-  background: rgba(127,224,195,.14);
-}
-.lightbox:fullscreen .lb-close { top: 18px; right: 18px; }
+.lightbox:fullscreen .lb-close { top: 20px; left: 20px; }
 
 /* ============================================================
    沉浸式（单图/全屏查看）：控件默认隐藏，仅鼠标移到对应热区才显现；
    停手（IDLE_MS）后光标与全部控件自动隐藏，只留图片。
    ============================================================ */
-.lightbox.lb-immersive .lb-close,
 .lightbox.lb-immersive .lb-nav,
 .lightbox.lb-immersive .lb-hud,
 .lightbox.lb-immersive .lb-strip,
@@ -211,6 +228,10 @@ svg.flip-x { transform: scaleX(-1); }
   opacity: 0; pointer-events: none;
   transition: opacity .22s ease;
 }
+/* 关闭按钮例外：它跟随底部 HUD 的显隐（打开即见，停手后随 HUD 一起淡出）。
+   理由 —— 它是鼠标路径上唯一的"退出"入口，若默认不可见，用户得先去顶部边缘
+   试探才能关掉大图；把退出入口藏起来不是"沉浸"，是"找不到出口"。 */
+.lightbox.lb-immersive .lb-close { opacity: .9; pointer-events: auto; }
 /* 用户主动打开的信息面板保持可见 */
 .lightbox.lb-immersive.with-info .lb-info { opacity: 1; pointer-events: auto; }
 
@@ -247,39 +268,40 @@ svg.flip-x { transform: scaleX(-1); }
 
 /* 信息面板（EXIF / 文件信息） */
 .lb-info {
-  position: absolute; top: 72px; right: 14px; bottom: 88px;
-  width: 300px; z-index: 8;
+  position: absolute; top: 72px; right: 16px; bottom: 96px;
+  width: 304px; z-index: 8;
   display: flex; flex-direction: column;
-  border-radius: 14px;
-  border: 1px solid rgba(238,233,224,.1);
-  background: rgba(18,16,12,.72);
-  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
-  box-shadow: 0 18px 50px -20px rgba(0,0,0,.5);
+  border-radius: 16px;
+  border: .5px solid rgba(255, 255, 255, .10);
+  background: rgba(28, 28, 30, .70);
+  -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
+  box-shadow: 0 18px 50px -20px rgba(0, 0, 0, .8);
 }
 .lb-info-body {
   overflow-y: auto; height: 100%;
-  padding: 15px 16px 8px;
-  font-size: 12.5px; color: rgba(238,233,224,.92);
+  padding: 16px 16px 8px;
+  font-size: 12.5px; color: rgba(245, 245, 247, .92);
   scrollbar-width: thin;
 }
 .lb-info-body h4 {
-  margin: 0 0 9px; font-size: 10.5px; letter-spacing: .28em;
-  color: rgba(238,233,224,.42); font-weight: 500;
+  margin: 0 0 10px; font-size: 10.5px; letter-spacing: .18em;
+  color: rgba(235, 235, 245, .42); font-weight: 600; text-transform: uppercase;
 }
 .lb-info-row {
   display: flex; gap: 10px;
-  padding: 5.5px 0;
-  border-bottom: 1px solid rgba(238,233,224,.07);
+  padding: 6px 0;
+  border-bottom: .5px solid rgba(255, 255, 255, .07);
   line-height: 1.5;
 }
 .lb-info-row:last-of-type { border-bottom: 0; }
-.lb-info-k { flex: none; width: 58px; color: rgba(238,233,224,.5); font-size: 11.5px; }
+.lb-info-k { flex: none; width: 58px; color: rgba(235, 235, 245, .5); font-size: 11.5px; }
 .lb-info-v { flex: 1; min-width: 0; word-break: break-all; }
-.lb-info-note { margin-top: 8px; color: rgba(238,233,224,.38); font-size: 11.5px; line-height: 1.7; }
-.lightbox.with-info .lb-close { right: 330px; }
+.lb-info-note { margin-top: 8px; color: rgba(235, 235, 245, .38); font-size: 11.5px; line-height: 1.7; }
+/* 信息面板在右侧展开：只需让底部 HUD 与右翻页键避让。
+   关闭键在左上角，与右侧面板不会重叠，故不再需要单独避让。 */
 .lightbox.with-info .lb-hud { right: 332px; }
-.lightbox.with-info .lb-next { right: 330px; }
-.lightbox.with-strip .lb-info { bottom: 132px; }
+.lightbox.with-info .lb-next { right: 332px; }
+.lightbox.with-strip .lb-info { bottom: 140px; }
 .lightbox.with-strip .lb-info-body { padding-bottom: 10px; }
 
 /* 设置项「过渡动画」关闭时：灯箱内的缩放/切换瞬变 */

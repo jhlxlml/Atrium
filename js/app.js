@@ -736,6 +736,7 @@
     wireCtrlScrollHint() {
       const c = this.el.ctrls || Util.$('#ctrls');
       if (!c) return;
+      const s = Util.$('#srcScroll');
       const upd = () => {
         const scrollable = c.scrollWidth > c.clientWidth + 1;
         const atEnd = c.scrollLeft + c.clientWidth >= c.scrollWidth - 2;
@@ -744,9 +745,26 @@
         // 否则 overflow-y:hidden 会把它下方弹出的浮层（如「最近删除」面板）裁成 0 高，
         // 表现就是点了没反应、点不进去。
         c.classList.toggle('is-scrollable', scrollable);
+        if (s) {
+          const sScrollable = s.scrollWidth > s.clientWidth + 1;
+          s.classList.toggle('is-scrollable', sScrollable);
+          s.classList.toggle('at-end',
+            s.scrollLeft + s.clientWidth >= s.scrollWidth - 2);
+        }
       };
       c.addEventListener('scroll', upd, { passive: true });
+      if (s) s.addEventListener('scroll', upd, { passive: true });
       global.addEventListener('resize', upd, { passive: true });
+      // 来源 chip 是异步渲染的（读目录之后才有），且数量随增删文件夹变化。
+      // 只监听 resize 会在首屏漏判 —— chip 明明溢出，渐隐却不出现，右缘就成了硬裁。
+      if (global.ResizeObserver) {
+        const ro = new ResizeObserver(upd);
+        const list = Util.$('#srcList');
+        if (list) ro.observe(list);
+        if (s) ro.observe(s);
+        ro.observe(c);
+        this._roCtrlScroll = ro;
+      }
       this._updCtrlScroll = upd;
       requestAnimationFrame(upd);
     },
@@ -862,7 +880,7 @@
       const desc = State.settings.sortDir === -1;
       this.el.sortDir.classList.toggle('desc', desc);
       this.el.sortDir.setAttribute('aria-label', desc ? '切换为升序' : '切换为降序');
-      this.el.sortDir.innerHTML = Util.icon('i-arrow-d');
+      this.el.sortDir.innerHTML = Util.icon('i-sortdir');
     },
 
     /* ================= 批量选择（框选 / 勾选） ================= */

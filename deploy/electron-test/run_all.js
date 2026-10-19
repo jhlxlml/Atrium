@@ -834,7 +834,20 @@ const SUITES = [
         (s1.rowNames || []).join('/'));
       if (s2) {
         check('主题切换生效（状态 + DOM）', s2.themeSetting === 'dark' && s2.bodyTheme === 'dark');
-        check('深色主题背景变量生效', s2.bgDark === 'rgb(23, 22, 20)', s2.bgDark);
+        /* 深色判据用亮度，不写死色值：设计系统换色时测试不该跟着改。
+           这条断言要守的语义是"切到深色主题后背景真的变暗了"，
+           不是"背景恰好是 #171614"。（v1.16.0 UI 重构换了中性深色） */
+        const bgDarkLum = (() => {
+          const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(String(s2.bgDark || ''));
+          if (!m) return NaN;
+          const ch = [m[1], m[2], m[3]].map((v) => {
+            const x = Number(v) / 255;
+            return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+          });
+          return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+        })();
+        check('深色主题背景变量生效（背景确实变暗）', bgDarkLum < 0.2,
+          s2.bgDark + ' lum=' + (isNaN(bgDarkLum) ? 'NaN' : bgDarkLum.toFixed(3)));
         check('紧凑密度生效（顶栏变矮）', s2.densitySetting === 'compact' && s2.bodyDensity === 'compact' && parseFloat(s2.topbarH) <= 52, s2.topbarH);
         check('文件名常显生效（状态与 DOM 一致）', String(s2.showNames ? 1 : 0) === s2.bodyShowNames,
           'setting=' + s2.showNames + ' body[data-show-names]=' + s2.bodyShowNames);
@@ -1120,9 +1133,22 @@ const SUITES = [
         check('标题栏空白处是拖拽区（能拖窗口）', cap.barHit === true, 'barHit=' + cap.barHit);
         check('双击标题栏调到原生「最大化/还原」桥，且双击按钮不会误触发',
           cap.maxCalls === 1, 'calls=' + cap.maxCalls);
+        /* 深色判据用**亮度**而不是写死色值：设计系统换色时不该连带改测试。
+           只要「推过一次深色」成立，这条断言守的语义就还在。
+           （v1.16.0 UI 重构把深色纸色从 #171614 换成中性 #141416，正是为此改的） */
+        const lum = (hex) => {
+          const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+          if (!m) return NaN;
+          const n = parseInt(m[1], 16);
+          const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+            const s = v / 255;
+            return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+          });
+          return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+        };
         check('切换主题会把标题栏浮层配色推给主进程（深色主题推深色）',
           Array.isArray(cap.capSync) && cap.capSync.length >= 2
-            && cap.capSync.some((o) => o.color === '#171614')
+            && cap.capSync.some((o) => lum(o.color) < 0.25)
             && cap.capSync[cap.capSync.length - 1].color === cap.expectedNow,
           JSON.stringify(cap.capSync) + ' expectedNow=' + cap.expectedNow);
         check('标题栏把页面整体压下（顶栏吸顶位置 = 标题栏高度）',
