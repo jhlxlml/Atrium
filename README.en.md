@@ -27,6 +27,7 @@ The repository holds source code only and **does not include the release ZIP** (
 ### Browsing and loading
 
 - Four layouts: small, medium, **masonry** and single column. The top-bar icons, the settings panel, the number keys `1`–`4` and `M` to cycle all drive the same value.
+- Small and medium are **two different views**, not two size presets of one layout: small lays out equal squares with `object-fit: cover`, cropping the edges so a screen holds hundreds of thumbnails; medium uses justified rows at the true aspect ratio with `contain`, never cropping. The size slider adjusts "square edge length" in the former and "target row height" in the latter.
 - Masonry assigns to the shortest column, column width is adjustable (120–420 px), and columns are re-balanced to fill the container exactly. Long lists are virtualised, so scrolling stays smooth.
 - Native folder picker, **drag-and-drop into the window** (folders or loose images), and it remembers the last folder. Dropped items carry no disk path, so indexing, thumbnails, lightbox and deletion each handle that path separately.
 - Thumbnails are **cached on disk**: reopening a folder decodes nothing, roughly a 5× speed-up. The size index stores true original dimensions, read from file headers rather than by decoding.

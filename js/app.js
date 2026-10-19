@@ -837,6 +837,12 @@
         b.classList.toggle('is-on', b.dataset.mode === mode);
       });
       E.galleryView.classList.toggle('single', mode === 'single');
+      /* 当前模式挂到容器上，供 CSS 区分视图。
+         挂容器而不是逐个瓦片加类：模式切换时瓦片会重建，容器属性一处更新就全跟着走。
+         data-crop 与 JS 的排布分支**同源**（都读 MODES[mode].crop）——
+         两处各自判断的话，关掉标记后 CSS 还在裁、JS 已经不裁，会得到一半对一半错的界面。 */
+      E.galleryView.dataset.mode = mode;
+      E.galleryView.dataset.crop = (State.MODES[mode] && State.MODES[mode].crop) ? '1' : '0';
       // 单列整屏：尺寸滑杆不适用（高度由视口决定），隐藏
       E.sizeCtl.hidden = mode === 'single';
       // 滚动吸附开关（html 级 CSS class）

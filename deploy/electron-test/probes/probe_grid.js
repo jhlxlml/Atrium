@@ -140,10 +140,37 @@ app.whenReady().then(async () => {
   const shot = await w.webContents.capturePage({ x: 0, y: 0, width: 1000, height: 620 });
   fs.writeFileSync(path.join(OUT, 'grid-narrow.png'), shot.toPNG());
 
+  /* 两种网格视图必须是**两种东西**，不是同一套布局的两个尺寸档：
+       small  = 等边方格 + object-fit: cover（裁掉边角换密排，用来扫图）
+       medium = 原比例行内自适应 + contain（完整显示，用来看图）
+     锁这条是因为「小图中图功能重复」正是它们此前退化成同一套布局导致的。 */
+  const views = await w.webContents.executeJavaScript(`(async () => {
+    const A = window.App;
+    const grab = () => {
+      const g = document.getElementById('galleryView');
+      const tiles = [...document.querySelectorAll('.tile')];
+      const box = tiles.map((t) => { const r = t.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
+      const imgs = tiles.map((t) => t.querySelector('img')).filter(Boolean);
+      const fit = {};
+      for (const im of imgs) { const v = getComputedStyle(im).objectFit; fit[v] = (fit[v] || 0) + 1; }
+      return {
+        mode: g.dataset.mode, n: box.length,
+        square: box.filter((b) => Math.abs(b.w - b.h) <= 1).length,
+        fit: fit,
+      };
+    };
+    A.setMode('small');  await new Promise((r) => setTimeout(r, 800));
+    const s = grab();
+    A.setMode('medium'); await new Promise((r) => setTimeout(r, 800));
+    const m = grab();
+    return { s: s, m: m };
+  })()`);
+
   console.log('GRID ' + JSON.stringify({
     wide: a1, narrow: a2,
     containSample: containSample, noContain: noContain,
     notAbs: notAbs, rectMismatch: mismatch,
+    views: views,
   }));
   console.log('DONE');
   app.quit();

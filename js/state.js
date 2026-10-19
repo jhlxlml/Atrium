@@ -14,11 +14,15 @@
   /* ---------- 浏览模式常量 ---------- */
   /** size 单位 px：网格为"瓦片宽"、瀑布流为"列宽"、单列为"整屏高度"（自动）。
       （ratioH / ratioLabel 是早期"固定比例瓦片"留下的字段，现已不再参与布局，
-      仅保留形状以免打乱既有定义结构。） */
+      仅保留形状以免打乱既有定义结构。）
+      crop: 该模式走"等边方格 + 方形裁切"（见 grid.js 的 _layoutCells），
+      与 medium 的"原比例行内自适应"是**两种视图**，不是同一套布局的两个尺寸档。 */
   const MODES = {
     small: {
       key: 'small', label: '小图网格', ratioH: 1, ratioLabel: '1:1',
-      range: [72, 240], def: 118,
+      crop: true,
+      // 方形裁切的边长区间。上限 200：再大就该用中图看原比例了，继续放大没有意义。
+      range: [72, 200], def: 108,
     },
     medium: {
       key: 'medium', label: '中图网格', ratioH: 0.8, ratioLabel: '5:4',

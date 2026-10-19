@@ -1462,6 +1462,20 @@ body[data-density="compact"] .select-wrap select,
 body[data-density="compact"] .sp-select { padding-top: 4.5px; padding-bottom: 4.5px; }
 body[data-density="compact"] .stage-wrap { padding-top: 12px; }
 
+/* ---------- 紧凑网格（small）：方形裁切 ----------
+   与「中图网格」的分工：那一套按真实宽高比缩放、永不裁切，用来看照片；
+   这一套用裁掉边角换整屏密排，用来快速扫图找照片。
+   选择器用 data-crop 而不是 data-mode —— 后者是模式名，前者是"这套视图要不要裁"，
+   与 grid.js 里走哪条排布分支同源（都由 applyModeUI 从 MODES[mode].crop 推出）。 */
+#galleryView[data-crop="1"] .tile img { object-fit: cover; }
+/* 瓦片只有 100px 上下，信息条也要跟着收 */
+#galleryView[data-crop="1"] .tile { border-radius: 4px; }
+#galleryView[data-crop="1"] .tile-cap { padding: 16px 7px 5px; }
+#galleryView[data-crop="1"] .tile-cap .t-name { font-size: 10px; }
+#galleryView[data-crop="1"] .tile-cap .t-size { font-size: 9.5px; }
+/* 默认不常显文件名（与其它模式一致，悬停才出）。
+   但用户显式开了「始终显示文件名」就照办 —— 不拿视图规则去覆盖用户的明确设置。 */
+
 /* ---------- 网格常显文件名 ---------- */
 body[data-show-names="1"] .tile-cap { opacity: 1; transform: none; }
 body[data-show-names="1"] .tile:not(.g) .tile-cap { display: none; }   /* 占位瓦片不显示 */

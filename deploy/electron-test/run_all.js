@@ -1193,7 +1193,7 @@ const SUITES = [
   /* ---------- 10. 网格布局 · contain 之后几何仍正确 ---------- */
   {
     id: 'grid',
-    title: '网格布局 · 瓦片尺寸/行距/定位在 contain 之后仍正确',
+    title: '网格布局 · 瓦片尺寸/行距/定位在 contain 之后仍正确 / 小图与中图是两种视图',
     kind: 'probe',
     script: 'probe_grid.js',
     key: 'GRID ',
@@ -1211,6 +1211,17 @@ const SUITES = [
       check('宽窗下多行、行间不叠压', w0.rows >= 2 && w0.vOverlap === 0, 'rows=' + w0.rows + ' vOverlap=' + w0.vOverlap);
       check('窄窗重排后仍无重叠/无零尺寸', n0.tiles > 0 && n0.overlap === 0 && n0.zero === 0,
         'tiles=' + n0.tiles + ' overlap=' + n0.overlap + ' zero=' + n0.zero);
+
+      /* 两种网格视图必须真的不同 —— 见 probe_grid.js 末尾的说明 */
+      const v = d.views || {};
+      const s = v.s || {}, m = v.m || {};
+      check('小图网格：瓦片全部是正方形（等边方格）',
+        s.n > 0 && s.square === s.n, 'n=' + s.n + ' square=' + s.square);
+      check('小图网格：图片用 cover 裁切填满方格',
+        s.n > 0 && (s.fit || {}).cover === s.n, 'fit=' + JSON.stringify(s.fit || {}));
+      check('中图网格：按原比例排（非正方形）且用 contain 不裁切',
+        m.n > 0 && m.square < m.n && (m.fit || {}).contain === m.n,
+        'n=' + m.n + ' square=' + m.square + ' fit=' + JSON.stringify(m.fit || {}));
     },
   },
 

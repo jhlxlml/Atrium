@@ -19,6 +19,7 @@
   const PRUNE_AT = 800;     // 超过该数量启用窗口化剪裁
   const SINGLE_PRUNE_AT = 12; // 单列整屏阈值更低：一屏只有一张，避免中量目录一次性解码全部原图
   const GAP = 12;           // 网格间距
+  const CELL_GAP = 4;       // 紧凑网格（small）的行列间距：密排视图，缝要细
   const GAP_SINGLE = 46;    // 单列行距
   const SINGLE_MAXW = 1360; // 单列内容最大宽
   const BOTTOM_PAD = 90;    // 底部留白
@@ -358,9 +359,12 @@
         const meta = el && el._item;
         if (!p || !meta || meta.bad || meta.state === 'error' || !el._img) continue;
         const have = el._thumbCss || 0;
-        if (p.w > have * 1.2 + 30 && !el._thUpgrading) {
+        // 判据用「该瓦片真正需要的宽度」而不是 p.w：紧凑网格下两者不等
+        // （方形裁切要按长宽比放大长边），用 p.w 会永远判定为"已够清晰"。
+        const need = this._thumbCssW(meta, p);
+        if (need > have * 1.2 + 30 && !el._thUpgrading) {
           el._thUpgrading = true;
-          this._loadThumb(meta, el, p.w).then(() => { el._thUpgrading = false; }).catch(() => { el._thUpgrading = false; });
+          this._loadThumb(meta, el, need).then(() => { el._thUpgrading = false; }).catch(() => { el._thUpgrading = false; });
         }
       }
     },
@@ -389,6 +393,12 @@
       const N = this.N;
       const gap = GAP;
       const availW = Math.max(80, width);
+      // 紧凑模式走另一条排布：等边方格 + 方形裁切。
+      // 它和 medium 不是"同一套布局的两个尺寸档"，而是两种视图 —— 后者按真实宽高比排、永不裁切。
+      if (State.MODES[this.mode] && State.MODES[this.mode].crop) {
+        this._layoutCells(availW);
+        return;
+      }
       const H = Math.max(72, State.getModeSize(this.mode)); // 目标行高（来自尺寸滑杆）
       const pos = this.positions = new Array(N);
       const ratio = new Array(N);
@@ -430,6 +440,36 @@
       this.gap = gap;
       this.leftOff = 0;
       this.totalH = y > 0 ? y - gap + BOTTOM_PAD : 0;
+      if (this.inner) this.inner.style.height = this.totalH + 'px';
+    },
+
+    /* 紧凑网格（small）：等边方格 + 方形裁切。
+       与 _layoutJustified 的分工 —— 那一套按真实宽高比缩放、永不裁切，适合"看照片"；
+       这一套用"裁掉边角"换"整屏密排"，适合"找照片"。两者的滑杆含义也不同：
+       这里调的是方格边长，那里调的是目标行高。 */
+    _layoutCells(availW) {
+      const N = this.N;
+      const gap = CELL_GAP;
+      const want = Math.max(48, State.getModeSize(this.mode)); // 目标边长（来自尺寸滑杆）
+
+      /* 先按目标边长算列数，再把剩余宽度均摊回边长。
+         不直接固定边长：那样每行右侧会留一条宽度不定的碎边，
+         密排视图里这条碎边比"边长差几个像素"更显眼。 */
+      const cols = Math.max(1, Math.floor((availW + gap) / (want + gap)));
+      const cell = (availW - (cols - 1) * gap) / cols;
+
+      const pos = this.positions = new Array(N);
+      for (let i = 0; i < N; i++) {
+        const r = (i / cols) | 0, c = i % cols;
+        pos[i] = { x: c * (cell + gap), y: r * (cell + gap), w: cell, h: cell };
+      }
+
+      this.cols = cols;
+      this.cell = cell;
+      this.gap = gap;
+      this.leftOff = 0;
+      const rows = Math.ceil(N / cols);
+      this.totalH = rows ? rows * (cell + gap) - gap + BOTTOM_PAD : 0;
       if (this.inner) this.inner.style.height = this.totalH + 'px';
     },
 
@@ -698,7 +738,18 @@
       this._place(i, el);
 
       if (this.mode === 'single') this._loadBig(meta, el);
-      else this._loadThumb(meta, el, p.w);
+      else this._loadThumb(meta, el, this._thumbCssW(meta, p));
+    },
+
+    /** 该瓦片该请求多宽的缩略图（缩略图按**长边**生成，见 thumb.js 的 decodeThumb）。
+        普通网格瓦片高度就是按宽度算出来的，按 p.w 请求正好；
+        紧凑网格是方形裁切（object-fit: cover），短边要撑满 p.h，
+        所以长边需求 = 边长 × 长宽比 —— 否则宽图会被放大到发虚。 */
+    _thumbCssW(meta, p) {
+      const def = State.MODES[this.mode];
+      if (!(def && def.crop)) return p.w;
+      const a = this._aspect(meta);
+      return Math.max(p.w, p.h * Math.max(a, 1 / a));
     },
 
     async _loadThumb(meta, el, cssW) {
