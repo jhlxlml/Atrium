@@ -74,11 +74,12 @@ svg.flip-x { transform: scaleX(-1); }
 /* 失败原因（比文件名更值得读）：单独一行、更亮一点、限宽可读 */
 .lb-err .lb-err-why { display: block; margin-top: 8px; max-width: 380px; color: rgba(255, 255, 255, .62); font-size: 12.5px; }
 
-/* 关闭：圆形材质按钮。
-   放在左上角而不是右上 —— 右上角是 Windows 原生窗口按钮（最小化/最大化/关闭）的地盘，
-   两个"✕"上下叠在同一列会被误读成一个控件组。左上角也是 macOS / iOS 全屏查看器的惯例。 */
+/* 关闭：圆形材质按钮，右上角。
+   右上角是各类查看器（Lightroom、Windows 照片、浏览器 PDF 阅读器）的退出惯例，
+   眼睛扫到右上就结束，不必横穿整个画面去找。窗口内嵌状态下右上角会与 Windows 原生
+   窗口按钮同一列，但灯箱是整块全屏遮罩、底下那三个按钮已被盖住，视觉上不成组。 */
 .lb-close {
-  position: absolute; top: 16px; left: 16px; z-index: 5;
+  position: absolute; top: 16px; right: 16px; z-index: 5;
   width: 40px; height: 40px; border-radius: 50%;
   border: .5px solid rgba(255, 255, 255, .14);
   background: rgba(255, 255, 255, .12);
@@ -147,7 +148,12 @@ svg.flip-x { transform: scaleX(-1); }
 }
 .lb-actions .ico-btn:hover { background: rgba(255, 255, 255, .14); color: #fff; }
 .lb-actions .ico-btn:active { transform: scale(.9); background: rgba(255, 255, 255, .22); color: #fff; }
-.lb-actions .ico-btn.is-on { color: var(--favorite, #ffd60a); background: rgba(255, 214, 10, .16); }
+/* 激活态分两种语义，别混用同一种黄：
+   is-on  = "某个面板/模式打开了"（信息、缩略条、滚轮切图）→ 系统蓝
+   is-fav = "这张被收藏了" → 黄色星
+   原来四颗按钮共用黄色，扫一眼会觉得它们都是"已收藏"。 */
+.lb-actions .ico-btn.is-on { color: #6fb6ff; background: rgba(10, 132, 255, .20); }
+.lb-actions .ico-btn.is-fav { color: var(--favorite, #ffd60a); background: rgba(255, 214, 10, .16); }
 .lb-actions .ico-btn.is-play { color: var(--success, #34c759); background: rgba(52, 199, 89, .16); }
 .lb-actions .ico-btn.disabled { opacity: .3; pointer-events: none; }
 .lb-actions .ico-btn svg { width: 17px; height: 17px; }
@@ -215,7 +221,7 @@ svg.flip-x { transform: scaleX(-1); }
    全屏（幻灯片）状态
    ============================================================ */
 .lightbox:fullscreen { background: #000; }
-.lightbox:fullscreen .lb-close { top: 20px; left: 20px; }
+.lightbox:fullscreen .lb-close { top: 20px; right: 20px; }
 
 /* ============================================================
    沉浸式（单图/全屏查看）：控件默认隐藏，仅鼠标移到对应热区才显现；
@@ -297,8 +303,9 @@ svg.flip-x { transform: scaleX(-1); }
 .lb-info-k { flex: none; width: 58px; color: rgba(235, 235, 245, .5); font-size: 11.5px; }
 .lb-info-v { flex: 1; min-width: 0; word-break: break-all; }
 .lb-info-note { margin-top: 8px; color: rgba(235, 235, 245, .38); font-size: 11.5px; line-height: 1.7; }
-/* 信息面板在右侧展开：只需让底部 HUD 与右翻页键避让。
-   关闭键在左上角，与右侧面板不会重叠，故不再需要单独避让。 */
+/* 信息面板在右侧展开：底部 HUD 与右翻页键让开 332px（面板 304 + 16 右边距 + 12 间隙）。
+   关闭键不用让 —— 它在 top:16 + 40 高 = 56px 处就结束了，而面板从 top:72 才开始，
+   竖向不重叠；硬挪到面板左侧只会让它在开面板的瞬间横跳一下。 */
 .lightbox.with-info .lb-hud { right: 332px; }
 .lightbox.with-info .lb-next { right: 332px; }
 .lightbox.with-strip .lb-info { bottom: 140px; }

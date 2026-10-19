@@ -75,7 +75,32 @@ app.whenReady().then(async () => {
   }
   console.log('TILES ' + n);
   if (n < 24) { console.log('样张没出全，截图可能不完整'); }
-  await sleep(1500);   // 等缩略图解码 + 入场动画结束
+
+  /* 等所有缩略图真的解码完再截。
+     原来只 sleep(1500)，截出来常有几块空白 —— 缩略图是 createImageBitmap 异步解码的，
+     跟入场动画（.tile 的 tile-in，340ms）不是同一条时间线，固定等待不可靠。
+     判据用 img.complete && naturalWidth>0，最多等 12s。 */
+  let loaded = 0;
+  for (let i = 0; i < 60; i++) {
+    const st = await w.webContents.executeJavaScript(`(() => {
+      const im = [...document.querySelectorAll('.tile img')];
+      return { total: im.length, done: im.filter(function (x) { return x.complete && x.naturalWidth > 0; }).length };
+    })()`);
+    loaded = st.done;
+    if (st.total >= 24 && st.done === st.total) break;
+    await sleep(200);
+  }
+  console.log('THUMBS ' + loaded + '/' + n);
+
+  /* 关掉过渡动画：只影响"多久到位"，不影响最终外观，截图因此可复现。
+     顺手把滚动条拉回顶部，免得截到半行瓦片。 */
+  await w.webContents.executeJavaScript(`(() => {
+    document.body.dataset.anim = '0';
+    const sc = document.querySelector('.stage') || document.scrollingElement;
+    if (sc) sc.scrollTop = 0;
+    return true;
+  })()`);
+  await sleep(600);
 
   fs.writeFileSync(path.join(OUT, 'grid.png'), (await w.webContents.capturePage()).toPNG());
   console.log('SAVED grid.png');
@@ -86,6 +111,15 @@ app.whenReady().then(async () => {
   await sleep(2200);
   const lbOpen = await w.webContents.executeJavaScript("!document.getElementById('lightbox').hasAttribute('hidden')");
   console.log('CLICKED ' + clicked + '  LIGHTBOX_OPEN ' + lbOpen);
+  /* 把鼠标移到下缘热区，让操作栏显形 —— 否则沉浸态下 HUD 是 opacity:0，
+     截出来只有一张图，看不出这版重做过的底部图标。合成的 mousemove 必须打在
+     #lightbox 上（监听挂在 Lightbox.el），打在 document 上不会冒泡过去。 */
+  await w.webContents.executeJavaScript(`(() => {
+    const lb = document.getElementById('lightbox');
+    lb.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: Math.round(innerWidth / 2), clientY: innerHeight - 30 }));
+    return true;
+  })()`);
+  await sleep(400);
   fs.writeFileSync(path.join(OUT, 'lightbox.png'), (await w.webContents.capturePage()).toPNG());
   console.log('SAVED lightbox.png');
 

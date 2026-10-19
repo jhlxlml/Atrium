@@ -59,7 +59,6 @@
       this.infoBtn = Util.$('#lbInfo');
       this.infoPane = Util.$('#lbInfoPane');
       this.infoBody = Util.$('#lbInfoBody');
-      this.rotLBtn = Util.$('#lbRotL');
       this.rotRBtn = Util.$('#lbRotR');
       this.wheelBtn = Util.$('#lbWheel');
       this.fsSupported = !!(document.fullscreenEnabled);
@@ -70,7 +69,6 @@
       Util.$('#lbZoomIn').addEventListener('click', () => { const c = this._center(); this.zoomAt(1.4, c.x, c.y); });
       Util.$('#lbZoomOut').addEventListener('click', () => { const c = this._center(); this.zoomAt(1 / 1.4, c.x, c.y); });
       Util.$('#lbFit').addEventListener('click', () => this.fit(true));
-      if (this.rotLBtn) this.rotLBtn.addEventListener('click', () => this.rotate(-1));
       if (this.rotRBtn) this.rotRBtn.addEventListener('click', () => this.rotate(1));
       if (this.wheelBtn) this.wheelBtn.addEventListener('click', () => this.toggleWheel());
       this.pctEl.addEventListener('click', () => this.toggleScale());
@@ -275,7 +273,7 @@
 
       // 收藏状态
       const on = State.isFav(meta.id);
-      this.favBtn.classList.toggle('is-on', on);
+      this.favBtn.classList.toggle('is-fav', on);
       this.favBtn.innerHTML = Util.icon(on ? 'i-star-fill' : 'i-star');
       this.favBtn.setAttribute('aria-pressed', String(on));
 
@@ -545,7 +543,7 @@
     _setWheelUI() {
       if (!this.wheelBtn) return;
       const nav = this.wheelMode === 'nav';
-      this.wheelBtn.innerHTML = Util.icon(nav ? 'i-arrows-h' : 'i-search');
+      this.wheelBtn.innerHTML = Util.icon(nav ? 'i-arrows-h' : 'i-wheel');
       this.wheelBtn.title = nav
         ? '滚轮：切换上/下一张（点击切换为缩放）'
         : '滚轮：缩放图片（点击切换为切换图片）';
@@ -685,7 +683,7 @@
     /* ---------- 收藏 ---------- */
     toggleFav() {
       const on = State.toggleFav(this.meta.id);
-      this.favBtn.classList.toggle('is-on', on);
+      this.favBtn.classList.toggle('is-fav', on);
       this.favBtn.innerHTML = Util.icon(on ? 'i-star-fill' : 'i-star');
       this._updateStripSel();
       this._checkStripEnd();

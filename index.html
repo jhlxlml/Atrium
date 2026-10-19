@@ -42,7 +42,12 @@
   <symbol id="i-right" viewBox="0 0 24 24"><path d="M9.5 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
-  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8.5 3.5H4.5a1 1 0 0 0-1 1v4M15.5 3.5h4a1 1 0 0 1 1 1v4M8.5 20.5h-4a1 1 0 0 1-1-1v-4M15.5 20.5h4a1 1 0 0 0 1-1v-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <!-- 适应窗口：闭合的窗口框 + 四角向内收的短折线。
+       原来是"四角折线内收"，与全屏的"四角折线外扩"（i-expand）只差一个方向，
+       16px 下两个按钮几乎一模一样。现在多了一层闭合的框：
+       全屏 = 四段离散折线（没有边界），适应 = 有边界的框 + 往里收 —— 形状层面就分开了。
+       也试过"框 + 横向双箭头"，但那会和滚轮切图模式的 i-arrows-h 撞脸。 -->
+  <symbol id="i-fit" viewBox="0 0 24 24"><rect x="3.4" y="4.6" width="17.2" height="14.8" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 9v2.4M8 9h2.4M16 9v2.4M16 9h-2.4M8 15v-2.4M8 15h2.4M16 15v-2.4M16 15h-2.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
   <symbol id="i-film" viewBox="0 0 24 24"><rect x="4" y="4.5" width="16" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 9h16M4 15h16M9 4.5v15M15 4.5v15" stroke="currentColor" stroke-width="1.2"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.5v11.2M7.6 10.6 12 15l4.4-4.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 17.2v1.6A1.7 1.7 0 0 0 6.2 20.5h11.6a1.7 1.7 0 0 0 1.7-1.7v-1.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
   <symbol id="i-dir" viewBox="0 0 24 24"><path d="M4 6.5A1.5 1.5 0 0 1 5.5 5H10l2 2h6.5A1.5 1.5 0 0 1 20 8.5v0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="3.5" y="9" width="17" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
@@ -63,6 +68,10 @@
   <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5M4.2 4.6v4.2h4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M19.4 12a7.4 7.4 0 1 1-2.27-5.33M16.9 4.7v4.1h-4.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-arrows-h" viewBox="0 0 24 24"><path d="M4 12h16M8.5 8l-4.5 4 4.5 4M15.5 8l4.5 4-4.5 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <!-- 滚轮行为：一只鼠标（上半圆 + 下半圆）+ 中间那截滚轮。
+       原来这颗按钮借用的是放大镜（i-search），和旁边的放大/缩小是同一个语义，
+       看着就像缩放键重复了一次；鼠标才是"滚轮"这件事本身。 -->
+  <symbol id="i-wheel" viewBox="0 0 24 24"><rect x="7.4" y="3" width="9.2" height="18" rx="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 6.8v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9.2 3.6h5.6l-.8 4.5 2.9 2.9a1 1 0 0 1-.71 1.71H7.81A1 1 0 0 1 7.1 11l2.9-2.9-.8-4.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 12.7v7.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
   <symbol id="i-pin-on" viewBox="0 0 24 24"><path d="M9.2 3.6h5.6l-.8 4.5 2.9 2.9a1 1 0 0 1-.71 1.71H7.81A1 1 0 0 1 7.1 11l2.9-2.9-.8-4.5Z" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M12 12.7v7.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 14.2a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V20a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H4a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5.6 8.6a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V4a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H20a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -348,18 +357,22 @@
       <span class="lb-count" id="lbCount"></span>
     </div>
     <div class="lb-actions">
+      <!-- 变换组：缩放 + 适应 + 旋转。
+           旋转只留一个键（顺时针）—— 原来左右两个是同一个图标的镜像，
+           16px 下几乎分不出来，看着像"重复的图标"。逆时针仍在 Shift+R 上。 -->
       <button class="ico-btn" id="lbZoomOut" title="缩小" aria-label="缩小"><svg><use href="#i-minus"/></svg></button>
       <button class="lb-pct" id="lbPct" title="双击图片可在适应与 100% 之间切换">100%</button>
       <button class="ico-btn" id="lbZoomIn" title="放大" aria-label="放大"><svg><use href="#i-plus"/></svg></button>
-      <button class="ico-btn" id="lbFit" title="适应窗口（尽量放大整张显示）" aria-label="适应窗口"><svg><use href="#i-fit"/></svg></button>
-      <button class="ico-btn" id="lbRotL" title="逆时针旋转 90°（Shift+R）· 旋转会被记住，按 Z 可复原" aria-label="逆时针旋转"><svg class="flip-x"><use href="#i-rotate"></use></svg></button>
-      <button class="ico-btn" id="lbRotR" title="顺时针旋转 90°（R）· 旋转会被记住，按 Z 可复原" aria-label="顺时针旋转"><svg><use href="#i-rotate"></use></svg></button>
-      <button class="ico-btn" id="lbWheel" title="滚轮：缩放图片（点击切换为切换图片）" aria-label="滚轮模式：缩放"><svg><use href="#i-search"></use></svg></button>
+      <button class="ico-btn" id="lbFit" title="适应窗口（整张装进窗口）" aria-label="适应窗口"><svg><use href="#i-fit"/></svg></button>
+      <button class="ico-btn" id="lbRotR" title="顺时针旋转 90°（R）· 逆时针按 Shift+R · 旋转会被记住，按 Z 复原" aria-label="顺时针旋转"><svg><use href="#i-rotate"/></svg></button>
       <span class="lb-sep"></span>
+      <!-- 视图组：信息 / 收藏 / 缩略条 / 滚轮行为 -->
       <button class="ico-btn" id="lbInfo" title="图片信息（I）" aria-label="图片信息"><svg><use href="#i-info"/></svg></button>
       <button class="ico-btn" id="lbFav" title="收藏（F）" aria-label="收藏"><svg><use href="#i-star"/></svg></button>
       <button class="ico-btn" id="lbStripBtn" title="缩略图条（H）" aria-label="缩略图条"><svg><use href="#i-film"/></svg></button>
+      <button class="ico-btn" id="lbWheel" title="滚轮：缩放图片（点击切换为切换图片）" aria-label="滚轮模式：缩放"><svg><use href="#i-wheel"/></svg></button>
       <span class="lb-sep"></span>
+      <!-- 播放组 -->
       <button class="ico-btn" id="lbPlay" title="幻灯片播放（P）" aria-label="幻灯片播放"><svg><use href="#i-play"/></svg></button>
       <button class="ico-btn" id="lbFs" title="全屏显示" aria-label="全屏显示"><svg><use href="#i-expand"/></svg></button>
       <span class="lb-sep"></span>

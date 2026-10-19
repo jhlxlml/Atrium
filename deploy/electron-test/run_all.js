@@ -783,6 +783,70 @@ const SUITES = [
     },
   },
 
+  /* ---------- 7b. 灯箱操作区 · 关闭键位置 / 图标不重复 / 激活态语义 ----------
+     这一套守三件容易回退的小事：
+     ① 关闭键必须在右上角（上一版挪到左上，用户要求挪回）；
+     ② HUD 里不能有两颗按钮用同一个图标（原来左右旋转共用一个 #i-rotate、
+        滚轮切图借用放大镜 #i-search、适应窗口与全屏都是四角折线）；
+     ③ 激活态颜色分语义：面板/模式类=蓝，收藏=黄。
+     颜色断言用"哪个通道更高"判色相，不写死色号 —— 换主题换色号时不该变红。 */
+  {
+    id: 'lbui',
+    title: '灯箱操作区 · 关闭键在右上 / 图标互不重复 / 激活态蓝黄分语义',
+    kind: 'probe',
+    script: 'probe_lb_ui.js',
+    key: 'LBUI ',
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.normal) { check('探针返回数据', false, '未解析到 LBUI 输出'); return; }
+      const n0 = d.normal, w0 = d.withInfo || {};
+      const c0 = n0.close, c1 = w0.close || {};
+      const rgb = function (s) {
+        const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(s || '');
+        return m ? { r: +m[1], g: +m[2], b: +m[3] } : null;
+      };
+
+      check('关闭键在右上角（右侧留白 ≤ 24px）', c0.right <= 24, 'right=' + c0.right + ' left=' + c0.left);
+      check('关闭键在右上角（水平位置越过中线）', c0.left > n0.vw / 2, 'left=' + c0.left + ' vw=' + n0.vw);
+      check('关闭键尺寸未被压扁（40×40）', Math.abs(c0.w - 40) <= 1 && Math.abs(c0.h - 40) <= 1,
+        c0.w + '×' + c0.h);
+      check('关闭键默认可见（沉浸态不藏退出入口）', c0.opacity >= 0.8, 'opacity=' + c0.opacity);
+
+      // 开信息面板后关闭键不该横跳（面板 top:72，键底 56，竖向不重叠）
+      check('开信息面板后关闭键位置不变（不横跳）',
+        c1.right !== undefined && Math.abs(c1.right - c0.right) <= 1 && Math.abs(c1.top - c0.top) <= 1,
+        'normal right=' + c0.right + ' withInfo right=' + c1.right);
+      check('开信息面板后 HUD 让开面板', w0.hud && w0.hud.right > 300, w0.hud && w0.hud.right);
+
+      // 图标不重复
+      const btns = n0.buttons || [];
+      const icons = btns.map(function (b) { return b.icon; });
+      const dup = icons.filter(function (v, i) { return icons.indexOf(v) !== i; });
+      check('操作栏按钮已全部采到（11 颗）', btns.length === 11, 'n=' + btns.length);
+      check('操作栏没有重复图标', btns.length > 0 && dup.length === 0,
+        'dup=' + JSON.stringify(dup) + ' icons=' + JSON.stringify(icons));
+      check('每颗按钮都有 aria-label', btns.length > 0 && btns.every(function (b) { return !!b.label; }),
+        JSON.stringify(btns.filter(function (b) { return !b.label; }).map(function (b) { return b.id; })));
+
+      // 滚轮按钮：默认鼠标图标；切到 nav 变左右箭头，且两者不同
+      const wv = d.wheelNav || {};
+      const wheelBtn = btns.filter(function (b) { return b.id === 'lbWheel'; })[0] || {};
+      check('滚轮按钮默认用「鼠标」图标而非放大镜', wheelBtn.icon === '#i-wheel', wheelBtn.icon);
+      check('滚轮切到切图模式后换成左右箭头', wv.icon === '#i-arrows-h', wv.icon);
+      check('滚轮两种模式的图标确实不同', !!wheelBtn.icon && wheelBtn.icon !== wv.icon,
+        wheelBtn.icon + ' vs ' + wv.icon);
+
+      // 激活态语义：面板类=蓝，收藏=黄
+      const infoBtn = (w0.buttons || []).filter(function (b) { return b.id === 'lbInfo'; })[0] || {};
+      const ci = rgb(infoBtn.color), cw = rgb(wv.color), cf = rgb((d.fav || {}).color);
+      check('信息面板打开后按钮标记为激活', infoBtn.on === true);
+      check('面板类激活态是蓝色（B 通道明显高于 R）', !!ci && ci.b > ci.r + 40, infoBtn.color);
+      check('滚轮切图模式也是蓝色（与收藏区分）', !!cw && cw.b > cw.r + 40, wv.color);
+      check('收藏激活态是黄色（R/G 明显高于 B）', !!cf && cf.r > cf.b + 40 && cf.g > cf.b + 40,
+        (d.fav || {}).color);
+    },
+  },
+
   /* ---------- 8. 设置面板 ---------- */
   {
     id: 'settings',
