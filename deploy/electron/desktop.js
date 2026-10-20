@@ -92,6 +92,7 @@ function createDesktop(ctx) {
     /* 菜单勾选态。渲染层通过 vf:menuState 推过来，主进程只读它建菜单。 */
     state: {
       mode: 'medium', blur: false, favOnly: false, pin: false, frame: false,
+      side: false,               // 左侧来源栏是否展开（菜单「来源栏」的勾选态）
       hasItems: false, hasSel: false,
     },
   };

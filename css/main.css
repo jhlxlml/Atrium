@@ -289,8 +289,8 @@ body:has(.lightbox:fullscreen) .lightbox { top: 0; }
 .ctrls > #sortDir { margin-left: 5px; }
 .ctrls > #trashWrap { margin-left: 6px; }
 
-/* 左右两侧统一胶囊：填充底 / 发丝边 / 12px 圆角 / 40px 高 */
-.ctrls, .srcbar {
+/* 控件簇胶囊：填充底 / 发丝边 / 12px 圆角 / 40px 高 */
+.ctrls {
   background: var(--fill-1);
   border: .5px solid var(--hairline);
   border-radius: var(--r-m);
@@ -323,8 +323,6 @@ body:has(.lightbox:fullscreen) .lightbox { top: 0; }
   :root { --gutter: 18px; }
   .seg-txt { display: none; }
   .ctrls > .sep { display: none; }
-  .src-add .src-add-txt { display: none; }
-  .src-add { padding: 0 9px; gap: 0; }
 }
 
 @media (min-width: 1181px) {
@@ -479,8 +477,15 @@ input[type="range"]::-moz-range-thumb {
 .btn-sm { padding: 5px 11px; font-size: 12px; border-radius: 8px; }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 
-/* 索引进度条（顶栏下沿） */
-.prog { height: 2px; background: transparent; overflow: hidden; }
+/* 索引进度条（顶栏下沿）
+   ⚠️ 必须是**浮层**（absolute）：它若留在文档流里，顶栏实际高度会变成
+   --topbar-h + 2px + 发丝线，而全站（侧栏高度 / 吸顶位置 / 灯箱让位）
+   都按 --topbar-h 算 —— 症状是侧栏被顶栏压住 3px、底部多出 3px 溢出。 */
+.prog {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 2px; background: transparent; overflow: hidden;
+  pointer-events: none;
+}
 .prog-bar {
   height: 100%; width: 0; background: var(--accent);
   transition: width .25s var(--ease), opacity .4s; opacity: 0;
@@ -690,9 +695,10 @@ input[type="range"]::-moz-range-thumb {
 body.marquee-on { -webkit-user-select: none; user-select: none; }
 body.marquee-on .tile { cursor: default; }
 
-/* 底部浮动选择条 */
+/* 底部浮动选择条。居中的参照是**图片区**而不是整窗：
+   侧栏展开时若仍按 50% 居中，选择条会偏到左边、压在图上。 */
 .selbar {
-  position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%);
+  position: fixed; left: calc(50% + var(--side-w, 0px) / 2); bottom: 76px; transform: translateX(-50%);
   z-index: 60; display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; border-radius: 999px;
   background: rgba(28, 28, 30, .82);
@@ -702,6 +708,7 @@ body.marquee-on .tile { cursor: default; }
   box-shadow: var(--shadow-3);
   animation: selbar-in .24s var(--ease-spring) both;
   max-width: calc(100vw - 32px);
+  transition: left .24s var(--ease);
 }
 @keyframes selbar-in { from { opacity: 0; transform: translate(-50%, 10px) scale(.97); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
 .selbar .sb-count { font-size: 13px; font-weight: 600; padding-left: 8px; font-variant-numeric: tabular-nums; }
@@ -729,75 +736,120 @@ html.snap-single .single-tile {
   scroll-snap-stop: always;
 }
 
-/* 来源条：与右侧 .ctrls 同款胶囊容器
-   收缩优先级：文件夹 chip 先让位（shrink 100），控件区几乎不动（shrink 1）。
-   理由：控件是「功能入口」，chip 是「当前上下文」，前者被挤出视野会直接卡住操作，
-   后者被裁一截只损失一点信息，且 chip 自身可横滚。 */
-.srcbar {
-  display: flex; align-items: center; gap: 4px;
-  flex: 0 100 auto; min-width: 96px; max-width: 62%;
+/* ============================================================
+   左侧来源栏
+   ------------------------------------------------------------
+   来源从「横排 chip」改成「竖排列表」。理由不是审美：
+   文件夹是可以一直加下去的东西，横排 chip 加到第五个就到头，
+   第六个开始要横滚 —— 而我有哪些文件夹这件事最该一眼看全。
+   竖排能一直长到窗口底部，且天然支持更长的名字。
+   ============================================================ */
+.workspace {
+  display: flex; align-items: flex-start;
+  min-height: calc(100vh - var(--topbar-h));
+  /* 侧栏宽度**单源**：收起时只改这一个值。
+     底部状态栏 / 选择条是 position:fixed，不给它们这个值的话会横跨整窗、
+     正好压在侧栏底部的「添加文件夹」上 —— 看起来像按钮点不动。 */
+  --side-w: 212px;
 }
-/* chip 溢出时给右缘一道渐隐，明确「还能往右滑」，而不是像被生硬截断 */
-.src-scroll.is-scrollable:not(.at-end) {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
-}
-.src-scroll {
-  /* width: fit-content 让滚动容器按 chip 内容宽收缩（而不是撑满剩余空间），
-     这样左侧胶囊与右侧 .ctrls 一样"内容多宽就多宽"，剩余空间交给 .spacer。
-     超出 max-width 时才出现横向滚动。 */
-  flex: 0 1 auto; min-width: 0; width: fit-content; max-width: 100%;
-  overflow-x: auto; overflow-y: hidden;
-  scrollbar-width: none;
-}
-.src-scroll::-webkit-scrollbar { display: none; }
-.src-list { display: inline-flex; align-items: center; gap: 3px; padding: 0; white-space: nowrap; width: max-content; }
-/* chip：与 .ico-btn 同为 32px 高、8px 圆角 */
-.src-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 11px;
-  border: 0; background: transparent;
-  color: var(--ink-2); font-size: 12.5px; font-weight: 500;
-  border-radius: var(--r-s);
+.workspace.is-collapsed { --side-w: 0px; }
+body.has-wco .workspace { min-height: calc(100vh - var(--topbar-h) - var(--cap-h)); }
+#main { flex: 1 1 auto; min-width: 0; }
+
+/* 顶栏里的开关 + 收起后的「当前来源」 */
+.side-head { display: flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
+.side-active {
+  height: 30px; padding: 0 10px; border-radius: var(--r-s);
+  border: 0; background: transparent; color: var(--ink-2);
+  font-family: inherit; font-size: 12.5px; font-weight: 500;
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
-  flex: none; white-space: nowrap;
 }
-.src-chip .sc-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.side-active:hover { background: var(--fill-2); color: var(--ink); }
+
+.sidebar {
+  position: sticky; top: var(--topbar-h); align-self: flex-start;
+  width: var(--side-w); flex: none; height: calc(100vh - var(--topbar-h));
+  display: flex; flex-direction: column;
+  background: var(--paper-2);
+  border-right: .5px solid var(--line);
+  overflow: hidden;
+  /* 收起是「让位」而不是「消失」：宽度收到 0，内容一起被裁掉，
+     所以过渡只需要动宽度，内部不用各写一套动画。 */
+  transition: width .24s var(--ease), opacity .16s var(--ease), border-right-width .24s var(--ease);
+}
+body.has-wco .sidebar {
+  top: calc(var(--topbar-h) + var(--cap-h));
+  height: calc(100vh - var(--topbar-h) - var(--cap-h));
+}
+/* 宽度由 .workspace 的 --side-w 决定（见上方），这里只收掉边框和透明度 */
+.workspace.is-collapsed .sidebar { opacity: 0; border-right-width: 0; }
+
+.sb-head {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  height: 40px; padding: 0 6px 0 12px;
+}
+.sb-title {
+  flex: 1; min-width: 0;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .14em;
+  color: var(--muted); text-transform: uppercase;
+}
+.sb-collapse { width: 26px; height: 26px; }
+.sb-collapse svg { width: 14px; height: 14px; }
+.sb-scroll {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 0 8px 10px;
+  scrollbar-width: thin;
+}
+.sb-foot { flex: none; padding: 8px; border-top: .5px solid var(--line); }
+
+/* 列表行：整行可点、名字吃掉剩余宽度、数量靠右 */
+.src-list { display: flex; flex-direction: column; gap: 1px; }
+.src-chip {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; height: 34px; padding: 0 7px 0 10px;
+  border: 0; border-radius: var(--r-s); background: transparent;
+  color: var(--ink-2); font-family: inherit; font-size: 12.5px; font-weight: 500;
+  text-align: left; white-space: nowrap; cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.src-chip .sc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .src-chip .sc-count {
-  font-size: 10.5px; font-weight: 500; color: var(--muted);
+  flex: none; font-size: 10.5px; font-weight: 500; color: var(--muted);
   font-variant-numeric: tabular-nums;
   background: var(--fill-2); border-radius: 99px; padding: 1px 7px;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .src-chip:hover { background: var(--fill-2); color: var(--ink); }
-.src-chip:active { transform: scale(.97); }
-.src-chip.is-on {
-  background: var(--accent); color: #fff;
-}
+.src-chip.is-on { background: var(--accent); color: #fff; }
 .src-chip.is-on .sc-count { color: #fff; background: rgba(255, 255, 255, .22); }
+/* 移除键默认不显示：一列十行都挂着叉号，会把「切换来源」这个主操作压下去。
+   悬停当前行才出现，且鼠标移上去再加深一次。 */
 .src-chip .sc-x {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px; margin-right: -4px; border-radius: 50%;
-  color: inherit; opacity: .55; line-height: 1;
-  transition: background .15s var(--ease), opacity .15s var(--ease);
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 18px; height: 18px; margin-right: -3px; border-radius: 50%;
+  color: inherit; opacity: 0;
+  transition: opacity .15s var(--ease), background .15s var(--ease);
 }
 .src-chip .sc-x svg { width: 10px; height: 10px; }
+.src-chip:hover .sc-x, .src-chip.is-on .sc-x { opacity: .55; }
 .src-chip .sc-x:hover { background: var(--fill-3); opacity: 1; }
 .src-chip.is-on .sc-x:hover { background: rgba(255, 255, 255, .24); opacity: 1; }
-/* 「添加文件夹」：与 .ico-btn 同规格 */
+/* 「添加文件夹」：贴底常驻，不与列表一起滚动 */
 .src-add {
-  flex: none;
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 11px 0 9px;
-  border: 0; background: transparent;
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; height: 32px; padding: 0 9px;
+  border: 0; background: transparent; border-radius: var(--r-s);
   color: var(--ink-2); font-family: inherit; font-size: 12.5px; font-weight: 500;
-  border-radius: var(--r-s); white-space: nowrap; cursor: pointer;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), transform .12s var(--ease);
+  white-space: nowrap; cursor: pointer; text-align: left;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .src-add svg { width: 13px; height: 13px; flex: none; transition: transform .2s var(--ease); }
 .src-add:hover { background: var(--fill-2); color: var(--ink); }
 .src-add:hover svg { transform: rotate(90deg); }
-.src-add:active { transform: scale(.96); }
+.src-add:active { transform: scale(.98); }
 .src-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
 /* ============================================================
@@ -809,9 +861,10 @@ html.snap-single .single-tile {
   padding-bottom: var(--bar-h);   /* 为浮出的底部状态栏预留空间，避免遮挡最后一行 */
 }
 .stage-wrap { flex: 1 0 auto; }
-/* 底部状态栏：材质浮层 + 自动隐藏。fixed 使其不占文档流，隐藏后不留空白。 */
+/* 底部状态栏：材质浮层 + 自动隐藏。fixed 使其不占文档流，隐藏后不留空白。
+   left 让位给左侧来源栏（--side-w），否则浮层会盖住侧栏底部的「添加文件夹」。 */
 .viewbar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 42;
+  position: fixed; left: var(--side-w, 0px); right: 0; bottom: 0; z-index: 42;
   display: flex; align-items: center; gap: 14px;
   min-height: var(--bar-h); padding: 8px var(--gutter);
   background: var(--material);
@@ -822,7 +875,7 @@ html.snap-single .single-tile {
   transform: translateY(100%);
   opacity: 0;
   pointer-events: none;
-  transition: transform .26s var(--ease), opacity .2s var(--ease);
+  transition: transform .26s var(--ease), opacity .2s var(--ease), left .24s var(--ease);
 }
 .viewbar.is-shown { transform: none; opacity: 1; pointer-events: auto; }
 .vb-left { display: flex; align-items: center; gap: 8px; flex: none; }
@@ -1415,8 +1468,6 @@ body.privacy-blur .tile::after {
   .ctrls > .sep { display: none; }
   .seg-txt { display: none; }
   .search.is-open input { width: 150px; max-width: 150px; }
-  /* 窄窗下来源栏让位：50% 封顶，把空间留给控件区 */
-  .srcbar { max-width: 50%; }
 }
 @media (max-width: 720px) {
   :root { --gutter: 12px; }
@@ -1428,9 +1479,6 @@ body.privacy-blur .tile::after {
   .viewbar { padding: 8px 12px; gap: 8px; min-height: auto; }
   .vb-cap, .vb-note { display: none; }
   .vb-right .btn { padding: 5px 8px; }
-  /* 极窄窗口：允许文件夹 chips 收缩，控件区优先显示核心按钮 */
-  .src-chip { padding: 0 9px; }
-  .src-chip .sc-name { max-width: 80px; }
 }
 
 /* ============================================================
@@ -1450,7 +1498,6 @@ body[data-density="compact"] {
   --bar-h: 44px;
 }
 body[data-density="compact"] .topbar-in { gap: 8px; }
-body[data-density="compact"] .srcbar,
 body[data-density="compact"] .ctrls { height: 36px; padding: 2px 5px; border-radius: 10px; }
 body[data-density="compact"] .ico-btn { width: 30px; height: 30px; border-radius: 7px; }
 body[data-density="compact"] .ico-btn svg { width: 15px; height: 15px; }

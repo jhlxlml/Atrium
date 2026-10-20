@@ -128,6 +128,7 @@ async function main() {
   step('appMenu', () => {
     const pushed = desktop.setMenuState({
       mode: 'masonry', blur: true, favOnly: true, pin: true, hasItems: true, hasSel: true,
+      side: true,
     });
     desktop.installAppMenu();
     const menu = Menu.getApplicationMenu();
@@ -135,6 +136,15 @@ async function main() {
       const it = menu.getMenuItemById(id);
       return it ? { label: it.label, accel: it.accelerator, enabled: it.enabled, checked: it.checked, type: it.type } : null;
     };
+    /* 「来源栏」是侧栏的第三个入口（前两个在界面里）。它必须真的装进原生菜单，
+       且加速键不能和「模糊预览」的 Ctrl+B 撞 —— 撞了就是按一下改两样东西。 */
+    const sidebarOn = q('sidebar-toggle');
+    const blur = q('blur-toggle');
+    // 勾选态要跟着状态翻：用菜单收起侧栏后，菜单里那个勾得反过来
+    desktop.setMenuState({ mode: 'masonry', blur: true, favOnly: true, pin: true,
+      hasItems: true, hasSel: true, side: false });
+    desktop.installAppMenu();
+    const it2 = Menu.getApplicationMenu().getMenuItemById('sidebar-toggle');
     return {
       statePushed: pushed,
       topLevel: menu ? menu.items.map((i) => i.label) : [],
@@ -143,12 +153,17 @@ async function main() {
       modeMasonry: q('mode:masonry'),
       modeSmall: q('mode:small'),
       favOnly: q('fav-only'),
-      blur: q('blur-toggle'),
+      blur: blur,
       pin: q('pin-toggle'),
       frame: q('frame-toggle'),
       selectAll: q('select-all-tiles'),
       shortcuts: q('shortcuts'),
       about: q('about'),
+      sidebar: sidebarOn,
+      sidebarAccel: sidebarOn ? sidebarOn.accel : null,
+      sidebarCheckedWhenSideOn: sidebarOn ? sidebarOn.checked : null,
+      sidebarCheckedWhenSideOff: it2 ? it2.checked : null,
+      sidebarAccelClashesWithBlur: !!(sidebarOn && blur && sidebarOn.accel === blur.accel),
     };
   });
 

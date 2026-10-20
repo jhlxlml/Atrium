@@ -135,6 +135,7 @@ npm test
 | `Ctrl+Plus` `Ctrl+-` `Ctrl+0` | 放大 / 缩小 / 重置尺寸 |
 | `Ctrl+L` | 只看收藏 |
 | `Ctrl+B` | 模糊预览（隐私模式） |
+| `Ctrl+Shift+B` | 展开 / 收起来源栏 |
 | `Ctrl+T` | 窗口置顶 |
 | `Ctrl+Shift+F` | 相框模式 |
 | `Ctrl+A` / `Ctrl+Shift+A` | 全选当前页（图库内 / 菜单） |

@@ -36,6 +36,7 @@ const COMMANDS = [
   'zoom-reset',         // 回到当前模式的默认尺寸
   'fav-only',           // 只看收藏
   'blur-toggle',        // 模糊预览（隐私模式）
+  'sidebar-toggle',     // 展开 / 收起左侧来源栏
   'pin-toggle',         // 窗口置顶
   'frame-toggle',       // 进入 / 退出相框
   'select-all-tiles',   // 全选当前页（刻意不用 Ctrl+A，见下）
@@ -170,6 +171,9 @@ function appMenuSpec(state) {
         { type: 'separator' },
         { label: '只看收藏', type: 'checkbox', accel: 'CmdOrCtrl+L', checked: !!st.favOnly, cmd: 'fav-only' },
         { label: '模糊预览（隐私模式）', type: 'checkbox', accel: 'CmdOrCtrl+B', checked: !!st.blur, cmd: 'blur-toggle' },
+        /* 侧栏不能也占 Ctrl+B —— 会被模糊预览抢走（两个处理器都收得到 keydown）。
+           用 Ctrl+Shift+B，与「只看收藏」「模糊预览」同一档。 */
+        { label: '来源栏', type: 'checkbox', accel: 'CmdOrCtrl+Shift+B', checked: !!st.side, cmd: 'sidebar-toggle' },
         { type: 'separator' },
         { label: '全屏', role: 'togglefullscreen' },
       ],

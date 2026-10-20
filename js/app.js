@@ -51,7 +51,11 @@
       E.capRight = $('#capRight');
       E.frameBtn = $('#frameBtn');
       E.favOnlyBtn = $('#favOnlyBtn');
-      E.srcbar = $('#srcbar');
+      E.workspace = $('#workspace');
+      E.sidebar = $('#sidebar');
+      E.sideToggle = $('#sideToggle');
+      E.sideCollapse = $('#sideCollapse');
+      E.sideActive = $('#sideActive');
       E.srcList = $('#srcList');
       E.btnAddFolder = $('#btnAddFolder');
       E.viewbar = $('#viewbar');
@@ -110,6 +114,7 @@
       this.wireControls();
       this.wireSelBar();
       this.wireFolder();
+      this.wireSidebar();
       this.wireDrop();
       this.wireKeyboard();
       this.wireDesktop();
@@ -151,7 +156,7 @@
         }).catch(() => {});
       }
       // 外观类设置（主题 / 密度 / 文件名 / 数量角标）启动时先应用一次
-      for (const k of ['theme', 'density', 'showNames', 'showCnt']) this.applySetting(k, State.settings[k]);
+      for (const k of ['theme', 'density', 'showNames', 'showCnt', 'sidebarOpen']) this.applySetting(k, State.settings[k]);
       // 主题定下来之后再推标题栏配色（浮层是系统画的，读不到 CSS 变量）
       this.wireCapOverlay();
       this.applySetting('wheelMode', State.settings.wheelMode);
@@ -220,6 +225,9 @@
           break;
         case 'showCnt':
           b.dataset.showCnt = val ? '1' : '0';
+          break;
+        case 'sidebarOpen':
+          this.applySidebarUI(val);
           break;
 
         /* --- 浏览与查看 --- */
@@ -732,11 +740,12 @@
       this.wireCtrlScrollHint();
     },
 
-    /* ================= 顶栏控件区横滚提示 ================= */
+    /* ================= 顶栏控件区横滚提示 =================
+       来源栏搬进左侧竖排列表后，这里只剩「右侧控件簇」一条横滚轴；
+       来源列表是竖向滚动，滚动条本身就是提示，不需要再做渐隐。 */
     wireCtrlScrollHint() {
       const c = this.el.ctrls || Util.$('#ctrls');
       if (!c) return;
-      const s = Util.$('#srcScroll');
       const upd = () => {
         const scrollable = c.scrollWidth > c.clientWidth + 1;
         const atEnd = c.scrollLeft + c.clientWidth >= c.scrollWidth - 2;
@@ -745,23 +754,11 @@
         // 否则 overflow-y:hidden 会把它下方弹出的浮层（如「最近删除」面板）裁成 0 高，
         // 表现就是点了没反应、点不进去。
         c.classList.toggle('is-scrollable', scrollable);
-        if (s) {
-          const sScrollable = s.scrollWidth > s.clientWidth + 1;
-          s.classList.toggle('is-scrollable', sScrollable);
-          s.classList.toggle('at-end',
-            s.scrollLeft + s.clientWidth >= s.scrollWidth - 2);
-        }
       };
       c.addEventListener('scroll', upd, { passive: true });
-      if (s) s.addEventListener('scroll', upd, { passive: true });
       global.addEventListener('resize', upd, { passive: true });
-      // 来源 chip 是异步渲染的（读目录之后才有），且数量随增删文件夹变化。
-      // 只监听 resize 会在首屏漏判 —— chip 明明溢出，渐隐却不出现，右缘就成了硬裁。
       if (global.ResizeObserver) {
         const ro = new ResizeObserver(upd);
-        const list = Util.$('#srcList');
-        if (list) ro.observe(list);
-        if (s) ro.observe(s);
         ro.observe(c);
         this._roCtrlScroll = ro;
       }
@@ -1240,7 +1237,8 @@
       E.galleryView.hidden = true;
       E.emptyView.hidden = true;
       E.noResult.hidden = true;
-      E.srcbar.hidden = true;
+      E.sidebar.hidden = true;
+      this.syncSideActive();
       E.viewbar.hidden = true;
       if (E.selBar) E.selBar.hidden = true;
       global.Trash.open(this.trash);
@@ -1254,7 +1252,7 @@
       if (!State.items.length) { this.showEmpty(); return; }
       E.emptyView.hidden = true;
       E.galleryView.hidden = false;
-      E.srcbar.hidden = false;
+      E.sidebar.hidden = false;
       E.viewbar.hidden = !State.items.length;
       this.renderSources();
       this.applyView(false);
@@ -1474,6 +1472,74 @@
       E.btnAddFolder.addEventListener('click', open);
     },
 
+    /* ================= 左侧来源栏 =================
+       来源从「横排 chip」改成「竖排列表」后，顶栏左端只剩一个开关。
+       收起时把当前来源的名字贴在开关右边 —— 否则关掉侧栏，
+       用户就不知道自己正在看哪个文件夹了（尤其是多文件夹场景）。
+       状态存在 settings.sidebarOpen 里，跨会话保持。 */
+    wireSidebar() {
+      const E = this.el;
+      if (!E.sideToggle) return;
+      const flip = () => this.toggleSidebar();
+      E.sideToggle.addEventListener('click', flip);
+      if (E.sideCollapse) E.sideCollapse.addEventListener('click', flip);
+      // 收起态的「当前来源」本身就是「展开」的入口
+      if (E.sideActive) E.sideActive.addEventListener('click', () => this.toggleSidebar(true));
+      /* Ctrl+Shift+B —— **不能**用 Ctrl+B：它已经是应用菜单里「模糊预览」的加速键
+         （desktop-spec.js 的 CmdOrCtrl+B）。两个处理器都会收到 keydown，
+         按一下会同时把隐私模式打开、把侧栏收起来。菜单项在 desktop-spec.js。 */
+      global.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey) || e.altKey || !e.shiftKey) return;
+        if (e.key !== 'b' && e.key !== 'B') return;
+        // 输入框里按快捷键是「加粗」之类，不该抢
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        e.preventDefault();
+        flip();
+      });
+    },
+
+    toggleSidebar(force) {
+      const next = typeof force === 'boolean' ? force : !State.settings.sidebarOpen;
+      State.setSetting('sidebarOpen', next);
+      this.applySidebarUI(next);
+    },
+
+    applySidebarUI(open) {
+      const E = this.el;
+      const on = !!open;
+      if (E.workspace) E.workspace.classList.toggle('is-collapsed', !on);
+      if (E.sideToggle) {
+        E.sideToggle.classList.toggle('is-on', on);
+        E.sideToggle.title = (on ? '收起来源栏' : '展开来源栏') + '（Ctrl+Shift+B）';
+        E.sideToggle.setAttribute('aria-label', on ? '收起来源栏' : '展开来源栏');
+        E.sideToggle.setAttribute('aria-pressed', String(on));
+      }
+      this.syncSideActive();
+      /* 侧栏宽度变了 → 网格可用宽度跟着变。必须重排，否则瓦片还按旧宽度摆着，
+         右侧会留一条空白（或压到侧栏底下）。 */
+      if (global.Grid && global.Grid.layout) requestAnimationFrame(() => global.Grid.layout(true));
+      /* 应用菜单里「来源栏」的勾选态要跟着变 —— 不推的话用菜单收起后，
+         菜单里那个勾还停在"已展开"，再点一次会变成"展开"（反向操作）。 */
+      this.syncMenu();
+    },
+
+    /** 把「当前来源」同步到收起态的那个标签上（同时管它该不该出现） */
+    syncSideActive() {
+      const E = this.el;
+      if (!E.sideActive) return;
+      const src = State.sources.filter((x) => x.id === State.active)[0];
+      const label = State.active === 'all' || !src ? '全部图片' : src.name;
+      E.sideActive.textContent = label;
+      E.sideActive.title = '展开来源栏（Ctrl+Shift+B）· 当前：' + label;
+      const sideHidden = E.sidebar ? E.sidebar.hidden : false;
+      // 侧栏整体不可用（空态 / 回收站）时，顶栏那颗开关也该一起收起来 ——
+      // 留着它只会得到一个「点了没反应」的按钮。
+      if (E.sideToggle && E.sideToggle.parentElement) E.sideToggle.parentElement.hidden = sideHidden;
+      // 侧栏展开时这个标签是多余的（侧栏里高亮的那行就是答案）
+      E.sideActive.hidden = !!State.settings.sidebarOpen || sideHidden;
+    },
+
     /* ================= 拖拽 ================= */
     wireDrop() {
       const E = this.el;
@@ -1573,7 +1639,7 @@
       E.emptyView.hidden = true;
       E.galleryView.hidden = false;
       E.topbar.hidden = false;
-      E.srcbar.hidden = false;
+      E.sidebar.hidden = false;
       this.renderSources();
       this.applyModeUI(false);   // 确保当前模式的网格参数
       this.applyView(true);      // 计算来源过滤/排序 + 分页并渲染
@@ -1584,7 +1650,8 @@
       const E = this.el;
       E.galleryView.hidden = true;
       E.emptyView.hidden = false;
-      E.srcbar.hidden = true;
+      E.sidebar.hidden = true;
+      this.syncSideActive();
       E.noResult.hidden = true;
       if (E.selBar) E.selBar.hidden = true;
       Grid.clearSel();
@@ -1638,6 +1705,7 @@
       for (const s of State.sources) {
         mk(s.id, s.name, State.sourceCount(s.id), State.active === s.id, true);
       }
+      this.syncSideActive();
     },
 
     removeFolder(id, label) {
@@ -2192,6 +2260,7 @@
       return {
         mode: State.settings.mode,
         blur: !!State.settings.blurPreview,
+        side: !!State.settings.sidebarOpen,   // 菜单「来源栏」的勾选态与侧栏实况一致
         favOnly: !!State.favOnly,
         pin: !!State.settings.alwaysOnTop,
         frame: !!this.frameOn,
@@ -2341,6 +2410,7 @@
 
       'fav-only'() { this.toggleFavOnly(); },
       'blur-toggle'() { this.toggleBlur(); },
+      'sidebar-toggle'() { this.toggleSidebar(); },
       'pin-toggle'() { this.togglePin(); },
       'frame-toggle'() { this.toggleFrame(); },
 
@@ -2444,6 +2514,7 @@
         + row(k('Ctrl+Plus') + ' ' + k('Ctrl+-') + ' ' + k('Ctrl+0'), '放大 / 缩小 / 重置尺寸')
         + row(k('Ctrl+L'), '只看收藏')
         + row(k('Ctrl+B'), '模糊预览（隐私模式）')
+        + row(k('Ctrl+Shift+B'), '展开 / 收起来源栏')
         + row(k('Ctrl+T'), '窗口置顶')
         + row(k('Ctrl+Shift+F'), '相框模式')
         + row(k('Ctrl+Shift+A'), '全选当前页')

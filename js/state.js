@@ -119,7 +119,8 @@
       theme: 'light',          // 'light' | 'dark' | 'auto'
       density: 'cozy',         // 'cozy' | 'compact'  网格间距/信息密度
       showNames: false,        // 网格是否显示文件名浮层
-      showCnt: true,           // 来源 chip 是否显示数量角标
+      showCnt: true,           // 来源行是否显示数量角标
+      sidebarOpen: true,       // 左侧来源栏是否展开（收起后顶栏贴出当前来源名）
 
       /* --- 浏览行为 --- */
       wheelMode: 'zoom',       // 灯箱滚轮：'zoom' 缩放 | 'nav' 切换图片
@@ -167,7 +168,7 @@
 
       if (v.theme === 'light' || v.theme === 'dark' || v.theme === 'auto') d.theme = v.theme;
       if (v.density === 'cozy' || v.density === 'compact') d.density = v.density;
-      for (const k of ['showNames', 'showCnt', 'animOn', 'stripAuto', 'infoAuto', 'confirmDelete', 'rememberLast', 'alwaysOnTop', 'showFrame', 'trayOn', 'trayClose', 'hotkeyOn', 'updateCheck']) {
+      for (const k of ['showNames', 'showCnt', 'sidebarOpen', 'animOn', 'stripAuto', 'infoAuto', 'confirmDelete', 'rememberLast', 'alwaysOnTop', 'showFrame', 'trayOn', 'trayClose', 'hotkeyOn', 'updateCheck']) {
         if (typeof v[k] === 'boolean') d[k] = v[k];
       }
       if (v.wheelMode === 'zoom' || v.wheelMode === 'nav') d.wheelMode = v.wheelMode;

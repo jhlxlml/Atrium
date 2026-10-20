@@ -1165,10 +1165,15 @@ const SUITES = [
       check('眼睛按钮位于右侧控件簇内', geo.eyeInCtrls === true);
       check('眼睛按钮位于最近删除之后', geo.eyeAfterTrash === true && geo.eyeIdx > geo.trashIdx,
         'trashIdx=' + geo.trashIdx + ' eyeIdx=' + geo.eyeIdx);
-      check('顶栏左侧只有来源栏 + 间距 + 控件簇',
-        Array.isArray(geo.topbarLeftChildren) && geo.topbarLeftChildren.length === 3,
+      check('顶栏左侧只有「来源开关 + 间距 + 控件簇」（来源已搬进左侧栏）',
+        Array.isArray(geo.topbarLeftChildren) && geo.topbarLeftChildren.length === 3
+          && geo.topbarLeftChildren[0] === 'sideHead'
+          && geo.topbarLeftChildren[1] === 'spacer'
+          && geo.topbarLeftChildren[2] === 'ctrls',
         JSON.stringify(geo.topbarLeftChildren));
-      check('紧凑高度规则已注入', geo.hasFitRule === true);
+      check('顶栏仍是单行（.topbar-in 实测高度 = --topbar-h，控件簇 nowrap）',
+        geo.topbarInH === Math.round(geo.topbarVarPx) && geo.ctrlsWrap === 'nowrap',
+        'inH=' + geo.topbarInH + ' var=' + geo.topbarVarPx + ' wrap=' + geo.ctrlsWrap);
       if (eye) {
         check('眼睛按钮可切换模糊预览', eye.before === false && eye.after === true && eye.blurred === true);
       }
@@ -1246,11 +1251,141 @@ const SUITES = [
             JSON.stringify({ aria: pin2.pressed, setting: pin2.setting, icon: pin2.icon, last: pin2.ipcLast }));
         }
       }
+      /* 来源栏已竖排（v1.17.0）：侧栏是独立一列，每行整行可点、纵向堆叠。
+         横排 chip 时代的判据（一行里放得下几个）已失效，换成结构判据。 */
+      check('来源栏是左侧独立一列（宽 212、贴顶栏下方、纵向可滚）',
+        !!geo.sidebar && geo.sidebar.w === 212 && geo.sidebar.x === 0
+          && geo.sbScrollOverflowY === 'auto',
+        JSON.stringify({ rect: geo.sidebar, overflowY: geo.sbScrollOverflowY }));
+      check('来源行是竖排整行（逐行下移且吃满列表宽度）',
+        geo.chipRows && geo.chipRows.n >= 2 && geo.chipRows.stacked === true
+          && geo.chipRows.fullWidth === true,
+        JSON.stringify({ n: geo.chipRows && geo.chipRows.n,
+          stacked: geo.chipRows && geo.chipRows.stacked,
+          fullWidth: geo.chipRows && geo.chipRows.fullWidth,
+          lw: geo.chipRows && geo.chipRows.lw }));
+      check('「添加文件夹」在侧栏底部、不与列表一起滚动',
+        !!geo.addBtn && !!geo.sidebar && geo.addBtn.y > geo.sidebar.y + 40
+          && geo.addBtn.y + geo.addBtn.h <= geo.sidebar.y + geo.sidebar.h + 1,
+        JSON.stringify({ add: geo.addBtn, side: geo.sidebar }));
       if (narrow) {
-        check('窄窗口下来源栏与控件簇同排', narrow.sameRow === true);
-        check('窄窗口下不换行', narrow.noWrap === true);
-        check('窄窗口下两者高度一致', narrow.srcbarH === narrow.ctrlsH, narrow.srcbarH + ' vs ' + narrow.ctrlsH);
+        check('窄窗口下顶栏左右两段垂直居中对齐', narrow.sameCenter === true,
+          'headH=' + narrow.headH + ' ctrlsH=' + narrow.ctrlsH);
+        check('窄窗口下顶栏不换行（.topbar-in 仍是 --topbar-h 高）', narrow.noWrap === true,
+          'topbarInH=' + narrow.topbarInH);
+        check('窄窗口下来源栏宽度不变（212）', narrow.sideW === 212, 'sideW=' + narrow.sideW);
       }
+    },
+  },
+
+  /* ---------- 9b. 左侧来源栏 · 展开 / 收起 / 浮层让位 ---------- */
+  {
+    id: 'sidebar',
+    title: '左侧来源栏 · 展开收起 / Ctrl+Shift+B / 收起态贴出当前来源 / 底部浮层让位',
+    kind: 'probe',
+    script: 'probe_sidebar.js',
+    key: 'SIDE ',
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.open || !d.closed) { check('探针返回数据', false, '未解析到 SIDE 输出'); return; }
+      const o = d.open, c = d.closed, k = d.keys || {}, ov = d.overlayOpen || {},
+        ov2 = d.overlayClosed || {}, em = d.empty || {}, dk = d.dark || {}, nw = d.narrow || {};
+
+      // 侧栏底色亮度：深色主题下必须真的变暗（材质/发丝线在深色里最容易糊成一片）
+      const lumOf = (col) => {
+        const m = /rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(String(col || ''));
+        if (!m) return NaN;
+        const ch = [1, 2, 3].map((i) => {
+          const s = (+m[i]) / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+      };
+
+      /* —— 展开态 —— */
+      check('默认展开：侧栏宽 212、贴左缘、从顶栏下沿铺到窗口底',
+        o.hidden === false && o.w === 212 && o.x === 0 && o.top === o.topbarBottom
+          && o.h >= o.fillH - 1 && o.h <= o.fillH + 1,
+        JSON.stringify({ w: o.w, x: o.x, top: o.top, tbBottom: o.topbarBottom,
+          h: o.h, fillH: o.fillH, vh100: o.vh100, topbarVar: o.topbarVar, capVar: o.capVar }));
+      check('顶栏实际高度 = --topbar-h（进度条不占布局高度）',
+        o.topbarBottom - (parseInt(o.capVar, 10) || 0) <= (parseInt(o.topbarVar, 10) || 0) + 1,
+        'tbBottom=' + o.topbarBottom + ' cap=' + o.capVar + ' topbar=' + o.topbarVar);
+      check('默认展开：workspace 未折叠、--side-w 为 212px',
+        o.collapsed === false && o.sideVar === '212px',
+        'collapsed=' + o.collapsed + ' sideVar=' + o.sideVar);
+      check('默认展开：开关为选中态、收起态标签不显示',
+        o.toggleOn === true && o.togglePressed === 'true' && /收起/.test(o.toggleTitle || '')
+          && o.activeLabelHidden === true,
+        JSON.stringify({ on: o.toggleOn, aria: o.togglePressed, title: o.toggleTitle, hidden: o.activeLabelHidden }));
+      check('首屏网格已按侧栏宽度让位（瓦片左缘不压在侧栏底下）',
+        typeof o.firstTileLeft === 'number' && o.firstTileLeft >= o.w,
+        'tileLeft=' + o.firstTileLeft + ' sideW=' + o.w);
+
+      /* —— 收起态 —— */
+      check('点开关收起：宽度收到 0、边框与透明度一起收掉',
+        c.w === 0 && c.collapsed === true && c.sideVar === '0px'
+          && c.opacity === '0' && c.borderW === '0px',
+        JSON.stringify({ w: c.w, collapsed: c.collapsed, sideVar: c.sideVar,
+          opacity: c.opacity, borderW: c.borderW }));
+      check('收起后设置落盘（sidebarOpen=false，且写进了 localStorage）',
+        c.setting === false && c.persisted === false,
+        'setting=' + c.setting + ' persisted=' + c.persisted);
+      check('收起后开关切到未选中态、提示改为「展开」',
+        c.toggleOn === false && c.togglePressed === 'false' && /展开/.test(c.toggleTitle || ''),
+        JSON.stringify({ on: c.toggleOn, aria: c.togglePressed, title: c.toggleTitle }));
+      check('收起后顶栏贴出「当前来源」的名字（否则不知道自己看的是哪个夹）',
+        c.activeLabelHidden === false && c.activeLabel === '全部图片' && c.activeLabelVisibleW > 0,
+        JSON.stringify({ hidden: c.activeLabelHidden, label: c.activeLabel, w: c.activeLabelVisibleW }));
+      check('收起后网格吃回被让出的宽度（瓦片左缘左移）',
+        typeof c.firstTileLeft === 'number' && c.firstTileLeft < o.firstTileLeft,
+        'open=' + o.firstTileLeft + ' closed=' + c.firstTileLeft);
+
+      /* —— 键盘 —— */
+      check('Ctrl+Shift+B 可展开、再按可收起（收起态出发）',
+        k.before === false && k.afterKey === true && k.afterKey2 === false,
+        JSON.stringify(k));
+      check('焦点在输入框里按 Ctrl+Shift+B 不劫持（打字不该把侧栏开合）',
+        k.afterKeyInInput === false && k.focusKept === true,
+        JSON.stringify({ state: k.afterKeyInInput, focusKept: k.focusKept }));
+      /* Ctrl+B 归「模糊预览」（应用菜单加速键），侧栏必须不受它影响：
+         两个处理器都收得到 keydown，共用同一个键就会按一下同时改两样东西 */
+      check('裸 Ctrl+B 不动侧栏（那个键已经是模糊预览的）',
+        k.afterPlainCtrlB_sidebarOpen === false,
+        'sidebarOpen=' + k.afterPlainCtrlB_sidebarOpen);
+
+      /* —— 底部浮层让位（fixed 元素不会自动避开侧栏） —— */
+      check('侧栏展开时底部状态栏从侧栏右缘起（不盖住「添加文件夹」）',
+        ov.sidebarW === 212 && ov.viewbarLeft === 212 && ov.viewbarRight === ov.docClientW,
+        JSON.stringify({ sideW: ov.sidebarW, left: ov.viewbarLeft, right: ov.viewbarRight,
+          clientW: ov.docClientW, innerW: ov.innerW }));
+      check('侧栏展开时「添加文件夹」仍可被点中（命中测试拿到的是它自己）',
+        ov.addHit === true, 'hit=' + ov.addHit + ' rect=' + JSON.stringify(ov.addRect));
+      check('侧栏展开时选择条按「图片区」居中而不是整窗居中',
+        Math.abs(ov.selbarCenter - ov.expectSelbarCenter) <= 2,
+        'center=' + ov.selbarCenter + ' expect=' + ov.expectSelbarCenter);
+      check('侧栏收起后底部浮层回到整窗宽度',
+        ov2.viewbarLeft === 0 && Math.abs(ov2.selbarCenter - ov2.expectSelbarCenter) <= 2,
+        JSON.stringify(ov2));
+
+      /* —— 空态 —— */
+      check('空态页里侧栏与开关一起收掉（不在引导页旁边留一列空壳）',
+        em.sidebarHidden === true && em.sideHeadHidden === true && em.activeHidden === true,
+        JSON.stringify(em));
+
+      /* —— 深色 —— */
+      check('深色主题下侧栏底色确实变暗、发丝线仍在',
+        dk.theme === 'dark' && lumOf(dk.bg) < 0.2 && dk.border && dk.border !== dk.bg,
+        JSON.stringify({ theme: dk.theme, bg: dk.bg, lum: lumOf(dk.bg), border: dk.border }));
+      check('深色主题下当前来源行仍是实心高亮（蓝底白字）',
+        dk.chipOnBg && dk.chipOnColor === 'rgb(255, 255, 255)',
+        JSON.stringify({ bg: dk.chipOnBg, color: dk.chipOnColor }));
+
+      /* —— 窄窗 —— */
+      check('窄窗口下侧栏宽度不变、主区正好吃掉剩余宽度',
+        nw.sideW === 212 && nw.mainLeft === 212 && nw.sumOk === true,
+        JSON.stringify(nw));
     },
   },
 
@@ -1690,6 +1825,17 @@ const SUITES = [
           && m.blur && m.blur.checked === true
           && m.pin && m.pin.checked === true),
         JSON.stringify([m.favOnly, m.blur, m.pin]));
+      /* 来源栏是侧栏的第三个入口。它得真的装进**原生菜单**（模板写对但 Electron
+         没注册上，只有问 getMenuItemById 才看得出来），且加速键不能撞模糊预览。 */
+      check('「来源栏」真的装进了原生菜单，且加速键不撞「模糊预览」',
+        !!(m.sidebar && m.sidebar.type === 'checkbox'
+          && m.sidebarAccel === 'CmdOrCtrl+Shift+B'
+          && m.sidebar.checked === true
+          && m.sidebarAccelClashesWithBlur === false),
+        JSON.stringify({ item: m.sidebar, clash: m.sidebarAccelClashesWithBlur }));
+      check('「来源栏」的勾选态跟着状态翻（用菜单收起后勾反过来）',
+        m.sidebarCheckedWhenSideOn === true && m.sidebarCheckedWhenSideOff === false,
+        JSON.stringify({ on: m.sidebarCheckedWhenSideOn, off: m.sidebarCheckedWhenSideOff }));
       check('「全选当前页」用 CmdOrCtrl+Shift+A（不抢图库的 Ctrl+A）',
         !!(m.selectAll && m.selectAll.accel === 'CmdOrCtrl+Shift+A'), JSON.stringify(m.selectAll));
       check('单键加速键 F1 被 Electron 接受',

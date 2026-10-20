@@ -38,6 +38,10 @@
   <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.6l2.5 5.1 5.6.8-4 4 1 5.6-5.1-2.7-5.1 2.7 1-5.6-4-4 5.6-.8L12 3.6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
   <symbol id="i-star-fill" viewBox="0 0 24 24"><path d="M12 3.6l2.5 5.1 5.6.8-4 4 1 5.6-5.1-2.7-5.1 2.7 1-5.6-4-4 5.6-.8L12 3.6Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <!-- 来源栏开关：外框 + 一道竖分隔，就是「窗口里有一条侧栏」的最小图示。
+       不做「展开/收起」两套图标 —— 同一个图标配 is-on 表示展开态，状态靠颜色而不是换形，
+       16px 下换形反而认不出是同一个控件。 -->
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.4" y="4.6" width="17.2" height="14.8" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9.6 4.6v14.8" stroke="currentColor" stroke-width="1.6"/></symbol>
   <symbol id="i-left" viewBox="0 0 24 24"><path d="M14.5 5 7.5 12l7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-right" viewBox="0 0 24 24"><path d="M9.5 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
@@ -85,15 +89,14 @@
 <!-- ============ 顶栏 ============ -->
 <header class="topbar" id="topbar" hidden>
   <div class="topbar-in">
-    <!-- 品牌 + 多文件夹来源：合并为与右侧控件同款的单一胶囊 -->
-    <div class="srcbar" id="srcbar" hidden>
-      <div class="src-scroll" id="srcScroll">
-        <div class="src-list" id="srcList" role="tablist" aria-label="图片来源筛选"></div>
-      </div>
-      <button type="button" class="src-add" id="btnAddFolder" title="添加文件夹" aria-label="添加文件夹">
-        <svg><use href="#i-plus"/></svg>
-        <span class="src-add-txt">添加文件夹</span>
+    <!-- 来源栏开关 + 收起后的「当前来源」。
+         来源搬进左侧竖排列表后，顶栏左端只剩这一个开关；
+         收起时把当前来源的名字贴在旁边，否则关掉侧栏就不知道自己看的是哪个文件夹。 -->
+    <div class="side-head" id="sideHead">
+      <button type="button" class="ico-btn is-on" id="sideToggle" title="收起来源栏（Ctrl+Shift+B）" aria-label="收起来源栏" aria-pressed="true">
+        <svg><use href="#i-sidebar"/></svg>
       </button>
+      <button type="button" class="side-active" id="sideActive" title="展开来源栏（Ctrl+Shift+B）" hidden></button>
     </div>
 
     <div class="spacer"></div>
@@ -198,7 +201,29 @@
   </div>
 </div>
 
-<main id="main">
+<!-- ============ 工作区：左侧来源栏 + 内容 ============ -->
+<div class="workspace" id="workspace">
+  <!-- 来源栏：文件夹是"可以一直加下去"的东西，横排 chip 加到第五个就到头，
+       竖排列表能长到窗口底部。所有条目由 App.renderSources() 渲染成 .src-chip 行。 -->
+  <aside class="sidebar" id="sidebar" aria-label="图片来源" hidden>
+    <div class="sb-head">
+      <span class="sb-title">来源</span>
+      <button type="button" class="ico-btn sb-collapse" id="sideCollapse" title="收起来源栏（Ctrl+Shift+B）" aria-label="收起来源栏">
+        <svg><use href="#i-sidebar"/></svg>
+      </button>
+    </div>
+    <div class="sb-scroll" id="srcScroll">
+      <div class="src-list" id="srcList" role="tablist" aria-label="图片来源筛选"></div>
+    </div>
+    <div class="sb-foot">
+      <button type="button" class="src-add" id="btnAddFolder" title="添加文件夹" aria-label="添加文件夹">
+        <svg><use href="#i-plus"/></svg>
+        <span class="src-add-txt">添加文件夹</span>
+      </button>
+    </div>
+  </aside>
+
+  <main id="main">
 
   <!-- ============ 空态 / 引导 ============ -->
   <section class="empty" id="emptyView">
@@ -326,6 +351,7 @@
   </div>
 
 </main>
+</div>
 
 <!-- ============ 拖拽遮罩 ============ -->
 <div class="dropzone" id="dropZone" hidden>

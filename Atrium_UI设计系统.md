@@ -95,12 +95,48 @@ Windows 上用 `titleBarStyle: 'hidden'` + `titleBarOverlay`，网页侧自己�
 ### 4.2 顶栏
 
 高 `--topbar-h: 56px`，`max-width: --page-max: 1760px` 居中。
-左右各一个**同款胶囊**（`.srcbar` / `.ctrls`）：`--fill-1` 底 + 发丝边 + `--r-m` + 40px 高 + `padding: 4px 6px`。
+右侧是一个胶囊 `.ctrls`：`--fill-1` 底 + 发丝边 + `--r-m` + 40px 高 + `padding: 4px 6px`。
+左侧只剩**来源栏开关** `.side-head`（无胶囊底：单个图标按钮不需要再套一层框）。
 
 DOM 契约（回归探针依赖，别动）：
-- `.topbar-in` **恰好 3 个子元素**：`.srcbar` / `.spacer` / `.ctrls`
+- `.topbar-in` **恰好 3 个子元素**：`.side-head` / `.spacer` / `.ctrls`
 - `.ctrls` 子元素顺序：`trashWrap → brandEye → frameBtn → setBtn`
 - `#frameBtn` 无论显隐都必须留在 `.ctrls` 内
+
+**顶栏高度只能由 `--topbar-h` 决定。** 装饰性元素一律 `position: absolute` ——
+`.prog`（索引进度条）曾经留在文档流里，把顶栏实际高度顶到 59px，
+而侧栏高度 / 吸顶位置 / 灯箱让位全按 56px 算，症状是侧栏被顶栏压住 3px、页面底部多 3px 溢出。
+
+#### 左侧来源栏（v1.17.0）
+
+来源从「顶栏横排 chip」搬进「左侧竖排列表」。理由不是审美：
+文件夹是可以一直加下去的东西，横排 chip 加到第五个就到头，第六个开始要横滚 ——
+而"我有哪些文件夹"这件事最该一眼看全。竖排能一直长到窗口底部，名字也能更长。
+
+结构：`.workspace`（flex）里 `.sidebar`（`sticky`，宽 212px）+ `#main`（`flex: 1 1 auto; min-width: 0`）。
+
+宽度**单源**：`.workspace { --side-w: 212px }`，`.workspace.is-collapsed { --side-w: 0px }`。
+侧栏宽度、底部状态栏的 `left`、选择条的居中基准，全部从这一个值推出来。
+
+| 部位 | 规格 |
+|---|---|
+| 侧栏 | `--paper-2` 底 + 右发丝线；`height: calc(100vh - 顶栏)`，`sticky top: 顶栏下沿` |
+| 分组标题 | `.sb-title` 10.5px / 600 / `letter-spacing .14em` / `--muted`，与设置面板的分组标题同款 |
+| 来源行 | 整行 34px、`--r-s`；名字 `flex: 1` 吃剩余宽度、数量靠右；选中行 `--accent` 实心白字 |
+| 移除叉号 | 默认 `opacity: 0`，悬停该行或该行选中时 `.55` —— 一列十行都挂叉号会把"切换来源"这个主操作压下去 |
+| 添加文件夹 | 贴底常驻（`.sb-foot`），不随列表滚动；悬停时 `+` 转 90° |
+
+收起是「让位」而不是「消失」：`width → 0` + `opacity → 0`，内容被 `overflow: hidden` 一起裁掉，
+所以过渡只动宽度，内部不用各写一套动画。收起后顶栏补出**当前来源的名字**（`#sideActive`）——
+否则关掉侧栏就不知道自己看的是哪个文件夹。三个入口等价：顶栏开关 `#sideToggle`、侧栏头部收起键 `#sideCollapse`、`Ctrl+Shift+B`
+（**不能**用 `Ctrl+B` —— 它已经是应用菜单里「模糊预览」的加速键，两个处理器都收得到 keydown，按一下会同时改两样东西）。
+（焦点在输入框里时不劫持）。
+
+三条硬规则：
+1. 侧栏宽度只能来自 `--side-w`，不许在 `.sidebar` 里另写一个像素值；
+2. 任何新的 `position: fixed; left: 0; right: 0` 全宽浮层，都必须写成 `left: var(--side-w, 0px)` ——
+   底部状态栏曾经横跨整窗，正好盖住侧栏底部的「添加文件夹」，表现为按钮点不动（探针用命中测试守这条）；
+3. `50%` 的参照是**初始包含块**（不含经典滚动条），不是 `innerWidth`；选择条的居中要按 `documentElement.clientWidth` 算。
 
 ### 4.3 分段控件（浏览模式）
 
@@ -199,13 +235,15 @@ Apple 工具栏按钮没有描边，靠"悬停才出现的填充"表达可点。
 
 ### 收缩优先级（实测调出来的，不是猜的）
 
-窗口 1243px 宽时，两侧胶囊 + 间距总共需要约 1165px，留 18px 给 `.spacer`。空间不够时按这个顺序让位：
+窗口 1243px 宽时，顶栏左右两段 + 间距总共需要约 1165px，留 18px 给 `.spacer`。空间不够时按这个顺序让位：
 
-1. `≤1360px`：分段控件收起文字（只留图标）→ 隐藏 `.sep` 分隔线 → 「添加文件夹」收起文字
-2. 仍然不够：**来源 chip 先收缩**（`flex: 0 100 auto`，`min-width: 96px`），溢出时右缘出渐隐
-3. 最后才轮到 `.ctrls` 横滚（`flex: 0 1 auto` + `overflow-x: auto` + `at-end` 控制渐隐）
+1. `≤1360px`：分段控件收起文字（只留图标）→ 隐藏 `.sep` 分隔线
+2. 仍然不够：`.ctrls` 横滚（`flex: 0 1 auto` + `overflow-x: auto` + `at-end` 控制渐隐）
 
-理由：控件是"功能入口"，被挤出视野会直接卡住操作；chip 是"当前上下文"，裁一截只损失一点信息。
+理由：控件是"功能入口"，被挤出视野会直接卡住操作。
+
+> **来源搬进侧栏之后，顶栏就不再需要为它让位了** —— 这是竖排列表的附带好处：
+> 文件夹再多也只占侧栏那一列，不会把右边的工具挤成横滚。
 
 **这里踩过一个 flex 陷阱：** 所有控件 `flex-shrink: 1` 时，空间不够会把控件**压扁**而不是触发横滚；而 `overflow: visible` 时 `scrollWidth === clientWidth`，JS 的溢出判定永远不成立 —— 鸡生蛋。
 所以 `.ctrls > * { flex: none }`（绝不压扁）+ `.ctrls` 常驻 `overflow-x: auto`（让 `scrollWidth` 有意义）。
@@ -225,7 +263,7 @@ Apple 工具栏按钮没有描边，靠"悬停才出现的填充"表达可点。
 
 改完 UI 至少跑这三样：
 
-1. **全量回归** `node deploy/electron-test/run_all.js` —— 29 套件 / 367 项。它守的是 DOM 契约、几何不变量、无障碍语义，不是"好不好看"
+1. **全量回归** `node deploy/electron-test/run_all.js` —— 31 套件 / 406 项。它守的是 DOM 契约、几何不变量、无障碍语义，不是"好不好看"
 2. **物理屏幕截图** —— `capturePage` 只抓 web 层，抓不到系统绘制的原生窗口按钮；必须整屏截图且坐标乘 DPI 缩放因子
 3. **对比度现算** —— 改任何文字色都用 WCAG 2.1 公式算一遍，别凭肉眼
 

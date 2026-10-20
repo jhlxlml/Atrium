@@ -233,15 +233,27 @@ async function run() {
   capTest.maxCalls = MAX_CALLS;
   console.log('CAP ' + JSON.stringify(capTest));
 
-  // 窄窗口：胶囊仍应齐平同高，且控件不换行
+  // 窄窗口：顶栏左右两段仍应齐平同高，且控件不换行
   await win.setContentSize(1100, 800);
   await new Promise((r) => setTimeout(r, 500));
   const narrow = await win.webContents.executeJavaScript(`(() => {
-    const b = document.querySelector('.srcbar').getBoundingClientRect();
+    const h = document.querySelector('.side-head').getBoundingClientRect();
     const c = document.querySelector('.ctrls').getBoundingClientRect();
-    return { srcbarH: Math.round(b.height), ctrlsH: Math.round(c.height),
-             sameRow: Math.abs(b.y - c.y) < 3, noWrap: c.y === b.y,
-             srcbarW: Math.round(b.width), ctrlsW: Math.round(c.width) };
+    const ti = document.querySelector('.topbar-in').getBoundingClientRect();
+    const s = document.querySelector('.sidebar');
+    const sr = s ? s.getBoundingClientRect() : null;
+    const cw = document.querySelector('.ctrls');
+    const root = getComputedStyle(document.documentElement);
+    const topbarH = parseFloat(root.getPropertyValue('--topbar-h')) || 56;
+    // 两段高度本来就不同（一个开关 30px、一簇控件 40px），比的是**垂直中心**：
+    // 比顶边会把"居中对齐"误判成"不同排"（早先的 chip 胶囊恰好同高，才侥幸通过）
+    return { headH: Math.round(h.height), ctrlsH: Math.round(c.height),
+             sameCenter: Math.abs((h.top + h.height / 2) - (c.top + c.height / 2)) < 2,
+             noWrap: Math.abs(ti.height - topbarH) <= 1,
+             headW: Math.round(h.width), ctrlsW: Math.round(c.width),
+             topbarInH: Math.round(ti.height),
+             sideW: sr ? Math.round(sr.width) : null,
+             ctrlsScrolls: cw.scrollWidth > cw.clientWidth + 1 };
   })()`);
   console.log('NARROW ' + JSON.stringify(narrow));
   const shot2 = await win.webContents.capturePage({ x: 0, y: 0, width: 1100, height: 130 });
@@ -299,16 +311,34 @@ async function run() {
     return {
       frameUiErr: window.__frameUiErr || null,
       frameDefaultOn: !!(window.State.defaults && window.State.defaults.showFrame === true),
-      srcbar: g('.srcbar'), srcScroll: g('.src-scroll'), srcList: g('.src-list'),
+      /* 来源已从顶栏横排 chip 搬进左侧竖排列表：这里采侧栏本身，
+         .srcbar / .src-scroll 这两个选择器在 v1.17.0 之后已不存在 */
+      sidebar: g('.sidebar'), sideHead: g('.side-head'), sbScroll: g('.sb-scroll'),
+      srcList: g('.src-list'),
       spacer: g('.spacer'), ctrls: g('.ctrls'), firstChip: g('.src-chip'), addBtn: g('.src-add'),
       innerW: window.innerWidth,
-      listW: getComputedStyle(document.querySelector('.src-list')).width,
-      listCSS: getComputedStyle(document.querySelector('.src-list')).cssText ? 'y' : 'n',
-      scrollW: getComputedStyle(document.querySelector('.src-scroll')).width,
-      listScrollW: document.querySelector('.src-list').scrollWidth,
+      // 竖排判据：每行都换行（y 递增）、且每行都吃满列表宽度
+      chipRows: (() => {
+        const list = document.querySelector('.src-list');
+        const lw = list ? Math.round(list.getBoundingClientRect().width) : 0;
+        const rows = [...document.querySelectorAll('.src-chip')].map((e) => {
+          const r = e.getBoundingClientRect();
+          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+        });
+        return { n: rows.length, lw, rows,
+          stacked: rows.length > 1 && rows.every((r, i) => i === 0 || r.y > rows[i - 1].y + 1),
+          fullWidth: rows.length > 0 && rows.every((r) => Math.abs(r.w - lw) <= 1) };
+      })(),
+      sbScrollOverflowY: (() => { const s = document.querySelector('.sb-scroll');
+        return s ? getComputedStyle(s).overflowY : null; })(),
       sheetCount: document.styleSheets.length,
-      hasFitRule: [...document.styleSheets].some(ss => { try {
-        return [...ss.cssRules].some(r => r.cssText && r.cssText.includes('width: fit-content')); } catch(e){ return false; } }),
+      /* 「顶栏单行不换行」这条判据的可观测证据：.topbar-in 的实测高度必须等于 --topbar-h，
+         且控件簇自身 nowrap。早先这里查的是 chip 容器的 width:fit-content 规则，
+         v1.17.0 把来源搬进侧栏后那条规则已删 —— 再查它就是查一个不存在的东西。 */
+      topbarInH: Math.round(document.querySelector('.topbar-in').getBoundingClientRect().height),
+      topbarVarPx: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 0,
+      ctrlsWrap: getComputedStyle(document.querySelector('.ctrls')).flexWrap,
+      sideVar: getComputedStyle(document.getElementById('workspace')).getPropertyValue('--side-w').trim(),
       brandTextPresent: !!document.querySelector('.brand-name, .brand-en'),
       eyeInCtrls: ei >= 0, eyeAfterTrash: ei === ti + 1, trashIdx: ti, eyeIdx: ei,
       // 置顶按钮：位于控件簇内，且是控件簇的最后一个（最靠近系统窗口按钮）
@@ -325,7 +355,7 @@ async function run() {
       frameVisible: (() => { const b = document.getElementById('frameBtn'); return !!b && b.hidden === false; })(),
       frameIdx: kids.findIndex(k => k.id === 'frameBtn'),
       trashPanelParent: document.getElementById('trashPanel') ? document.getElementById('trashPanel').parentElement.tagName : null,
-      topbarLeftChildren: [...document.querySelector('.topbar-in').children].map(k => k.className || k.id),
+      topbarLeftChildren: [...document.querySelector('.topbar-in').children].map(k => k.id || k.className),
     };
   })()`);
   fs.writeFileSync(path.join(OUT, 'topbar-geo.json'), JSON.stringify(geo, null, 2));

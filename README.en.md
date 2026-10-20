@@ -135,6 +135,7 @@ Press **`F1`** inside the app to open this table at any time. Its contents come 
 | `Ctrl+Plus` `Ctrl+-` `Ctrl+0` | Zoom in / out / reset tile size |
 | `Ctrl+L` | Favourites only |
 | `Ctrl+B` | Blur preview (privacy mode) |
+| `Ctrl+Shift+B` | Show / hide the sources sidebar |
 | `Ctrl+T` | Always on top |
 | `Ctrl+Shift+F` | Frame mode |
 | `Ctrl+A` / `Ctrl+Shift+A` | Select all on page (in library / via menu) |
