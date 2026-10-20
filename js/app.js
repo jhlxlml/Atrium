@@ -480,8 +480,13 @@
          也当成有浮层 —— 页面整体被压下 34px，界面上什么都不会缺，
          只有几何类断言会发现（居中套件当场报"纵向下偏 34px"）。 */
       const wco = !!(navigator.windowControlsOverlay && navigator.windowControlsOverlay.visible);
+      const changed = document.body.classList.contains('has-wco') !== wco;
       document.body.classList.toggle('has-wco', wco);
       E.capbar.hidden = !wco;
+      /* 标题栏是「顶部 chrome」的一部分，它一变，单列槽位高度与吸附位全都要跟着变。
+         生产上这一步发生在装图之前（init 里只调一次），但**别依赖这个顺序** ——
+         判定结果变化却不重排的话，几何会停在旧值上：单列每张图顶部被控制栏吃掉 34px。 */
+      if (changed) this.afterChromeChange();
       if (wco && E.capRight && E.pinBtn.parentElement !== E.capRight) {
         E.capRight.appendChild(E.pinBtn);
       }
@@ -495,6 +500,14 @@
           if (global.Native && global.Native.toggleMaximize) global.Native.toggleMaximize();
         });
       }
+    },
+
+    /** 顶部 chrome 高度变了：让网格按新的可见区重排。
+        单列的槽位高度与吸附位都由「chrome 下沿」推导（见 Grid._chrome），
+        标题栏出现/消失会整体改变它 —— 不重排就停在旧几何上。
+        init 阶段调用时还没装图（N=0），这里什么也不做。 */
+    afterChromeChange() {
+      if (global.Grid && global.Grid.N) global.Grid.layout(false);
     },
 
     /** 把当前主题的标题栏配色推给主进程（浮层是系统画的，不吃 CSS 变量）。

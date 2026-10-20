@@ -1476,6 +1476,43 @@ const SUITES = [
     },
   },
 
+  /* ---------- 10b. 单列整屏 · 图片不能被顶部控制栏吃掉 ---------- */
+  {
+    id: 'single',
+    title: '单列整屏 · 槽位高度按「chrome 下沿」算 / 首图不被控制栏覆盖 / 吸附位对齐',
+    kind: 'probe',
+    script: 'probe_single.js',
+    key: 'SINGLE ',
+    run: function (ctx) {
+      const check = ctx.check;
+      if (!ctx.data || !ctx.data.first) { check('探针返回数据', false, '未解析到 SINGLE 输出'); return; }
+      const f = ctx.data.first, s = ctx.data.second || {}, off = ctx.data.lateOff || {}, on = ctx.data.lateOn || {};
+      check('单列滚动吸附已开启（前置条件）', f.snapOn === true, String(f.snapOn));
+      check('WCO 标题栏在测量时确实存在（否则这条断言测不到东西）',
+        f.hasWco === true && f.capH > 0, 'wco=' + f.hasWco + ' capH=' + f.capH);
+      /* 核心：槽位高度必须按「视口 − chrome 下沿」算。只取 .topbar 自身高度会少算标题栏 34px，
+         槽位就高出 34px —— 图上下各被切一截。 */
+      check('单列槽位高度 = 视口高度 − 顶部 chrome 下沿',
+        f.slotH === f.slotShould && f.slotH > 0,
+        'slotH=' + f.slotH + ' should=' + f.slotShould + ' (chrome=' + f.chromeBottom + ')');
+      /* 用户报的症状：图片顶部被控制栏盖住 */
+      check('首图没有被顶部控制栏盖住（瓦片与图片都为 0 像素重叠）',
+        f.tileCovered === 0 && f.imgCovered === 0,
+        'tileCovered=' + f.tileCovered + ' imgCovered=' + f.imgCovered);
+      check('scroll-padding-top 与 chrome 下沿一致（吸附位才有对齐基准）',
+        f.scrollPadTop === f.chromeBottom + 'px', f.scrollPadTop + ' vs ' + f.chromeBottom + 'px');
+      check('吸附到第 2 张后顶边正好贴住 chrome 下沿（误差 0）',
+        s.alignErr === 0, 'alignErr=' + s.alignErr + ' top=' + s.tile1Top + ' chrome=' + s.chromeBottom);
+      /* 标题栏出现/消失会整体改变可见区：判定结果变了就必须重排，否则几何停在旧值上 */
+      check('chrome 高度变化后几何自愈（无标题栏时槽位跟着变高）',
+        off.slotH === off.slotShould && off.slotH > f.slotH,
+        'off slotH=' + off.slotH + ' should=' + off.slotShould + ' (有标题栏时 ' + f.slotH + ')');
+      check('chrome 高度变化后几何自愈（标题栏回来时槽位跟着变矮）',
+        on.slotH === on.slotShould && on.slotH === f.slotH,
+        'on slotH=' + on.slotH + ' should=' + on.slotShould);
+    },
+  },
+
   /* ---------- 11. 网格布局 · contain 之后几何仍正确 ---------- */
   {
     id: 'grid',

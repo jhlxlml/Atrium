@@ -510,12 +510,27 @@
       if (this.inner) this.inner.style.height = this.totalH + 'px';
     },
 
-    /** 单列模式下的“视口吸顶”所需高度（顶栏）。
-       底部状态栏已是「浮层 + 自动隐藏」的 fixed 元素，不占文档流、不参与单列槽位计算。 */
+    /** 单列模式下的“视口吸顶”所需高度：**顶部 chrome 的下沿**。
+       底部状态栏已是「浮层 + 自动隐藏」的 fixed 元素，不占文档流、不参与单列槽位计算。
+
+       ⚠️ 这里不能只取 `.topbar` 自身的 `offsetHeight`。WCO 模式下它上面还有一条 34px 的
+       窗口标题栏（`body.has-wco` 的 `padding-top` + fixed 的 `.capbar`），内容会从标题栏
+       底下滑过去 —— 少算这 34px 的后果是：
+         · 槽位比可见区高 34px，图片上下各被切掉一截；
+         · `_alignIndex` 多滚 34px，每张图的**顶部**直接藏进控制栏；
+         · `scroll-padding-top` 同样少 34px，吸附位对不齐。
+       取 sticky 顶栏的 `getBoundingClientRect().bottom` 最稳：它天然包含标题栏偏移与发丝线，
+       不依赖 `--cap-h` 这个 CSS 变量有没有被同步过来。 */
     _chrome() {
       const topEl = document.getElementById('topbar');
-      const topH = (topEl && !topEl.hidden) ? topEl.offsetHeight : 58;
-      return { topH: topH || 58 };
+      if (topEl && !topEl.hidden) {
+        const bottom = Math.round(topEl.getBoundingClientRect().bottom);
+        if (bottom > 0) return { topH: bottom };
+      }
+      // 顶栏不可见（空态 / 回收站）时回落到令牌：标题栏 + 顶栏
+      const cs = getComputedStyle(document.documentElement);
+      const px = (v) => parseFloat(cs.getPropertyValue(v)) || 0;
+      return { topH: px('--topbar-h') + px('--cap-h') || 58 };
     },
 
     /** 滚动使第 i 个单列瓦片顶对齐到顶栏下沿（=吸附位） */
