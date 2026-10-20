@@ -55,7 +55,7 @@ body[data-frame="1"] .sel-bar { display: none !important; }
   flex-direction: column;
   gap: 2px;
   padding: 11px 15px;
-  border-radius: 14px;
+  border-radius: var(--r-m);
   background: rgba(28, 28, 30, .60);
   border: .5px solid rgba(255, 255, 255, .12);
   color: rgba(255, 255, 255, .9);

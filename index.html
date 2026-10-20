@@ -188,8 +188,13 @@
   <div class="prog" id="prog"><div class="prog-bar" id="progBar"></div></div>
 </header>
 
-<!-- ============ 设置面板（固定浮层，重挂 <body> 避开 .ctrls 裁剪） ============ -->
-<div class="set-panel" id="setPanel" hidden role="dialog" aria-modal="true" aria-label="设置">
+<!-- ============ 设置面板（固定浮层，重挂 <body> 避开 .ctrls 裁剪） ============
+     是 role="dialog" 但**不是**模态：没有遮罩，背后的网格照样能点，
+     点一下面板外的任何地方就关掉（js/settings.js 的 document click）。
+     所以这里不写 aria-modal —— 那是告诉读屏"外面全是惰性的"，
+     而事实上外面活得好好的。与「最近删除」面板同一套语义。
+     焦点仍然圈在面板里（A11y.trap）：Tab 跑到背后看不见的控件上更糟。 -->
+<div class="set-panel" id="setPanel" hidden role="dialog" aria-label="设置">
   <div class="sp-head">
     <span class="sp-title">设置</span>
     <button type="button" class="sp-close" id="setClose" title="关闭" aria-label="关闭设置"><svg><use href="#i-x"/></svg></button>
@@ -250,8 +255,8 @@
         </svg>
       </div>
       <p class="empty-kicker">LOCAL&nbsp;GALLERY</p>
-      <h1 class="empty-title">让照片回归<br>翻阅的乐趣</h1>
-      <p class="empty-desc">选择一个本地文件夹，像浏览作品集一样欣赏你的图片。<br>可以同时加载多个文件夹，随时在「全部图片」与各文件夹之间切换。<br>所有内容只在你的电脑里处理 —— 不联网、不上传、不复制。</p>
+      <h1 class="empty-title">让照片回归翻阅的乐趣</h1>
+      <p class="empty-desc">选择一个本地文件夹，像浏览作品集一样欣赏你的图片。可以同时加载多个文件夹，随时在「全部图片」与各文件夹之间切换。所有内容只在你的电脑里处理 —— 不联网、不上传、不复制。</p>
       <div class="empty-actions">
         <button class="btn btn-primary btn-lg" id="btnOpen1">
           <svg><use href="#i-folder"/></svg><span>选择图片文件夹</span>

@@ -326,6 +326,50 @@ async function run() {
   })()`);
   fs.writeFileSync(path.join(OUT, 'sidebar-narrow.png'), (await win.webContents.capturePage()).toPNG());
 
+  /* ---------- 7b. 窄到阈值以下：侧栏自动让位（但不改用户设置） ----------
+     截图里的 1024 是"刚好还放得下"；这里量的是"放不下"那一侧。
+     注意断言的**不是**"窄窗一定收起"：而是
+       ① 用户设置不变（那写坏了，回到宽窗就得手动再点一次）
+       ② 菜单勾选态跟着实际状态走
+       ③ 手动展开有临时出口，退出窄窗自动恢复 */
+  win.setContentSize(880, 760);
+  await sleep(700);
+  R.narrowAuto = await js(`(() => {
+    const s = (o) => Object.assign(o, {
+      collapsed: document.getElementById('workspace').classList.contains('is-collapsed'),
+      setting: window.State.settings.sidebarOpen,
+      menuSide: window.App.menuState().side,
+      openNow: window.App.sidebarOpenNow(),
+      sideW: Math.round(document.getElementById('sidebar').getBoundingClientRect().width),
+      activeVisible: !document.getElementById('sideActive').hidden,
+      toggleOn: document.getElementById('sideToggle').classList.contains('is-on'),
+    });
+    return s({ inner: window.innerWidth });
+  })()`);
+  await js(`(() => { window.App.toggleSidebar(true); return true; })()`);
+  await sleep(450);
+  R.narrowAuto.opened = await js(`(() => ({
+    collapsed: document.getElementById('workspace').classList.contains('is-collapsed'),
+    setting: window.State.settings.sidebarOpen,
+    sideW: Math.round(document.getElementById('sidebar').getBoundingClientRect().width),
+    openNow: window.App.sidebarOpenNow(),
+  }))()`);
+  win.setContentSize(1024, 760);
+  await sleep(700);
+  R.narrowAuto.backWide = await js(`(() => ({
+    collapsed: document.getElementById('workspace').classList.contains('is-collapsed'),
+    setting: window.State.settings.sidebarOpen,
+    openNow: window.App.sidebarOpenNow(),
+    forcedFlag: window.App._sideForced,
+  }))()`);
+  win.setContentSize(880, 760);
+  await sleep(700);
+  R.narrowAuto.narrowAgain = await js(`(() => ({
+    collapsed: document.getElementById('workspace').classList.contains('is-collapsed'),
+    setting: window.State.settings.sidebarOpen,
+    openNow: window.App.sidebarOpenNow(),
+  }))()`);
+
   console.log('SIDE ' + JSON.stringify(R));
   app.quit();
 }

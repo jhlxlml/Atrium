@@ -18,18 +18,26 @@
   const Util = global.Util;
   const PRUNE_AT = 800;     // 超过该数量启用窗口化剪裁
   const SINGLE_PRUNE_AT = 12; // 单列整屏阈值更低：一屏只有一张，避免中量目录一次性解码全部原图
-  const GAP = 12;           // 网格间距
+  const GAP_NORMAL = 12;    // 网格间距（舒适）
+  const GAP_COMPACT = 8;    // 网格间距（紧凑）
   const CELL_GAP = 4;       // 紧凑网格（small）的行列间距：密排视图，缝要细
   const GAP_SINGLE = 46;    // 单列行距
   const SINGLE_MAXW = 1360; // 单列内容最大宽
   const BOTTOM_PAD = 90;    // 底部留白
+
+  /* 当前密度下的网格间距。**每次布局都重算** —— 密度是运行时可切的，
+     写成模块常量的话，切换后要等下一次刷新才生效（用户会以为开关坏了）。 */
+  function gapNow() {
+    return (document.body && document.body.dataset.density === 'compact')
+      ? GAP_COMPACT : GAP_NORMAL;
+  }
 
   const Grid = {
     items: [],
     mode: State.settings.mode,
     stage: null, inner: null, wrap: null,
 
-    width: 0, gap: GAP, leftOff: 0,
+    width: 0, gap: GAP_NORMAL, leftOff: 0,
     totalH: 0, N: 0, prune: false, vi0: 0, vi1: 0,
 
     els: new Map(),        // idx -> element
@@ -391,7 +399,7 @@
     /* 网格模式：行内自适应 —— 每行等高、行宽恰好填满容器；末行可能不满，左对齐 */
     _layoutJustified(width) {
       const N = this.N;
-      const gap = GAP;
+      const gap = gapNow();
       const availW = Math.max(80, width);
       // 紧凑模式走另一条排布：等边方格 + 方形裁切。
       // 它和 medium 不是"同一套布局的两个尺寸档"，而是两种视图 —— 后者按真实宽高比排、永不裁切。
@@ -479,7 +487,7 @@
        列宽来自尺寸滑杆（对瀑布流而言滑杆调的是"列宽"，不是行高）。 */
     _layoutMasonry(width) {
       const N = this.N;
-      const gap = GAP;
+      const gap = gapNow();
       const availW = Math.max(80, width);
       const colW = Math.max(global.Masonry.MIN_COL, State.getModeSize('masonry'));
 

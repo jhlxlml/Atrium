@@ -17,6 +17,14 @@
      注册失败会如实回滚并提示，比给一个半成品的输入框诚实得多。 */
   const HOTKEY_ACCEL = 'Ctrl+Alt+A';
 
+  /* 窄窗阈值（单位 px，与 css/main.css 里的媒体查询同一套参数）。
+     低于这个宽度，212px 的侧栏让内容区放不下像样的多列，自动收起。
+     为什么不取 900 这个整数：实测 setContentSize(900) 在本机会得到
+     innerWidth = 901（1.25 缩放下窗口边框要吃掉一像素的分数），
+     阈值压在整百上会一边界不触发。取 940 而不是更小的整数，
+     是给「内容区 ≥ 680px 还能排三列」留的余量。 */
+  const NARROW_SIDE_MQ = '(max-width: 940px)';
+
   const App = {
     /* 版本号唯一来源：界面（设置面板底部）与构建脚本共用，报障时可一眼确认版本 */
     VERSION: '1.14.0',
@@ -1497,17 +1505,44 @@
         e.preventDefault();
         flip();
       });
+      /* 窄窗自动让位：212px 的侧栏在 900px 窗口里要吃掉近四分之一宽度，
+         内容区只剩 650 上下（瀑布流会退成两列）。
+         ⚠️ **不改 settings**：那是用户的长期意图，窄窗只是"这次先不用"。
+         退出窄窗自动恢复，用户不必再点一次。 */
+      if (global.matchMedia) {
+        const mq = global.matchMedia(NARROW_SIDE_MQ);
+        const onChange = () => {
+          if (!mq.matches) this._sideForced = false;   // 回到宽窗：交还给设置
+          this.applySidebarUI(State.settings.sidebarOpen);
+        };
+        if (mq.addEventListener) mq.addEventListener('change', onChange);
+        else if (mq.addListener) mq.addListener(onChange);   // 老版 Electron 兜底
+      }
+    },
+
+    /** 侧栏此刻**真的**是展开的吗。以 DOM 为准 —— 设置里存的是「用户意图」，
+        窄窗下会被自动收起，两者不再等价。 */
+    sidebarOpenNow() {
+      const w = this.el.workspace;
+      return !!(w && !w.classList.contains('is-collapsed'));
     },
 
     toggleSidebar(force) {
-      const next = typeof force === 'boolean' ? force : !State.settings.sidebarOpen;
+      /* 取反要基于**有效态**而不是设置值：窄窗里设置可能还是"开"，
+         而侧栏已经被自动收起了，这时按一下应当展开，
+         而不是"关掉一个本来就关着的东西"。 */
+      const next = typeof force === 'boolean' ? force : !this.sidebarOpenNow();
       State.setSetting('sidebarOpen', next);
+      // 窄窗里手动展开 → 本次窄窗期间保持展开（退出窄窗时清掉）
+      this._sideForced = next && !!(global.matchMedia && global.matchMedia(NARROW_SIDE_MQ).matches);
       this.applySidebarUI(next);
     },
 
     applySidebarUI(open) {
       const E = this.el;
-      const on = !!open;
+      const want = !!open;
+      const narrow = !!(global.matchMedia && global.matchMedia(NARROW_SIDE_MQ).matches);
+      const on = want && (!narrow || this._sideForced);
       if (E.workspace) E.workspace.classList.toggle('is-collapsed', !on);
       if (E.sideToggle) {
         E.sideToggle.classList.toggle('is-on', on);
@@ -1536,8 +1571,9 @@
       // 侧栏整体不可用（空态 / 回收站）时，顶栏那颗开关也该一起收起来 ——
       // 留着它只会得到一个「点了没反应」的按钮。
       if (E.sideToggle && E.sideToggle.parentElement) E.sideToggle.parentElement.hidden = sideHidden;
-      // 侧栏展开时这个标签是多余的（侧栏里高亮的那行就是答案）
-      E.sideActive.hidden = !!State.settings.sidebarOpen || sideHidden;
+      // 侧栏展开时这个标签是多余的（侧栏里高亮的那行就是答案）。
+      // 判「展开」要用**有效态**：窄窗自动收起时，设置里还写着 true。
+      E.sideActive.hidden = this.sidebarOpenNow() || sideHidden;
     },
 
     /* ================= 拖拽 ================= */
@@ -1667,10 +1703,13 @@
       list.textContent = '';
       const mk = (id, label, count, isActive, removable) => {
         const b = document.createElement('button');
-        b.className = 'src-chip' + (isActive ? ' is-on' : '');
+        b.className = 'src-chip' + (isActive ? ' is-on' : '') + (count ? '' : ' is-empty');
         b.type = 'button';
         b.setAttribute('role', 'tab');
         b.setAttribute('aria-selected', String(isActive));
+        /* 0 张的行照样能点（点进去是空图库），但要先说清为什么是空的，
+           否则用户只能自己猜是没索引完、还是这个文件夹真的没图。 */
+        if (!count) b.title = label + '：这个文件夹里还没有图片';
         const nm = document.createElement('span');
         nm.className = 'sc-name';
         nm.textContent = label;
@@ -2260,7 +2299,7 @@
       return {
         mode: State.settings.mode,
         blur: !!State.settings.blurPreview,
-        side: !!State.settings.sidebarOpen,   // 菜单「来源栏」的勾选态与侧栏实况一致
+        side: this.sidebarOpenNow(),   // 菜单「来源栏」的勾选态与侧栏实况一致（含窄窗自动收起）
         favOnly: !!State.favOnly,
         pin: !!State.settings.alwaysOnTop,
         frame: !!this.frameOn,

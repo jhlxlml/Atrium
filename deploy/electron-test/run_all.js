@@ -1386,10 +1386,97 @@ const SUITES = [
       check('窄窗口下侧栏宽度不变、主区正好吃掉剩余宽度',
         nw.sideW === 212 && nw.mainLeft === 212 && nw.sumOk === true,
         JSON.stringify(nw));
+      /* 窄窗自动让位：三条一起断，缺一条就说明"改坏了用户设置/改了界面没改菜单" */
+      if (d.narrowAuto) {
+        const a = d.narrowAuto || {};
+        check('窄到 940 以下自动收起侧栏，且**不动**用户设置（sidebarOpen 仍为 true）',
+          a.collapsed === true && a.setting === true && a.sideW === 0,
+          JSON.stringify({ collapsed: a.collapsed, setting: a.setting, sideW: a.sideW }));
+        check('自动收起后菜单勾选态跟着变、顶栏贴出「当前来源」',
+          a.menuSide === false && a.activeVisible === true && a.toggleOn === false,
+          JSON.stringify({ menuSide: a.menuSide, activeVisible: a.activeVisible, toggleOn: a.toggleOn }));
+        check('窄窗里手动展开有临时出口（本次窄窗保持展开）',
+          a.opened && a.opened.collapsed === false && a.opened.setting === true && a.opened.sideW === 212,
+          JSON.stringify(a.opened));
+        check('退出窄窗自动恢复成用户意图（不用再点一次）',
+          a.backWide && a.backWide.collapsed === false && a.backWide.setting === true
+            && a.backWide.forcedFlag === false,
+          JSON.stringify(a.backWide));
+        check('再进窄窗重新自动收起（手动展开的临时出口已随宽窗复位）',
+          a.narrowAgain && a.narrowAgain.collapsed === true && a.narrowAgain.setting === true,
+          JSON.stringify(a.narrowAgain));
+      }
     },
   },
 
-  /* ---------- 10. 网格布局 · contain 之后几何仍正确 ---------- */
+  /* ---------- 10. 圆角语言门禁 ----------
+     防的是"写死像素回潮"：令牌明明定义了四档，组件里却各自写 9/7/8/6。
+     这种偏差不是 bug，单看每一处都合理，所以只能靠门禁盯着。 */
+  {
+    id: 'rounding',
+    title: '圆角语言 · 控件只在令牌档位上、胶囊真胶囊、同心圆角 = 令牌 − 内边距',
+    kind: 'probe',
+    script: 'probe_round.js',
+    key: 'ROUND ',
+    run: function (ctx) {
+      const check = ctx.check;
+      if (!ctx.data || !ctx.data.items) { check('探针返回数据', false, '未解析到 ROUND 输出'); return; }
+      const d = ctx.data;
+      const I = d.items || {};
+      const T = d.tokens || {};
+      const near = (a, b) => Math.abs(a - b) < 0.6;
+      const v = (k) => (I[k] ? I[k].r : null);
+
+      /* 控件档：32px 上下的可操作控件，一律 --r-s */
+      const ctrl = ['icoBtnTop', 'select', 'searchInput', 'srcChip', 'spNum', 'spSelect', 'spBtn', 'spSeg', 'btnSm', 'tile'];
+      for (const k of ctrl) {
+        check('控件圆角走令牌 --r-s：' + k,
+          v(k) !== null && near(v(k), T.s), v(k) + ' vs --r-s=' + T.s);
+      }
+      /* 容器档 */
+      const cont = { ctrls: 'm', spGroup: 'm', toast: 'm', setPanel: 'l' };
+      for (const [k, t] of Object.entries(cont)) {
+        check('容器圆角走令牌 --r-' + t + '：' + k,
+          v(k) !== null && near(v(k), T[t]), v(k) + ' vs --r-' + t + '=' + T[t]);
+      }
+      /* 微型档（窗口标题栏里的置顶键：与原生最小化/关闭同规格） */
+      check('标题栏按钮圆角走令牌 --r-xs（与原生窗口控制键一致）',
+        v('pinBtn') !== null && near(v('pinBtn'), T.xs), v('pinBtn') + ' vs --r-xs=' + T.xs);
+      /* 胶囊：半径不小于半高 —— "差一点到半高"正是八边形的成因 */
+      const pills = ['selbar', 'scCount', 'spSwitch', 'btnLg'];
+      let pillBad = [];
+      for (const k of pills) {
+        const it = I[k];
+        if (!it) { pillBad.push(k + ':缺失'); continue; }
+        if (it.r < 900) pillBad.push(k + ':radius=' + it.r);
+      }
+      check('胶囊元素一律 999px（选择条 / 数量徽标 / 开关 / 空态主按钮）', pillBad.length === 0, pillBad.join(', '));
+      /* 同心圆角：滑片在轨道里缩了 2px，圆角也减 2px */
+      const gap = {
+        seg: { outer: v('segTrack'), inner: v('segThumb') },
+        spSeg: { outer: v('spSeg'), inner: v('spSegThumb') },
+      };
+      for (const [k, g] of Object.entries(gap)) {
+        check('同心圆角 = 外圆角 − 内边距：' + k,
+          g.outer !== null && g.inner !== null && near(g.outer - g.inner, 2),
+          'outer=' + g.outer + ' inner=' + g.inner);
+      }
+      /* 紧凑密度的 calc 档位 */
+      const c = d.compact || {};
+      check('紧凑密度的容器圆角 = --r-m − 内边距（calc 令牌）',
+        near(c.ctrls, T.m - 2), c.ctrls + ' vs ' + (T.m - 2));
+      check('紧凑密度的按钮圆角 = --r-s − 内边距（calc 令牌）',
+        near(c.icoBtnTop, T.s - 2), c.icoBtnTop + ' vs ' + (T.s - 2));
+      /* 兜底：规则里仍然出现"数字 px"的，只剩白名单（滚动条 / 滑杆槽 / 相框握把 / 胶囊 / 单列无边角） */
+      const ALLOW = [/scrollbar/, /slider-runnable-track/, /moz-range-track/, /moz-range-progress/,
+        /=> 999px$/, /=> 0px$/, /fr-grip => 2px$/];
+      const bad = (d.hardcoded || []).filter((s) => !ALLOW.some((re) => re.test(s)));
+      check('规则里没有新的写死圆角（白名单：滚动条 / 滑杆 / 相框握把 / 胶囊 / 单列无边角）',
+        bad.length === 0, bad.join(' | '));
+    },
+  },
+
+  /* ---------- 11. 网格布局 · contain 之后几何仍正确 ---------- */
   {
     id: 'grid',
     title: '网格布局 · 瓦片尺寸/行距/定位在 contain 之后仍正确 / 小图与中图是两种视图',
@@ -1695,8 +1782,12 @@ const SUITES = [
       check('灯箱补齐对话框语义（role / aria-modal / 可及名称）',
         sem.lbRole === 'dialog' && sem.lbModal === 'true' && !!sem.lbLabel,
         [sem.lbRole, sem.lbModal, sem.lbLabel].join('/'));
-      check('设置面板声明 aria-modal',
-        sem.spRole === 'dialog' && sem.spModal === 'true',
+      /* 这里断言的**反过来**：设置面板不许声明 aria-modal。
+         它没有遮罩、背后的网格照样能点（点了面板外任何地方就关掉），
+         而 aria-modal 是告诉读屏"外面全部惰性" —— 说了却做不到，就是撒谎。
+         真正被圈住的焦点在下面单独断言，两件事不能互相顶包。 */
+      check('设置面板是「非模态」对话框（有 role=dialog，但不谎报 aria-modal）',
+        sem.spRole === 'dialog' && !sem.spModal,
         [sem.spRole, sem.spModal].join('/'));
 
       /* --- 2) 播报区：50 处 toast 靠它被读屏听见 --- */

@@ -48,6 +48,7 @@
   --ring: rgba(0, 113, 227, .42);
   --favorite: #f5a623;         /* 收藏星：琥珀（语义色，独立于强调色） */
   --danger: #ff3b30;           /* 系统红 */
+  --danger-hover: #e0342a;     /* 系统红·按下（与 --accent-hover 同一档：更深一档） */
   --danger-soft: rgba(255, 59, 48, .12);
   --success: #34c759;
 
@@ -56,7 +57,18 @@
   --shadow-2: 0 10px 34px -12px rgba(0, 0, 0, .22), 0 2px 8px -4px rgba(0, 0, 0, .10);
   --shadow-3: 0 24px 64px -20px rgba(0, 0, 0, .30);
 
-  /* 圆角 */
+  /* 圆角 —— **只有这四档，组件里不要再写死像素**。
+     以前相邻四个控件是 9 / 7 / 8 / 6 四个值，单看每个都合理，
+     摆在一起就"糙"（1–3px 的差在 100% 缩放下看不出，但读得出）。
+     现在按**元素的尺寸档**分配，而不是按组件类型分配：
+       --r-xs  微型（≤22px 高）：内联文字按钮、徽标
+       --r-s   控件档（28–34px 高）：图标按钮、下拉、输入框、分段滑片、按钮、瓦片
+       --r-m   容器档：工具栏胶囊、设置分组、面板、Toast
+       --r-l   大浮层：灯箱 HUD
+       --r-xl  整屏浮层：设置 / 回收站 / 拖拽卡
+     胶囊一律 999px（选择条 / 数量徽标 / 开关 / 空态主按钮）。
+     **同心圆角**：带内边距的容器，子元素圆角 = 父圆角 − 内边距
+     （用 calc 从令牌推，别另写一个数）。 */
   --r-xs: 5px;
   --r-s: 8px;
   --r-m: 12px;
@@ -115,6 +127,8 @@ body[data-theme="dark"] {
   --ring: rgba(10, 132, 255, .55);
   --favorite: #ffd60a;
   --danger: #ff453a;
+  /* 深色下"更深"是反的：底色本来就深，hover 要**提亮**才看得出反馈。 */
+  --danger-hover: #ff6156;
   --danger-soft: rgba(255, 69, 58, .16);
 
   --shadow-1: 0 1px 2px rgba(0, 0, 0, .30), 0 4px 14px -8px rgba(0, 0, 0, .60);
@@ -149,11 +163,13 @@ svg { width: 1em; height: 1em; display: block; }
 [hidden] { display: none !important; }
 ::selection { background: var(--sel-soft); }
 
-/* 焦点环：只在键盘操作时出现，2px 系统蓝 + 2px 留白 */
+/* 焦点环：只在键盘操作时出现，2px 系统蓝 + 2px 留白。
+   ⚠️ 这里**不能**写 border-radius：outline 会自动贴着元素自身的圆角走，
+   硬写一个值反而会把 .selbar（999px 胶囊）和 .sc-count 在获得焦点时
+   临时改成 5px 方角 —— 键盘 Tab 一下，圆角就跳一次。 */
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
-  border-radius: var(--r-xs);
 }
 /* 浮层「容器」被程序化聚焦时不画焦点环。
    焦点环是给可操作控件的，画在一整张卡片的外框上只会变成一圈突兀的蓝边，
@@ -230,7 +246,7 @@ body.has-wco .capbar {
 /* 标题栏里的置顶按钮：按窗口控制键的规格来（28px 高、方角软圆、悬停浅底），
    而不是顶栏那套 32px 圆角图标按钮 —— 「统一」在这里指与相邻的最小化/关闭一致 */
 body.has-wco .cap-right .ico-btn {
-  width: 38px; height: 28px; border-radius: 6px;
+  width: 38px; height: 28px; border-radius: var(--r-xs);
   border: 0; color: var(--ink-2);
   -webkit-app-region: no-drag;       /* 拖拽区里的按钮必须显式可点 */
 }
@@ -352,13 +368,14 @@ body:has(.lightbox:fullscreen) .lightbox { top: 0; }
   display: inline-flex; align-items: center; gap: 1px;
   background: var(--fill-2);
   border: 0;
-  border-radius: 9px; padding: 2px;
+  border-radius: var(--r-s); padding: 2px;
 }
 .seg-btn {
   display: inline-flex; align-items: center; gap: 5px;
   border: 0; background: transparent; color: var(--ink-2);
   font-size: 12px; font-weight: 500;
-  padding: 5px 8px; border-radius: 7px;
+  /* 同心圆角：滑片在轨道内缩了 2px，圆角也跟着减 2px */
+  padding: 5px 8px; border-radius: calc(var(--r-s) - 2px);
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
               box-shadow var(--dur) var(--ease);
 }
@@ -414,7 +431,7 @@ input[type="range"]::-moz-range-thumb {
   -webkit-appearance: none; appearance: none;
   border: 0; background: transparent;
   color: var(--ink); font-family: inherit; font-size: 12.5px;
-  padding: 6px 22px 6px 9px; border-radius: 7px; cursor: pointer;
+  padding: 6px 22px 6px 9px; border-radius: var(--r-s); cursor: pointer;
   transition: background var(--dur) var(--ease);
 }
 .select-wrap select:hover { background: var(--fill-2); }
@@ -427,7 +444,7 @@ input[type="range"]::-moz-range-thumb {
 .search input {
   width: 180px; max-width: 0; padding: 6px 0; margin-left: 0;
   border: 0; background: transparent;
-  border-radius: 7px; font-family: inherit; font-size: 12.5px; color: var(--ink);
+  border-radius: var(--r-s); font-family: inherit; font-size: 12.5px; color: var(--ink);
   opacity: 0; pointer-events: none; box-sizing: border-box;
   transition: max-width .26s var(--ease), padding .26s var(--ease), opacity .16s var(--ease),
               margin-left .26s var(--ease), background var(--dur) var(--ease);
@@ -455,7 +472,7 @@ input[type="range"]::-moz-range-thumb {
 /* 按钮 */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  border-radius: 9px; border: 0;
+  border-radius: var(--r-s); border: 0;
   font-family: inherit; font-size: 13px; font-weight: 500;
   padding: 7px 14px; transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
               filter var(--dur) var(--ease), transform .12s var(--ease);
@@ -473,8 +490,12 @@ input[type="range"]::-moz-range-thumb {
 }
 .btn-ghost:hover { background: var(--fill-2); }
 .btn-ghost:active { background: var(--fill-3); }
-.btn-lg { padding: 12px 24px; font-size: 14.5px; border-radius: 12px; }
-.btn-sm { padding: 5px 11px; font-size: 12px; border-radius: 8px; }
+/* 大号主操作（空态「选择图片文件夹」）：**胶囊**。
+   43px 高的按钮用 12px 圆角是个尴尬值 —— 圆角到了半高的 0.56，
+   既不是矩形也不是胶囊，渲染出来像个八边形。要么明显更方，要么直接成胶囊；
+   首屏唯一的主操作，做胶囊更像"一个动作"而不是"一个控件"。 */
+.btn-lg { padding: 12px 26px; font-size: 14.5px; border-radius: 999px; }
+.btn-sm { padding: 5px 11px; font-size: 12px; border-radius: var(--r-s); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* 索引进度条（顶栏下沿）
@@ -515,7 +536,7 @@ input[type="range"]::-moz-range-thumb {
 /* 瓦片（JS 绝对定位 + 内联几何） */
 .tile {
   position: absolute; margin: 0; padding: 0;
-  border-radius: 6px; overflow: hidden;
+  border-radius: var(--r-s); overflow: hidden;
   background: var(--paper-2);
   border: 0;
   animation: tile-in .34s var(--ease) both;
@@ -675,7 +696,8 @@ input[type="range"]::-moz-range-thumb {
   content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none;
   box-shadow: inset 0 0 0 3px var(--sel);
   background: var(--sel-soft);
-  border-radius: 6px;
+  /* 跟着瓦片自己的圆角走 —— 写死数值的话，改瓦片圆角时这层蓝罩会露边 */
+  border-radius: inherit;
 }
 .tile.is-sel .tile-chk {
   opacity: 1; transform: none;
@@ -688,7 +710,7 @@ input[type="range"]::-moz-range-thumb {
   position: absolute; z-index: 6; pointer-events: none;
   border: 1.5px solid var(--sel);
   background: var(--sel-soft);
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   /* 双层描边 + 光晕：在浅色天空与深色夜景照片上都清晰可辨 */
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .65) inset, 0 2px 12px -2px rgba(0, 113, 227, .35);
 }
@@ -719,7 +741,7 @@ body.marquee-on .tile { cursor: default; }
 }
 .selbar .btn:hover:not(:disabled) { background: rgba(255, 255, 255, .22); }
 .selbar .btn-danger { background: var(--danger); color: #fff; }
-.selbar .btn-danger:hover:not(:disabled) { background: #e0342a; }
+.selbar .btn-danger:hover:not(:disabled) { background: var(--danger-hover); }
 .selbar .btn:disabled { opacity: .45; cursor: not-allowed; }
 .selbar .btn svg { width: 14px; height: 14px; }
 @media (max-width: 720px) {
@@ -793,7 +815,10 @@ body.has-wco .sidebar {
 .sb-title {
   flex: 1; min-width: 0;
   font-size: 10.5px; font-weight: 600; letter-spacing: .14em;
-  color: var(--muted); text-transform: uppercase;
+  /* ⚠️ 不能用 --muted：侧栏底色是 --paper-2（#ececee）而不是白纸，
+     同一档灰在这块底上只有 4.3:1，低于 12px 小字要的 4.5。
+     全站三档灰阶是**按白底**算的（见文末对比度实测），侧栏是个例外场景。 */
+  color: var(--ink-2); text-transform: uppercase;
 }
 .sb-collapse { width: 26px; height: 26px; }
 .sb-collapse svg { width: 14px; height: 14px; }
@@ -817,14 +842,22 @@ body.has-wco .sidebar {
 }
 .src-chip .sc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .src-chip .sc-count {
-  flex: none; font-size: 10.5px; font-weight: 500; color: var(--muted);
+  flex: none; font-size: 10.5px; font-weight: 500;
+  /* 同上：徽标底色是 --fill-2 压在 --paper-2 上，比纸底更暗一点，
+     --muted 在这里只有 3.7:1 —— 数量是小字，必须换深一档。 */
+  color: var(--ink-2);
   font-variant-numeric: tabular-nums;
-  background: var(--fill-2); border-radius: 99px; padding: 1px 7px;
+  background: var(--fill-2); border-radius: 999px; padding: 1px 7px;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .src-chip:hover { background: var(--fill-2); color: var(--ink); }
 .src-chip.is-on { background: var(--accent); color: #fff; }
 .src-chip.is-on .sc-count { color: #fff; background: rgba(255, 255, 255, .22); }
+/* 0 张的来源：**不改文字颜色**（换浅一档就掉到 4.3:1），
+   只把数量徽标降到最浅的填充，说明放进 title —— 点进去是空图库，
+   至少点之前能知道为什么。 */
+.src-chip.is-empty .sc-count { background: var(--fill-1); }
+.src-chip.is-on.is-empty .sc-count { background: rgba(255, 255, 255, .22); }
 /* 移除键默认不显示：一列十行都挂着叉号，会把「切换来源」这个主操作压下去。
    悬停当前行才出现，且鼠标移上去再加深一次。 */
 .src-chip .sc-x {
@@ -912,15 +945,19 @@ body.has-wco .sidebar {
   margin: 2px 0 10px; text-transform: uppercase;
 }
 /* 空态是「应用的第一屏」，不是落地页：字号收到 40px 上限、字重 600，
-   避免大标题把引导文案和主按钮挤到需要滚动的位置。 */
+   避免大标题把引导文案和主按钮挤到需要滚动的位置。
+   断行交给浏览器：`balance` 让两行长度接近（原来是手写 <br>，
+   第二行只剩 5 个字、右侧拉扯明显，而且窄窗下无法重新流动）。 */
 .empty-title {
   font-family: var(--font-display);
   font-size: clamp(30px, 3.8vw, 40px);
   font-weight: 600; line-height: 1.14; letter-spacing: -.025em;
+  text-wrap: balance;
 }
 .empty-desc {
   margin: 14px auto 0; color: var(--ink-2);
   font-size: 14px; line-height: 1.6; max-width: 462px; letter-spacing: -.004em;
+  text-wrap: pretty;   /* 不让末行只剩一两个字 */
 }
 .empty-actions { display: flex; gap: 12px; justify-content: center; margin-top: 24px; flex-wrap: wrap; }
 .resume-box {
@@ -988,7 +1025,7 @@ body.has-wco .sidebar {
   background: rgba(28, 28, 30, .88);
   -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
   color: #fff;
-  padding: 10px 18px; border-radius: 14px;
+  padding: 10px 18px; border-radius: var(--r-m);
   border: .5px solid rgba(255, 255, 255, .12);
   font-size: 13px; font-weight: 500; box-shadow: var(--shadow-3);
   opacity: 0; transition: opacity .26s var(--ease), transform .26s var(--ease-spring);
@@ -998,7 +1035,7 @@ body.has-wco .sidebar {
 .toast.toast-act { display: flex; align-items: center; gap: 14px; pointer-events: auto; }
 .toast-btn {
   border: 0; background: rgba(255, 255, 255, .16); color: #fff;
-  font-size: 12.5px; font-weight: 600; padding: 5px 12px; border-radius: 8px;
+  font-size: 12.5px; font-weight: 600; padding: 5px 12px; border-radius: var(--r-s);
   letter-spacing: .01em;
 }
 .toast-btn:hover { background: rgba(255, 255, 255, .28); }
@@ -1015,7 +1052,7 @@ body.has-wco .sidebar {
   min-width: 16px; height: 16px; padding: 0 4px;
   background: var(--danger); color: #fff;
   font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
-  border-radius: 9px;
+  border-radius: 999px;
   box-shadow: 0 0 0 2px var(--paper);
 }
 /* 面板挂到 <body> 下，用 fixed 定位（JS 按按钮矩形贴边）。
@@ -1039,7 +1076,7 @@ body.has-wco .sidebar {
 }
 .tp-clear, .tp-open, .tp-viewall {
   border: 0; background: transparent; color: var(--accent);
-  font-size: 11.5px; font-weight: 500; padding: 2px 4px; border-radius: 5px;
+  font-size: 11.5px; font-weight: 500; padding: 2px 4px; border-radius: var(--r-xs);
 }
 .tp-clear:hover, .tp-open:hover, .tp-viewall:hover { background: var(--accent-soft); }
 .tp-viewall { font-weight: 600; }
@@ -1057,7 +1094,7 @@ body.has-wco .sidebar {
 .tp-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .tp-restore {
   border: 0; background: var(--fill-2); color: var(--ink);
-  font-size: 11.5px; font-weight: 500; padding: 4px 11px; border-radius: 7px; white-space: nowrap;
+  font-size: 11.5px; font-weight: 500; padding: 4px 11px; border-radius: var(--r-s); white-space: nowrap;
 }
 .tp-restore:hover { background: var(--accent); color: #fff; }
 .tp-foot {
@@ -1128,11 +1165,11 @@ body.has-wco .sidebar {
 .sp-seg {
   display: inline-flex; align-items: center; gap: 1px;
   background: var(--fill-2);
-  border-radius: 8px; padding: 2px;
+  border-radius: var(--r-s); padding: 2px;
 }
 .sp-seg button {
   border: 0; background: transparent; color: var(--ink-2);
-  font-size: 11.5px; font-weight: 500; padding: 4px 9px; border-radius: 6px;
+  font-size: 11.5px; font-weight: 500; padding: 4px 9px; border-radius: calc(var(--r-s) - 2px);
   transition: background .16s var(--ease), color .16s var(--ease), box-shadow .16s var(--ease);
 }
 .sp-seg button:hover { color: var(--ink); }
@@ -1144,7 +1181,7 @@ body.has-wco .sidebar {
 /* 开关 — iOS 规格（40×24，白色圆钮，回弹） */
 .sp-switch {
   position: relative; width: 40px; height: 24px; flex: none;
-  border: 0; border-radius: 99px;
+  border: 0; border-radius: 999px;
   background: var(--fill-3); cursor: pointer; padding: 0;
   transition: background .22s var(--ease);
 }
@@ -1172,7 +1209,7 @@ body.has-wco .sidebar {
 .sp-num {
   width: 62px; border: 0; background: var(--fill-1);
   color: var(--ink); font-family: inherit; font-size: 12px;
-  padding: 6px 8px; border-radius: 7px; text-align: right;
+  padding: 6px 8px; border-radius: var(--r-s); text-align: right;
   font-variant-numeric: tabular-nums;
 }
 .sp-num:focus { background: var(--fill-2); }
@@ -1188,7 +1225,7 @@ body.has-wco .sidebar {
   -webkit-appearance: none; appearance: none;
   border: 0; background: var(--fill-1);
   color: var(--ink); font-family: inherit; font-size: 12px;
-  padding: 6px 24px 6px 9px; border-radius: 7px; cursor: pointer;
+  padding: 6px 24px 6px 9px; border-radius: var(--r-s); cursor: pointer;
   background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
                     linear-gradient(135deg, var(--muted) 50%, transparent 50%);
   background-position: calc(100% - 13px) 52%, calc(100% - 9px) 52%;
@@ -1202,7 +1239,7 @@ body.has-wco .sidebar {
 .sp-btn {
   border: 0; background: var(--fill-1); color: var(--accent);
   font-family: inherit; font-size: 11.5px; font-weight: 500;
-  padding: 5px 11px; border-radius: 7px;
+  padding: 5px 11px; border-radius: var(--r-s);
   transition: background .16s var(--ease), color .16s var(--ease);
 }
 .sp-btn:hover { background: var(--accent-soft); }
@@ -1220,7 +1257,7 @@ body.has-wco .sidebar {
 .sp-ver { font-variant-numeric: tabular-nums; opacity: .72; }
 .sp-reset {
   border: 0; background: transparent; color: var(--accent);
-  font-family: inherit; font-size: 11.5px; font-weight: 500; padding: 3px 5px; border-radius: 5px;
+  font-family: inherit; font-size: 11.5px; font-weight: 500; padding: 3px 5px; border-radius: var(--r-xs);
 }
 .sp-reset:hover { background: var(--accent-soft); }
 
@@ -1313,7 +1350,7 @@ body.has-wco .sidebar {
   border-bottom: .5px solid color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .vf-about-link:hover { border-bottom-color: var(--accent); }
-.vf-about-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 3px; }
+.vf-about-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .vf-about-upd { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .vf-about-upd .btn { padding: 5px 12px; font-size: 12px; }
 .vf-about-upd-r { color: var(--muted); font-size: 12px; line-height: 1.5; }
@@ -1328,7 +1365,7 @@ body.has-wco .sidebar {
 .sc-table .sc-keys { width: 46%; white-space: nowrap; }
 .sc-table kbd {
   display: inline-block; margin: 0 1px 2px 0; padding: 1.5px 6px;
-  border: .5px solid var(--line-2); border-bottom-width: 2px; border-radius: 5px;
+  border: .5px solid var(--line-2); border-bottom-width: 2px; border-radius: var(--r-xs);
   background: var(--fill-1); color: var(--ink);
   font-family: var(--font-mono);
   font-size: 11px; line-height: 1.5;
@@ -1402,7 +1439,7 @@ body.has-wco .sidebar {
 
 .tv-one {
   position: absolute; top: 8px; right: 8px; z-index: 3;
-  padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;
+  padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
   background: rgba(0, 0, 0, .5); color: #fff; border: .5px solid rgba(255, 255, 255, .16);
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   opacity: 0; transform: translateY(-2px); transition: opacity .15s var(--ease), transform .15s var(--ease);
@@ -1422,7 +1459,7 @@ body.has-wco .sidebar {
 }
 .tv-marquee {
   position: absolute; z-index: 8; pointer-events: none;
-  border: 1.5px solid var(--sel); background: var(--sel-soft); border-radius: 3px;
+  border: 1.5px solid var(--sel); background: var(--sel-soft); border-radius: var(--r-xs);
 }
 .tv-empty { text-align: center; padding: 96px 20px; color: var(--muted); }
 .tv-empty-ic { width: 44px; height: 44px; margin: 0 auto 16px; color: var(--line-2); }
@@ -1492,22 +1529,31 @@ body[data-theme="dark"] .sp-seg button.is-on { color: var(--ink); }
 body[data-theme="dark"] .tile { background: var(--paper-2); }
 body[data-theme="dark"] .sp-group { background: var(--surface); }
 
-/* ---------- 紧凑密度 ---------- */
+/* ---------- 紧凑密度 ----------
+   目标不是"把每样东西缩 2px"，而是**同样的窗口多看见内容**：
+   顶栏/底栏变矮（多出 12px 视口）、工具栏与来源行变矮、
+   瓦片间距 12→8（由 grid.js 的 gapNow() 按 body[data-density] 取）、
+   状态行与舞台的上边距一起收。只收控件高度是感知不到的 —— 那正是它以前的问题。 */
 body[data-density="compact"] {
   --topbar-h: 48px;
   --bar-h: 44px;
 }
 body[data-density="compact"] .topbar-in { gap: 8px; }
-body[data-density="compact"] .ctrls { height: 36px; padding: 2px 5px; border-radius: 10px; }
-body[data-density="compact"] .ico-btn { width: 30px; height: 30px; border-radius: 7px; }
+body[data-density="compact"] .ctrls { height: 36px; padding: 2px 5px; border-radius: calc(var(--r-m) - 2px); }
+body[data-density="compact"] .ico-btn { width: 30px; height: 30px; border-radius: calc(var(--r-s) - 2px); }
 body[data-density="compact"] .ico-btn svg { width: 15px; height: 15px; }
 body[data-density="compact"] .src-chip,
 body[data-density="compact"] .src-add { height: 30px; font-size: 12px; }
+body[data-density="compact"] .sb-head { height: 34px; }
 body[data-density="compact"] .seg { padding: 1.5px; }
 body[data-density="compact"] .seg-btn { padding: 4px 8px; }
 body[data-density="compact"] .select-wrap select,
 body[data-density="compact"] .sp-select { padding-top: 4.5px; padding-bottom: 4.5px; }
-body[data-density="compact"] .stage-wrap { padding-top: 12px; }
+body[data-density="compact"] .statusline { padding-top: 9px; }
+body[data-density="compact"] .stage-wrap { padding-top: 12px; padding-bottom: 4px; }
+body[data-density="compact"] .tile-cap { padding: 14px 8px 5px; }
+body[data-density="compact"] .tile-cap .t-name { font-size: 10px; }
+body[data-density="compact"] .tile-cap .t-size { font-size: 9.5px; }
 
 /* ---------- 紧凑网格（small）：方形裁切 ----------
    与「中图网格」的分工：那一套按真实宽高比缩放、永不裁切，用来看照片；
@@ -1516,7 +1562,7 @@ body[data-density="compact"] .stage-wrap { padding-top: 12px; }
    与 grid.js 里走哪条排布分支同源（都由 applyModeUI 从 MODES[mode].crop 推出）。 */
 #galleryView[data-crop="1"] .tile img { object-fit: cover; }
 /* 瓦片只有 100px 上下，信息条也要跟着收 */
-#galleryView[data-crop="1"] .tile { border-radius: 4px; }
+#galleryView[data-crop="1"] .tile { border-radius: var(--r-xs); }
 #galleryView[data-crop="1"] .tile-cap { padding: 16px 7px 5px; }
 #galleryView[data-crop="1"] .tile-cap .t-name { font-size: 10px; }
 #galleryView[data-crop="1"] .tile-cap .t-size { font-size: 9.5px; }

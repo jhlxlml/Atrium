@@ -231,7 +231,8 @@
                 ],
               },
               {
-                key: 'density', type: 'seg', name: '信息密度', desc: '网格留白与行高',
+                key: 'density', type: 'seg', name: '信息密度',
+                desc: '瓦片间距、工具栏与状态行一起收紧',
                 options: [['cozy', '舒适'], ['compact', '紧凑']],
               },
             { key: 'showNames', type: 'switch', name: '显示文件名', desc: '网格瓦片底部叠加文件名' },
