@@ -27,7 +27,7 @@
 | 5 | `node deploy/electron-test/run_all.js`（全量；可后台跑） | 任一失败即停，不要带着红继续打包。**失败先分诊产品/测试**（见下） |
 | 6 | `node deploy/pack.js`（或 `npm run pack`） | 打包器自带强制校验：写 `*.tmp` → 交给 `verify_zip.js` 全量核验 → 通过才改名。不过即删临时文件并非零码退出 |
 | 7 | `node deploy/verify_zip.js`（或 `npm run verify:zip`） | 独立复验根目录下**所有** ZIP（含历史版本）；参照值取自 Node 原生 `zlib.crc32`，与被测写入器**不同源** |
-| 8 | `"D:/Program Files/7-Zip/7z.exe" t <zip>` | 7-Zip 不在 PATH，必须绝对路径。这是**第三方复验** —— 前两步都是自家实现，不能互相背书 |
+| 8 | `"C:/Program Files/7-Zip/7z.exe" t <zip>` | 7-Zip 不在 PATH，必须绝对路径（**盘符按本机实际**：这台机器在 `C:`，别照抄旧的 `D:`）。这是**第三方复验** —— 前两步都是自家实现，不能互相背书 |
 | 9 | 写 `Atrium_vX.Y.Z_更新说明.md` | 格式照抄上一版：用户要求 → 实现方式表 → 关键决策与理由 → 验证 → 交付物 → 这版之后 |
 | 10 | 更新 `Atrium_现状分析与迭代建议.md` | 见下方「文档必改清单」 |
 | 11 | 追加 `.workbuddy/memory/YYYY-MM-DD.md` 日志 | append-only，不覆盖。⚠️ 该目录**不入库**，只对本机有效 |
