@@ -73,13 +73,13 @@ Update checking is **off by default** — it is the only feature in the whole ap
 
 ### Using the portable build
 
-1. Download **`Atrium_Electron_v1.17.0_x64.zip`** (112.6 MB, Windows x64) from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
+1. Download **`Atrium_Electron_v1.17.1_x64.zip`** (112.6 MB, Windows x64) from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
 2. Unzip it, then double-click **`Atrium.cmd`** (**not** `Atrium.exe`).
 3. Click "添加文件夹" (Add folder), or drag a folder / images straight into the window.
 
 > **Why a `.cmd` and not the exe**: WorkBuddy and some Node environments inject `NODE_OPTIONS`, which makes a packaged Electron app **exit immediately on launch**. The launcher clears that variable first, then starts the app. It looks for `Atrium.exe` by name and only falls back to "the first exe in the folder" if it is missing.
 
-> The downloadable asset is named `Atrium_Electron_v1.17.0_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
+> The downloadable asset is named `Atrium_Electron_v1.17.1_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
 
 > **Where your data lives**: a `data/` folder appears automatically next to the app (settings / favourites / rotation records / thumbnail cache).
 > It is **portable** — copy the whole folder and you take your entire configuration with you, no re-configuring on another machine.
@@ -241,8 +241,9 @@ Atrium/
 | File | Contents |
 |---|---|
 | [`Atrium_开发上手手册.md`](Atrium_开发上手手册.md) | **Handbook**: commands, the five layers, landmine list, standard procedures for adding a setting or an IPC channel, frozen identifiers |
-| [`Atrium_v1.17.0_更新说明.md`](Atrium_v1.17.0_更新说明.md) | This version: Apple HIG rebuild / sources moved to a left rail / two grid views / 10 UI fixes |
-| [`Atrium_v1.14.0_更新说明.md`](Atrium_v1.14.0_更新说明.md) | Previous release: portable data directory / About panel / update check |
+| [`Atrium_v1.17.1_更新说明.md`](Atrium_v1.17.1_更新说明.md) | This version: single-column view no longer hides the top of images behind the chrome (regression fix) |
+| [`Atrium_v1.17.0_更新说明.md`](Atrium_v1.17.0_更新说明.md) | Previous release: Apple HIG rebuild / sources moved to a left rail / two grid views / 10 UI fixes |
+| [`Atrium_v1.14.0_更新说明.md`](Atrium_v1.14.0_更新说明.md) | Older: portable data directory / About panel / update check |
 | [`Atrium_v1.13.0_更新说明.md`](Atrium_v1.13.0_更新说明.md) | Older: rename to Atrium / desktop integration / Electron only |
 | [`deploy/release/RELEASE.md`](deploy/release/RELEASE.md) | Release process: fixed order, acceptance criteria, packaging landmines |
 
