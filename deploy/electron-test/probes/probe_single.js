@@ -158,6 +158,31 @@ app.whenReady().then(async () => {
     };
   })()`);
 
+  /* ④b 上一张会不会从顶栏底下透出来。
+        槽位首尾相接（gap=0），所以上一张的**底部 57px 正好停在顶栏背后**；
+        顶栏是 .78 透明的材质 + 背景模糊 —— 透明的部分就把上一张显出来了。
+        这里同时量「上一张底边相对 chrome 下沿的位置」和顶栏的实际底色/模糊设置。 */
+  const prev = await js(`(() => {
+    const tiles = [...document.querySelectorAll('.single-tile')];
+    const top = document.getElementById('topbar');
+    const cap = document.getElementById('capbar');
+    const cr = cap && !cap.hidden ? cap.getBoundingClientRect() : null;
+    const tr = top.getBoundingClientRect();
+    const chromeBottom = Math.round(Math.max(cr ? cr.bottom : 0, tr.bottom));
+    const b0 = tiles[0] ? tiles[0].getBoundingClientRect() : null;
+    const cs = getComputedStyle(top);
+    return {
+      chromeBottom: chromeBottom,
+      prevBottom: b0 ? Math.round(b0.bottom) : null,
+      prevBelowChrome: b0 ? Math.round(b0.bottom - chromeBottom) : null,
+      topbarBg: cs.backgroundColor,
+      topbarBlur: cs.backdropFilter || cs.webkitBackdropFilter || 'none',
+      topbarOpaque: String(cs.backgroundColor).startsWith('rgb('),
+    };
+  })()`);
+  if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
+  fs.writeFileSync(path.join(OUT, 'single-slot1.png'), (await win.webContents.capturePage()).toPNG());
+
   /* ⑤ chrome 变化后是否自愈：摘掉标题栏 → afterChromeChange → 槽位应回到「无标题栏」的算法。
         这一段守的是「判定结果变了却不重排」这个隐患（见 App.relocatePin 的注释）。 */
   await js(`(() => { window.Grid._alignIndex(0); document.body.classList.remove('has-wco');
@@ -172,10 +197,10 @@ app.whenReady().then(async () => {
   const lateOn = await js(MEASURE);
 
   if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
-  fs.writeFileSync(path.join(OUT, 'single-geo.json'), JSON.stringify({ first, second, lateOff, lateOn }, null, 2));
+  fs.writeFileSync(path.join(OUT, 'single-geo.json'), JSON.stringify({ first, second, prev, lateOff, lateOn }, null, 2));
   fs.writeFileSync(path.join(OUT, 'single-wco.png'), (await win.webContents.capturePage()).toPNG());
 
-  console.log('SINGLE ' + JSON.stringify({ first, second, lateOff, lateOn }));
+  console.log('SINGLE ' + JSON.stringify({ first, second, prev, lateOff, lateOn }));
   console.log('DONE');
   app.quit();
 }).catch((e) => { console.error('ERR', (e && e.stack) || e); app.quit(); });

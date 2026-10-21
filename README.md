@@ -73,13 +73,13 @@ Atrium（中庭）是面向 Windows 的本地图片浏览器：选一个文件�
 
 ### 使用便携包
 
-1. 从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载 **`Atrium_Electron_v1.17.1_x64.zip`**（112.6 MB，Windows x64）；
+1. 从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载 **`Atrium_Electron_v1.17.2_x64.zip`**（112.6 MB，Windows x64）；
 2. 解压后双击 **`Atrium.cmd`**（**不是** `Atrium.exe`）；
 3. 点「添加文件夹」，或者直接把文件夹 / 图片拖进窗口。
 
 > **为什么是 `.cmd` 而不是 exe**：WorkBuddy 及部分 Node 环境会注入 `NODE_OPTIONS`，Electron 打包版遇到它会**启动即退出**。启动器负责先清掉这个变量，再拉起主程序。它优先按名找 `Atrium.exe`，找不到才退回「目录里第一个 exe」。
 
-> 下载到的资产名是 ASCII 的 `Atrium_Electron_v1.17.1_x64.zip`（后缀标架构，将来出 arm64 包可在同一 release 里共存）
+> 下载到的资产名是 ASCII 的 `Atrium_Electron_v1.17.2_x64.zip`（后缀标架构，将来出 arm64 包可在同一 release 里共存）
 > —— GitHub 的 release 资产名**不支持非 ASCII 字符**（会被替换成 `.`），所以发布时用这个名字；
 > 本地 `npm run pack` 生成的 ZIP 仍按构建链的命名带「版」字，两者**内容完全一致**。
 
@@ -241,7 +241,8 @@ Atrium/
 | 文件 | 内容 |
 |---|---|
 | [`Atrium_开发上手手册.md`](Atrium_开发上手手册.md) | **操作手册**：命令、五层架构、雷区清单、改设置 / 加 IPC 的标准动作、冻结点 |
-| [`Atrium_v1.17.1_更新说明.md`](Atrium_v1.17.1_更新说明.md) | 本版：单列整屏不再被顶部控制栏盖住（回归修复） |
+| [`Atrium_v1.17.2_更新说明.md`](Atrium_v1.17.2_更新说明.md) | 本版：单列整屏时顶栏背后不再透出上一张图 |
+| [`Atrium_v1.17.1_更新说明.md`](Atrium_v1.17.1_更新说明.md) | 上一版：单列整屏不再被顶部控制栏盖住（回归修复） |
 | [`Atrium_v1.17.0_更新说明.md`](Atrium_v1.17.0_更新说明.md) | 上一版：Apple HIG 重做界面 / 来源栏搬到左侧 / 两种网格视图 / 10 项 UI 修正 |
 | [`Atrium_v1.14.0_更新说明.md`](Atrium_v1.14.0_更新说明.md) | 更早：数据便携化 / 关于面板 / 更新检测 |
 | [`Atrium_v1.13.0_更新说明.md`](Atrium_v1.13.0_更新说明.md) | 更早：更名 Atrium / 桌面集成 / 只留 Electron |

@@ -277,6 +277,15 @@ body:has(.lightbox:fullscreen) .lightbox { top: 0; }
   backdrop-filter: blur(24px) saturate(180%);
   border-bottom: .5px solid var(--line);
 }
+/* 单列整屏：槽位首尾相接（gap = 0），**上一张的底部 57px 正好停在顶栏背后**。
+   顶栏是 .78 透明的材质 + 背景模糊 —— 透明的那部分就把上一张显出来了，
+   看起来像「上一张图跑到控制区下面」。整屏看图时顶栏改实色：
+   材质（能看见图片透出来的那点层次）只对网格视图有意义，整屏时它只会串味。 */
+html.snap-single .topbar {
+  background: var(--paper);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
 .topbar-in {
   max-width: var(--page-max); margin: 0 auto;
   height: var(--topbar-h);

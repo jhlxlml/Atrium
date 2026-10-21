@@ -1510,6 +1510,16 @@ const SUITES = [
       check('chrome 高度变化后几何自愈（标题栏回来时槽位跟着变矮）',
         on.slotH === on.slotShould && on.slotH === f.slotH,
         'on slotH=' + on.slotH + ' should=' + on.slotShould);
+      /* 槽位首尾相接：上一张的底边正好停在 chrome 下沿，不能越界到内容区里 */
+      const pv = ctx.data.prev || {};
+      check('上一张的底边不越过 chrome 下沿（槽位首尾相接，内容区不露上一张）',
+        pv.prevBelowChrome === 0, 'prevBottom=' + pv.prevBottom + ' chrome=' + pv.chromeBottom);
+      /* 但"正好停在背后"意味着顶栏底下就是上一张：顶栏一旦半透明 + 背景模糊，
+         那 57px 就会透出来（用户看到的是"上一张图跑到控制区下面"）。 */
+      check('单列模式下顶栏为实色（半透明材质会把背后那张图透出来）',
+        pv.topbarOpaque === true, 'bg=' + pv.topbarBg);
+      check('单列模式下顶栏不启用背景模糊（模糊会重新引入"透出"）',
+        pv.topbarBlur === 'none', 'blur=' + pv.topbarBlur);
     },
   },
 
