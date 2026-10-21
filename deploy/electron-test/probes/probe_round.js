@@ -79,8 +79,11 @@ async function run() {
       const el = document.querySelector(sel);
       if (!el) return null;
       const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+      /* bg / border 也带回来：圆角门禁顺带守"控件簇没有外框"这条 ——
+         圆角回到 0 但底色或描边回来，一样是把胶囊装回去了。 */
       return { r: parseFloat(cs.borderTopLeftRadius), h: Math.round(r.height),
-               w: Math.round(r.width), display: cs.display };
+               w: Math.round(r.width), display: cs.display,
+               bg: cs.backgroundColor, border: cs.borderTopWidth };
     };
     const out = { tokens: T, items: {} };
     const Q = {

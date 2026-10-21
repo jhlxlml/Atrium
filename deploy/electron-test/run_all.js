@@ -1278,6 +1278,94 @@ const SUITES = [
     },
   },
 
+  /* ---------- 9a. 顶栏控件区外观 ----------
+     「好不好看」大部分没法断言，但"齐不齐"能：控件簇有没有外框、
+     所有控件是不是同一条 32px 基线、间距是不是只有两档、图标字形是不是一个尺寸。
+     这几条正是"看着乱"的可测成因 —— 以前是 40px 胶囊里混着 25/28/29/32 四种高度、
+     间距 2/6/7 三种值，单看每个控件都对，摆在一起就糙。 */
+  {
+    id: 'toplayout',
+    title: '顶栏控件区外观 · 没有外框 / 32px 一条基线 / 间距成组 / 图标同尺寸',
+    kind: 'probe',
+    script: 'probe_toplayout.js',
+    keys: ['TOPLAYOUT ', 'TOPLAYOUT_NARROW '],
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.keys['TOPLAYOUT '];
+      if (!d) { check('探针返回数据', false, '未解析到 TOPLAYOUT 输出'); return; }
+      const C = d.ctrls || {}, S = d.seg || {}, on = S.on || {}, items = d.items || [];
+      const clear = (c) => c === 'rgba(0, 0, 0, 0)' || c === 'transparent';
+      const uniq = (a) => [...new Set(a)];
+
+      /* 外框：底色 / 描边 / 圆角 / 横向内边距四件套，缺一件都还是"盒子"。
+         纵向 3px 不算 —— 那是给选中滑片的投影留的落地空间（横向 overflow 常驻，
+         不留这 3px 投影就会被裁成硬边）。 */
+      check('控件簇没有外框（无底色 / 无描边 / 无圆角 / 无横向内边距）',
+        clear(C.bg) && parseFloat(C.border) === 0 && parseFloat(C.radius) === 0
+          && C.padX === 0,
+        'bg=' + C.bg + ' border=' + C.border + ' radius=' + C.radius + ' padding=' + C.padding);
+
+      /* 小图网格那组的灰色轨道是第二层外框 */
+      check('分段控件没有轨道（灰底槽已去掉，无内边距）',
+        clear(S.bg) && parseFloat(S.radius) === 0 && /^0px/.test(String(S.padding)),
+        'bg=' + S.bg + ' radius=' + S.radius + ' padding=' + S.padding);
+
+      /* 轨道去掉之后，选中态必须自己立得住 —— 否则等于"没有选中态"。
+         高度比的是**其它控件**而不是控件簇：簇的高度会随外框变（40/36/32），
+         拿它当基准的话，加回外框会顺带把这条也弄红，红的原因就不是它自己了。 */
+      const btnH = Math.max(...items.filter((i) => i.cls !== 'sep').map((i) => i.h));
+      check('选中滑片自己立得住（有底色 / 有投影 / 与其它控件同高）',
+        !clear(on.bg) && on.shadow && on.shadow !== 'none' && on.h === btnH,
+        'bg=' + on.bg + ' h=' + on.h + ' btnH=' + btnH + ' shadow=' + String(on.shadow).slice(0, 40));
+
+      /* 一条基线：控件高度只允许有一个值 */
+      const hs = uniq(items.filter((i) => i.cls !== 'sep').map((i) => i.h));
+      check('所有控件同高（32px 一条基线，不再混 25/28/29）',
+        hs.length === 1 && hs[0] === 32, 'heights=' + hs.join(','));
+
+      /* 垂直中心：比"高度相同"更强 —— 高度相同也可能上沿没对齐 */
+      const cys = uniq(items.map((i) => i.cy));
+      check('所有控件垂直中心一致（不是"差不多居中"）', cys.length === 1, 'centers=' + cys.join(','));
+
+      /* 图标按钮：只允许一种尺寸 */
+      const szs = Object.keys(d.iconBtnSizes || {});
+      check('图标按钮只有一种尺寸（不再有 28×28 的异类）',
+        szs.length === 1 && szs[0] === '32x32', JSON.stringify(d.iconBtnSizes));
+
+      /* 字形：只允许一种尺寸（按钮同大、里面图标不同大，照样是"大小不齐"） */
+      const gl = uniq(items.filter((i) => i.glyph).map((i) => i.glyph));
+      check('图标字形统一 16×16', gl.length === 1 && gl[0] === '16x16', 'glyphs=' + gl.join(','));
+
+      /* 间距：组内 2px、分隔线两侧 7–8px（0.5px 线宽 + 亚像素定位的取整误差）。
+         只允许这两档 —— 出现第三种值就是"手工微调过某个图标"（旧版 #sortDir 5px、
+         #trashWrap 6px 的额外外边距就是这么来的）。 */
+      const inner = [], around = [];
+      items.forEach((it, i) => {
+        if (i === 0 || it.gapPrev == null) return;
+        (it.cls === 'sep' || items[i - 1].cls === 'sep' ? around : inner).push(it.gapPrev);
+      });
+      check('组内间距一致（相邻两个键 2px，容 ±1 取整误差）',
+        inner.length > 0 && Math.min(...inner) >= 1 && Math.max(...inner) <= 3,
+        'inner=' + JSON.stringify(inner));
+      check('分隔线两侧间距一致（6px 空气 + 2px gap）',
+        around.length > 0 && around.every((g) => g >= 7 && g <= 8),
+        'around=' + JSON.stringify(around));
+
+      /* 右缘对齐：工具栏右端必须落在网格内容区的右缘上 */
+      const A = d.align || {};
+      check('工具栏右缘与网格内容区右缘对齐（右侧不多出一截空气）',
+        A.ctrlsRight != null && A.ctrlsRight === A.stageRight,
+        'ctrls=' + A.ctrlsRight + ' stage=' + A.stageRight + ' innerW=' + A.innerW);
+
+      /* 窄窗：文字收起后仍放得下（放不下就该横滚，而不是换行压扁） */
+      const nr = ctx.keys['TOPLAYOUT_NARROW '];
+      if (nr) {
+        check('窄窗下工具栏不横向溢出（分段文字收起后仍放得下）',
+          nr.scrolls === false, JSON.stringify(nr));
+      }
+    },
+  },
+
   /* ---------- 9b. 左侧来源栏 · 展开 / 收起 / 浮层让位 ---------- */
   {
     id: 'sidebar',
@@ -1434,11 +1522,19 @@ const SUITES = [
           v(k) !== null && near(v(k), T.s), v(k) + ' vs --r-s=' + T.s);
       }
       /* 容器档 */
-      const cont = { ctrls: 'm', spGroup: 'm', toast: 'm', setPanel: 'l' };
+      const cont = { spGroup: 'm', toast: 'm', setPanel: 'l' };
       for (const [k, t] of Object.entries(cont)) {
         check('容器圆角走令牌 --r-' + t + '：' + k,
           v(k) !== null && near(v(k), T[t]), v(k) + ' vs --r-' + t + '=' + T[t]);
       }
+      /* 控件簇（v1.18.0）不再有外框：它是一条**平铺**的工具栏，
+         底色 / 描边 / 圆角三者必须同时为 0 —— 只把圆角改回 0、
+         底色还留着，视觉上仍然是"一个装控件的盒子"。 */
+      const ct = I.ctrls || {};
+      const clear = (c) => c === 'rgba(0, 0, 0, 0)' || c === 'transparent';
+      check('控件簇没有外框（无圆角 / 无底色 / 无描边）',
+        ct.r === 0 && clear(ct.bg) && parseFloat(ct.border) === 0,
+        'r=' + ct.r + ' bg=' + ct.bg + ' border=' + ct.border);
       /* 微型档（窗口标题栏里的置顶键：与原生最小化/关闭同规格） */
       check('标题栏按钮圆角走令牌 --r-xs（与原生窗口控制键一致）',
         v('pinBtn') !== null && near(v('pinBtn'), T.xs), v('pinBtn') + ' vs --r-xs=' + T.xs);
@@ -1451,9 +1547,9 @@ const SUITES = [
         if (it.r < 900) pillBad.push(k + ':radius=' + it.r);
       }
       check('胶囊元素一律 999px（选择条 / 数量徽标 / 开关 / 空态主按钮）', pillBad.length === 0, pillBad.join(', '));
-      /* 同心圆角：滑片在轨道里缩了 2px，圆角也减 2px */
+      /* 同心圆角：滑片在轨道里缩了 2px，圆角也减 2px。
+         顶栏分段控件已无轨道（padding 0），这条只剩设置面板里的那组还成立。 */
       const gap = {
-        seg: { outer: v('segTrack'), inner: v('segThumb') },
         spSeg: { outer: v('spSeg'), inner: v('spSegThumb') },
       };
       for (const [k, g] of Object.entries(gap)) {
@@ -1463,8 +1559,8 @@ const SUITES = [
       }
       /* 紧凑密度的 calc 档位 */
       const c = d.compact || {};
-      check('紧凑密度的容器圆角 = --r-m − 内边距（calc 令牌）',
-        near(c.ctrls, T.m - 2), c.ctrls + ' vs ' + (T.m - 2));
+      check('紧凑密度不会把外框加回来（控件簇圆角仍为 0）',
+        c.ctrls === 0, 'compact ctrls=' + c.ctrls);
       check('紧凑密度的按钮圆角 = --r-s − 内边距（calc 令牌）',
         near(c.icoBtnTop, T.s - 2), c.icoBtnTop + ' vs ' + (T.s - 2));
       /* 兜底：规则里仍然出现"数字 px"的，只剩白名单（滚动条 / 滑杆槽 / 相框握把 / 胶囊 / 单列无边角） */
@@ -1473,6 +1569,122 @@ const SUITES = [
       const bad = (d.hardcoded || []).filter((s) => !ALLOW.some((re) => re.test(s)));
       check('规则里没有新的写死圆角（白名单：滚动条 / 滑杆 / 相框握把 / 胶囊 / 单列无边角）',
         bad.length === 0, bad.join(' | '));
+    },
+  },
+
+  /* ---------- 10a-2. 字号体系 · 只走 --fs-* 令牌（Node，秒级） ----------
+     和圆角套件同一个思路：把"体系"变成可执行断言。
+     没有这条门禁，下一次"这里大一点点好看"就会把 12.5px 写回去，
+     而 12.5px 单看没问题 —— 它只在并排比较时才露馅，正是最难靠肉眼回归的一类。 */
+  {
+    id: 'typescale',
+    title: '字号体系 · 全部走 --fs-* 令牌 / 无写死 px / 无半像素档 / 无孤儿令牌',
+    kind: 'node',
+    script: path.join(HERE, 'type_gate.js'),
+    quickFlag: true,
+    tags: ['core'],
+    run: function (ctx) {
+      const check = ctx.check;
+      let d = null;
+      try { d = JSON.parse(String(ctx.tail || '').replace(/^TYPEGATE\s*/, '')); } catch (e) { d = null; }
+      if (!d) { check('门禁脚本返回可解析结果', false, String(ctx.tail || '').slice(0, 200)); return; }
+
+      const TOKENS = ['--fs-2xs', '--fs-xs', '--fs-s', '--fs', '--fs-l', '--fs-title', '--fs-hero', '--fs-display'];
+      check('字号令牌齐备（8 档）',
+        TOKENS.every((t) => typeof d.tokens[t] === 'number'),
+        JSON.stringify(d.tokens));
+      check('三份 CSS 都参与扫描（main / lightbox / frame）',
+        ['css/main.css', 'css/lightbox.css', 'css/frame.css'].every((f) => typeof d.files[f] === 'number' && d.files[f] > 0),
+        JSON.stringify(d.files));
+      check('没有任何写死的 px 字号（一律 var(--fs-*)）',
+        d.hardcodedCount === 0, (d.hardcoded || []).join(' | '));
+      check('引用的 --fs-* 全部有定义（没有拼错的令牌）',
+        (d.undefinedTokens || []).length === 0, (d.undefinedTokens || []).join(', '));
+      check('定义的 --fs-* 全部被用到（没有孤儿档位）',
+        (d.unusedTokens || []).length === 0, (d.unusedTokens || []).join(', '));
+      /* 半像素档 = 把"差 0.5px"重新请回来，这是本次清理要根除的东西 */
+      check('令牌值全是整数档（不再有 9.5 / 12.5 这类半像素）',
+        (d.halfTokens || []).length === 0, (d.halfTokens || []).join(', '));
+      /* 非像素字号只允许显式登记过的（响应式大标题） */
+      check('非像素字号只有白名单里的 clamp()（其余一律令牌）',
+        d.nonPxUnallowed === 0,
+        (d.nonPx || []).filter((x) => !x.allowed).map((x) => x.file + ':' + x.line + ' ' + x.selector + ' => ' + x.value).join(' | '));
+    },
+  },
+
+  /* ---------- 10a-3. 图标体系 · 统一 Lucide（24 网格 / stroke 2 / 四档尺寸） ----------
+     图标从 42 个手绘改成 36 个 Lucide 之后，必须有人守着"别再手画一个塞进来"。
+     探针只量当前 DOM 里真实渲染出来的图标，所以它同时能抓到两件事：
+     精灵里 symbol 被删了（use 指向不存在的 id）和渲染尺寸跑出了令牌档位。 */
+  {
+    id: 'iconography',
+    title: '图标体系 · 统一 Lucide / 24 网格 / stroke 2 / 尺寸只在四档令牌',
+    kind: 'probe',
+    script: 'probe_iconography.js',
+    key: 'ICONS ',
+    run: function (ctx) {
+      const check = ctx.check;
+      if (!ctx.data) { check('探针返回数据', false, '未解析到 ICONS 输出'); return; }
+      const d = ctx.data;
+
+      check('探针摆出了场景（量到可见图标）', d.visible > 0, 'visible=' + d.visible + ' total=' + d.total);
+      check('没有缺图（每处 <use> 都指向存在的 symbol）',
+        (d.missing || []).length === 0, (d.missing || []).join(', '));
+      check('图标网格统一 24×24（Lucide 基准网格）',
+        (d.badGrid || []).length === 0, (d.badGrid || []).join(' | '));
+
+      /* 描边只有两档：2 = 线性图标，1.6 = 实心变体（fill: currentColor 时描边要收细，
+         否则笔画糊成一坨）。出现别的值说明有人手改过某个 symbol。 */
+      const strokes = Object.keys(d.strokes || {}).sort();
+      check('描边只有两档：2（线性）/ 1.6（实心变体）',
+        strokes.every((s) => s === '2' || s === '1.6') && strokes.length > 0,
+        JSON.stringify(d.strokes));
+
+      /* 渲染尺寸只允许落在令牌档位上：--ic-xs 12 / --ic-s 14 / --ic 16 / --ic-l 20 / --ic-xl 36 */
+      const ALLOWED = ['12x12', '14x14', '16x16', '20x20', '36x36'];
+      const badSize = Object.keys(d.sizes || {}).filter((k) => ALLOWED.indexOf(k) < 0);
+      check('渲染尺寸只在四档令牌上（12 / 14 / 16 / 20 / 36）',
+        badSize.length === 0, badSize.map((k) => k + '×' + d.sizes[k]).join(', '));
+
+      /* symbol 总数固定：加图标要改 deploy/gen_sprite.js 的 MAP 再重跑，
+         而不是在 index.html 里手写一个 <symbol>。 */
+      check('sprite 里有 36 个 symbol（新增图标走 deploy/gen_sprite.js）',
+        d.symbols === 36, '实际 ' + d.symbols);
+
+      /* 抽查：线性图标必须 fill:none，实心变体必须 fill:currentColor */
+      const S = d.sample || [];
+      const line = S.filter((s) => /-fill$|^i-play$|^i-pause$|^i-pin-on$/.test(s.id) === false);
+      const solid = S.filter((s) => /-fill$|^i-play$|^i-pause$|^i-pin-on$/.test(s.id) === true);
+      check('线性图标 fill=none / 实心变体 fill=currentColor',
+        line.every((s) => s.fill === 'none') && solid.every((s) => s.fill === 'currentColor'),
+        S.map((s) => s.id + ':' + s.fill).join(', '));
+    },
+  },
+
+  /* ---------- 10a-4. 单行栏不折行 · 只在窄窗口才现形的布局塌陷 ----------
+     这一类缺陷有个共同特征：**开发者的窗口里永远复现不出来**。
+     写 CSS 时窗口是宽的，一切正常；用户把窗口拖窄 200px，flex 开始压缩
+     最软的那个子项，而"最软"往往是最不该动的那块（计数、状态、文件名），
+     于是一个数字标签被折成两行，看着像渲染出错。
+     实测过一次真实案例：选择条里「已选 12 张」在 1000px 宽下被折成 4 行。 */
+  {
+    id: 'nowrap',
+    title: '单行栏不折行 · 顶栏/状态栏/选择条/回收站/灯箱在 880–1500px 下都只有一行',
+    kind: 'probe',
+    script: 'probe_wrap.js',
+    key: 'WRAP ',
+    run: function (ctx) {
+      const check = ctx.check;
+      if (!ctx.data) { check('探针返回数据', false, '未解析到 WRAP 输出'); return; }
+      const d = ctx.data;
+
+      /* 先证明探针真的看了东西：否则"0 处折行"是假绿 */
+      check('探针确实扫到了这些栏（不是空转）',
+        d.barsSeen >= 20 && d.textsSeen >= 40,
+        'bars=' + d.barsSeen + ' texts=' + d.textsSeen);
+      check('四档窗口宽度下都没有被折行的文字',
+        d.total === 0 && d.scanned === 'clean',
+        (d.items || []).map((x) => x.width + 'px ' + x.bar + '「' + x.text + '」→' + x.lines + ' 行').join(' | '));
     },
   },
 

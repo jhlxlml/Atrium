@@ -23,7 +23,7 @@
 | 语言/风格 | vanilla JS + IIFE 挂 `window` + `'use strict'`；中文注释、英文标识符；**注释写"为什么"不写"做什么"**      |
 | 数据存储  | localStorage（设置/收藏/旋转）+ IndexedDB（图片尺寸/缩略图落盘）+ 主进程 JSON（删除日志）；**统一落在应用本体目录的 `data/`**（便携，见 §3.1） |
 | 加载入口  | **2 个**：原生目录选择框（`Ctrl+O`）、拖拽（唯一"条目没有磁盘路径"的通路）                                     |
-| 回归防线  | **29 套件 / 357 项断言**（`run_all.js`，约 190 秒，视机器负载）；含产物自检、校验器的反向门禁、**源级不变量** |
+| 回归防线  | **37 套件 / 470 项断言**（`run_all.js`，约 285 秒，视机器负载）；含产物自检、校验器的反向门禁、**源级不变量** |
 | 当前状态  | 功能完成度高、无障碍四层补齐、相框已转正、四种浏览排布；**没有模块还停在 ★★☆☆☆**                                     |
 
 **一句话**：这是一个"工程纪律极好、防御性断言很密"的小工具项目。它的**风险不在代码质量，而在"改动的接线是否完整"** —— 历史上栽过 6 次的都是同一类病：**功能写好了，但没接到调用链上**（见 §6.1）。
@@ -36,8 +36,8 @@
 
 | 目的         | 命令                                                    | 说明                                                            |
 | ---------- | ----------------------------------------------------- | ------------------------------------------------------------- |
-| 跑全量回归      | `node deploy/electron-test/run_all.js`                | 29 套件 / 357 项 / 约 190 秒。任一失败**非零码退出**。可后台跑               |
-| 快跑（改小东西时）  | `node deploy/electron-test/run_all.js --fast`         | 12 套件 / 54 项 / 约 7.5 秒。**跳过大部分 Electron 探针，但仍含 `tf`（要 electron）** |
+| 跑全量回归      | `node deploy/electron-test/run_all.js`                | 37 套件 / 470 项 / 约 285 秒。任一失败**非零码退出**。可后台跑               |
+| 快跑（改小东西时）  | `node deploy/electron-test/run_all.js --fast`         | 13 套件 / 61 项 / 约 8.4 秒。**跳过大部分 Electron 探针，但仍含 `tf`（要 electron）** |
 | 只跑一个套件     | `node deploy/electron-test/run_all.js masonry`        | 套件 id 见 §5.2                                                  |
 | 纯函数单测（毫秒级） | `node test/transform.test.js` 等                       | `transform` / `imageheader` / `frame` / `a11y` / `masonry` / `desktop` / `updatelib` 七个 |
 | 构建         | `node deploy/electron/assemble.js`                    | 组装 Electron 便携包（**唯一交付物**）                                     |
@@ -49,8 +49,8 @@
 
 **`npm` 脚本别名**（`package.json` 里都有）：`test` / `test:fast` / `build` / `pack` / `verify:zip` / `verify:clone` / `release` / `clean` / `clean:dry`。
 
-> `--fast` **不能脱离 Electron**：它保留的 `tf` 是真实 Electron 探针（贡献 54 项里的 29 项）。
-> 新克隆里没 `npm i` 时它会报"找不到 electron.exe"（12 套件里 11 通过）。
+> `--fast` **不能脱离 Electron**：它保留的 `tf` 是真实 Electron 探针（贡献 61 项里的 29 项）。
+> 新克隆里没 `npm i` 时它会报"找不到 electron.exe"（13 套件里 12 通过）。
 
 ---
 
@@ -190,16 +190,17 @@ main → render :  3 条  （vf:frameClosed / vf:frameMoved / vf:cmd）
 | **Electron 探针** | `deploy/electron-test/probes/probe_*.js`（**18 个**） | 秒级/个 | 真实渲染、几何、交互、无障碍、相框、拖拽、设置面板                                                |
 | **产物自检**        | `appself` / `icon` / `zip` 套件             | 慢    | 跑**装进包里的产物**，不是源码                                                      |
 
-> **断言数字的口径**：`run_all.js` 汇总的是**套件级条目数**（**357**），不等于单个 `assert` 总数
+> **断言数字的口径**：`run_all.js` 汇总的是**套件级条目数**（**470**），不等于单个 `assert` 总数
 > （纯函数套件内部展开更多细分断言，合计 **872**，聚合器各按 1 项计入）。**别自己相加。**
 > 另：`zip` 套件有 **2 条条件断言**只在**交付 ZIP 就位**时才跑 —— 源码态（没打包）会少这 2 项，即 **355**。
 
-### 5.2 29 个套件 id
+### 5.2 37 个套件 id
 
 ```
-a11y  a11yui  appself  approt  center  desktop  desktopui  drop  frame  frozen
-fs  grid  header  heic  icon  ipcchain  masonry  masonryunit  perf  pinch
-rot  rotpersist  settings  tf  topbar  unit  update  zip  zoom
+a11y  a11yui  approt  appself  center  desktop  desktopui  drop  frame  frozen  fs  grid
+header  heic  icon  iconography  ipcchain  lbui  masonry  masonryunit  nowrap  perf  pinch
+rot  rotpersist  rounding  settings  sidebar  single  tf  topbar  toplayout  typescale
+unit  update  zip  zoom
 ```
 
 > **id 不能重复**：纯函数套件 `masonry` 曾与探针套件撞名，已改名 `masonryunit`。
@@ -219,6 +220,9 @@ rot  rotpersist  settings  tf  topbar  unit  update  zip  zoom
 | `ipcchain`| preload 暴露的每条通道都有 handler；`desktop.js` 的每条通道都有探针桩                        | 漏一条就是**静默降级**（`invoke` reject 被 `.catch` 吞掉） |
 | `drop`    | 拖拽通路的 13 项结果断言（索引 / 缩略图 / 灯箱 / 删除拒绝 / 多文件夹分组）                            | 这条通路**此前零覆盖**，而它与主通路的每一条下游路径都不同 |
 | `update`  | `openExternal` 的 URL 白名单（**21 条反向用例**）+ 版本号比较 + 接口响应解析（v1.14.0）            | 白名单放宽 = `shell.openExternal` 变成"打开任意 URL / 执行本地文件"，且**无任何界面迹象** |
+| `typescale` | 三份 CSS 里**没有写死的 `font-size`**；`--fs-*` 无未定义 / 无孤儿 / **无半像素档**（v1.18.0） | 半像素字号（12.5px）单看没问题，只在两段文字并排时露馅 —— 是**最难靠肉眼回归**的一类；就地微调一次就再也收不回来 |
+| `iconography` | 每处 `<use>` 都指向存在的 symbol；网格全 `0 0 24 24`；描边只有 2 与 1.6；渲染尺寸只在四档令牌；symbol 恒为 36（v1.18.0） | 图标会"慢慢走形"：加一个按钮顺手画一个 path，四十个之后单看都像样、并排就毛。加图标必须改 `deploy/gen_sprite.js` 的 `MAP` |
+| `nowrap`  | 880 / 1000 / 1200 / 1500 四档宽度下，顶栏·状态栏·选择条·回收站·灯箱里**没有文字被折行**（v1.18.0） | 这类塌陷**只在某个宽度出现**，开发者的窗口里永远复现不出来；实测抓到过「已选 12 张」被折成 4 行 |
 
 ---
 

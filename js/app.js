@@ -27,7 +27,7 @@
 
   const App = {
     /* 版本号唯一来源：界面（设置面板底部）与构建脚本共用，报障时可一眼确认版本 */
-    VERSION: '1.17.2',
+    VERSION: '1.18.0',
     el: {},
     resizeToken: null,
     /** 弹层标题 id 的自增序号（可及名称用，见 modal()） */
@@ -429,7 +429,7 @@
       // 窄窗口下控件区可横滚：确保展开后的搜索框完整可见
       requestAnimationFrame(() => {
         try {
-          E.searchBox.scrollIntoView({ inline: 'end', block: 'nearest', behavior: 'smooth' });
+          E.searchBox.scrollIntoView({ inline: 'end', block: 'nearest', behavior: Util.scrollBehavior() });
         } catch (err) { /* 忽略 */ }
         if (this._updCtrlScroll) setTimeout(this._updCtrlScroll, 260);
         E.searchInput.focus();

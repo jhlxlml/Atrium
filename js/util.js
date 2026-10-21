@@ -19,6 +19,22 @@
   /** 图标 <svg><use> 片段 */
   U.icon = (id, cls) => `<svg class="${cls || ''}" aria-hidden="true"><use href="#${id}"/></svg>`;
 
+  /* ---------- 动效偏好 ----------
+     CSS 侧的"减少动态效果"由 main.css 的 @media (prefers-reduced-motion) 统一兜住
+     （三份 CSS 都在同一个文档里，那条 `*` 规则对灯箱、相框同样生效）。
+     但它管不到 **JS 驱动的滚动** —— scrollTo({behavior:'smooth'}) 该滑还是滑。
+     所以滚动调用点统一取 U.scrollBehavior()，不要再各自写死 'smooth'。
+
+     两个来源都算"要静止"：系统级 prefers-reduced-motion，以及应用内设置
+     body[data-anim="0"]（设置 → 外观 → 关闭过渡动画）。用户关了一次动效，
+     不该只关掉 CSS 那一半、留下滚动还在滑。 */
+  U.reducedMotion = () => {
+    if (document.body && document.body.dataset.anim === '0') return true;
+    try { return global.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+    catch (e) { return false; }
+  };
+  U.scrollBehavior = () => (U.reducedMotion() ? 'auto' : 'smooth');
+
   /* ---------- 排序 ---------- */
   const COLLATOR = typeof Intl !== 'undefined' && Intl.Collator
     ? new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' })

@@ -112,8 +112,8 @@ npm test
 
 | Command | Purpose |
 |---|---|
-| `npm test` | Full regression: **29 suites / 357 assertions**, roughly 190 s |
-| `npm run test:fast` | Quick pass: 12 suites / 54 assertions, ~8 s (**includes `tf`, which needs electron**) |
+| `npm test` | Full regression: **37 suites / 470 assertions**, roughly 285 s |
+| `npm run test:fast` | Quick pass: 13 suites / 61 assertions, ~8 s (**includes `tf`, which needs electron**) |
 | `npm run build` | Build the portable Electron package |
 | `npm run pack` | Produce the release ZIP |
 | `npm run verify:zip` | Independent ZIP verification (CRC / structure / third-party re-check) |
@@ -177,8 +177,8 @@ The project tries hard to turn "potholes we fell into" into **mechanisms**. Curr
 
 | Metric | Value |
 |---|---|
-| Regression | **29 suites / 357 assertions**, non-zero exit on any failure |
-| Source size | `js/` 9,584 lines across 15 modules · `css/` 1,805 lines across 3 files · `index.html` 373 lines · main-process side 2,993 lines |
+| Regression | **37 suites / 470 assertions**, non-zero exit on any failure |
+| Source size | `js/` 9,923 lines across 15 modules · `css/` 2,236 lines across 3 files · `index.html` 433 lines · main-process side 3,047 lines across 6 files |
 | IPC | 35 invoke + 1 renderer→main + 3 main→renderer = **39 unique channel names** |
 | Runtime dependencies | **0** (`electron` and `rcedit` are build-time only) |
 
@@ -191,8 +191,8 @@ Several layers of the regression are **mutually independent lines of defence**:
 - **Security criteria go into the regression too**: the `update` suite locks the `openExternal` URL allow-list with **21 reverse cases** (subdomain spoofing, userinfo spoofing, non-default port, path traversal, `file://`, `javascript:` …) — testing only that "the official link passes" would be an always-true gate.
 - **Failures explain themselves**: assertion messages carry field evidence such as "how many announcements fired, and what the last one said", instead of just `false`.
 
-> **On the number**: `357` counts **suite-level entries**. Seven pure-function suites expand into far more fine-grained assertions internally (872 in total) but are counted as one entry each — so **do not add them up**.
-> Separately, the `zip` suite has **2 conditional assertions** that only run when the **delivery ZIP is present** (a source-only checkout reports `355` / ~175 s) — it tests whether the built package itself is correct, which is moot without a package.
+> **On the number**: `470` counts **suite-level entries**. Seven pure-function suites expand into far more fine-grained assertions internally (872 in total) but are counted as one entry each — so **do not add them up**.
+> Separately, the `zip` suite has **2 conditional assertions** that only run when the **delivery ZIP is present** (a source-only checkout reports `468` / ~275 s) — it tests whether the built package itself is correct, which is moot without a package.
 
 ## Repository layout
 
@@ -241,8 +241,9 @@ Atrium/
 | File | Contents |
 |---|---|
 | [`Atrium_开发上手手册.md`](Atrium_开发上手手册.md) | **Handbook**: commands, the five layers, landmine list, standard procedures for adding a setting or an IPC channel, frozen identifiers |
-| [`Atrium_v1.17.2_更新说明.md`](Atrium_v1.17.2_更新说明.md) | This version: in single-column view the previous image no longer shows through the top bar |
-| [`Atrium_v1.17.1_更新说明.md`](Atrium_v1.17.1_更新说明.md) | Previous release: single-column view no longer hides the top of images behind the chrome (regression fix) |
+| [`Atrium_v1.18.0_更新说明.md`](Atrium_v1.18.0_更新说明.md) | This version: icons unified on Lucide / type scale collapsed to 8 steps / colour semantics split / selection-bar text no longer wraps |
+| [`Atrium_v1.17.2_更新说明.md`](Atrium_v1.17.2_更新说明.md) | Previous release: in single-column view the previous image no longer shows through the top bar |
+| [`Atrium_v1.17.1_更新说明.md`](Atrium_v1.17.1_更新说明.md) | Older: single-column view no longer hides the top of images behind the chrome (regression fix) |
 | [`Atrium_v1.17.0_更新说明.md`](Atrium_v1.17.0_更新说明.md) | Previous release: Apple HIG rebuild / sources moved to a left rail / two grid views / 10 UI fixes |
 | [`Atrium_v1.14.0_更新说明.md`](Atrium_v1.14.0_更新说明.md) | Older: portable data directory / About panel / update check |
 | [`Atrium_v1.13.0_更新说明.md`](Atrium_v1.13.0_更新说明.md) | Older: rename to Atrium / desktop integration / Electron only |

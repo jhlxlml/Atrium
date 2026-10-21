@@ -914,7 +914,7 @@
         const p = this.positions[i]; if (!p) return;
         global.scrollTo({
           top: this.stage.getBoundingClientRect().top + global.scrollY + p.y - global.innerHeight * 0.32,
-          behavior: 'smooth',
+          behavior: Util.scrollBehavior(),
         });
       }
       const el = this.els.get(i);

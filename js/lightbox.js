@@ -799,7 +799,7 @@
         b.appendChild(ic);
         b.addEventListener('click', () => {
           this.i = k; this.meta = m; this.render();
-          b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+          b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: Util.scrollBehavior() });
         });
         b._idx = k;
         this.strip.appendChild(b);
@@ -817,7 +817,7 @@
         el.classList.toggle('is-fav', !!m && State.isFav(m.id));
       }
       const cur = items[this.i];
-      if (cur && this.openFlag && this.strip.hidden === false) cur.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+      if (cur && this.openFlag && this.strip.hidden === false) cur.scrollIntoView({ inline: 'center', block: 'nearest', behavior: Util.scrollBehavior() });
     },
 
     toggleStrip() {

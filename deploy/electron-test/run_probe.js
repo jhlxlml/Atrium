@@ -83,14 +83,24 @@ function runProbe(script, opts) {
   }
   if (!fs.existsSync(abs)) throw new Error('探针不存在: ' + script);
   const exe = electronPath();
+  /* 每个探针一份**独立 userData**（main.js 早就支持 VF_USERDATA，--selftest 走的就是这条路）。
+     不隔离会踩两个坑，而且都很难查：
+       ① 锁竞争：前一个探针的进程还没退干净（SingletonLock 还在），后一个立刻起来，
+          Chromium 判定"profile in use"会弹一个对话框等人点 —— 探针就那么干等，
+          表现是随机某个套件 `spawnSync … ETIMEDOUT` 240s，且单独复跑必绿；
+       ② 状态污染：共用 %APPDATA%/Electron 时，settings 套件改过的密度/主题/视图
+          会被下一个探针当成"默认值"读走（历史上 fs 与 settings 不能并行就是这个）。 */
+  const ud = fs.mkdtempSync(path.join(require('os').tmpdir(), 'vf-probe-'));
   const r = spawnSync(exe, [abs], {
     cwd: path.resolve(HERE, '..', '..'),
-    env: cleanEnv(),
+    env: cleanEnv({ VF_USERDATA: ud }),
     encoding: 'utf8',
     timeout: o.timeout || 180000,
     maxBuffer: 64 * 1024 * 1024,
     windowsHide: true,
   });
+  // 进程已退出，profile 可以丢；Windows 上偶有文件句柄没放，删不掉也不影响下次（新目录）
+  try { fs.rmSync(ud, { recursive: true, force: true }); } catch (e) { }
   return {
     code: r.status,
     stdout: r.stdout || '',

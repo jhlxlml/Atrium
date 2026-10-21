@@ -10,6 +10,10 @@
   background: #000;
   color: #f5f5f7;
   user-select: none;
+  /* 焦点环换亮一档 —— 全局 --ring 是 42% 的系统蓝，落在纯黑底上只剩一层灰蓝，
+     键盘用户看不出焦点停在哪颗按钮。同一支蓝，只把不透明度提上来。
+     自定义属性沿 DOM 继承，所以灯箱里所有按钮自动拿到这一档，不用逐个写。 */
+  --ring: rgba(96, 168, 255, .85);
 }
 .lb-bg {
   position: absolute; inset: 0;
@@ -68,11 +72,11 @@ svg.flip-x { transform: scaleX(-1); }
   text-align: center; color: rgba(255, 255, 255, .55);
   display: flex; flex-direction: column; align-items: center; gap: 14px;
 }
-.lb-err svg { width: 36px; height: 36px; opacity: .6; }
-.lb-err p { font-size: 13px; line-height: 1.7; }
-.lb-err span { color: rgba(255, 255, 255, .4); font-size: 12px; word-break: break-all; }
+.lb-err svg { width: var(--ic-xl); height: var(--ic-xl); opacity: .6; }
+.lb-err p { font-size: var(--fs); line-height: 1.7; }
+.lb-err span { color: rgba(255, 255, 255, .4); font-size: var(--fs-s); word-break: break-all; }
 /* 失败原因（比文件名更值得读）：单独一行、更亮一点、限宽可读 */
-.lb-err .lb-err-why { display: block; margin-top: 8px; max-width: 380px; color: rgba(255, 255, 255, .62); font-size: 12.5px; }
+.lb-err .lb-err-why { display: block; margin-top: 8px; max-width: 380px; color: rgba(255, 255, 255, .62); font-size: var(--fs); }
 
 /* 关闭：圆形材质按钮，右上角。
    右上角是各类查看器（Lightroom、Windows 照片、浏览器 PDF 阅读器）的退出惯例，
@@ -88,7 +92,7 @@ svg.flip-x { transform: scaleX(-1); }
   display: flex; align-items: center; justify-content: center;
   opacity: .9; transition: opacity .18s var(--ease, ease), background .18s var(--ease, ease), transform .18s var(--ease, ease);
 }
-.lb-close svg { width: 16px; height: 16px; }
+.lb-close svg { width: var(--ic); height: var(--ic); }
 .lb-close:hover { opacity: 1; background: rgba(255, 255, 255, .22); transform: scale(1.04); }
 .lb-close:active { transform: scale(.94); }
 
@@ -104,7 +108,7 @@ svg.flip-x { transform: scaleX(-1); }
   opacity: .62;
   transition: opacity .18s var(--ease, ease), background .18s var(--ease, ease), transform .18s var(--ease, ease);
 }
-.lb-nav svg { width: 20px; height: 20px; }
+.lb-nav svg { width: var(--ic-l); height: var(--ic-l); }
 .lb-nav:hover { opacity: 1; background: rgba(255, 255, 255, .22); }
 .lb-nav:active { transform: translateY(-50%) scale(.92); }
 .lb-nav.disabled { opacity: 0; pointer-events: none; }
@@ -121,7 +125,7 @@ svg.flip-x { transform: scaleX(-1); }
   -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
   border: .5px solid rgba(255, 255, 255, .10);
   box-shadow: 0 18px 50px -22px rgba(0, 0, 0, .9);
-  font-size: 13px;
+  font-size: var(--fs);
   pointer-events: none;
   overflow: hidden;
   transition: bottom .24s var(--ease, ease);
@@ -130,14 +134,14 @@ svg.flip-x { transform: scaleX(-1); }
 .lb-file { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
 .lb-name {
   font-family: var(--font-ui, -apple-system, "Segoe UI", sans-serif);
-  font-size: 13.5px; font-weight: 500; color: #f5f5f7;
+  font-size: var(--fs); font-weight: 500; color: #f5f5f7;
   letter-spacing: -.006em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: min(42vw, 380px);
 }
 .lb-count {
   color: rgba(235, 235, 245, .55); font-variant-numeric: tabular-nums;
-  letter-spacing: .02em; white-space: nowrap; font-size: 12px;
+  letter-spacing: .02em; white-space: nowrap; font-size: var(--fs-s);
 }
 
 .lb-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
@@ -148,19 +152,20 @@ svg.flip-x { transform: scaleX(-1); }
 }
 .lb-actions .ico-btn:hover { background: rgba(255, 255, 255, .14); color: #fff; }
 .lb-actions .ico-btn:active { transform: scale(.9); background: rgba(255, 255, 255, .22); color: #fff; }
-/* 激活态分两种语义，别混用同一种黄：
+/* 激活态分三种语义，别混用同一种颜色：
    is-on  = "某个面板/模式打开了"（信息、缩略条、滚轮切图）→ 系统蓝
    is-fav = "这张被收藏了" → 黄色星
-   原来四颗按钮共用黄色，扫一眼会觉得它们都是"已收藏"。 */
+   is-play = "幻灯片正在自动播放" → 绿色（这是**进程状态**，不是控件开关，
+             全站绿色的唯一去处就是这里；设置里的开关早已改成蓝） */
 .lb-actions .ico-btn.is-on { color: #6fb6ff; background: rgba(10, 132, 255, .20); }
 .lb-actions .ico-btn.is-fav { color: var(--favorite, #ffd60a); background: rgba(255, 214, 10, .16); }
 .lb-actions .ico-btn.is-play { color: var(--success, #34c759); background: rgba(52, 199, 89, .16); }
 .lb-actions .ico-btn.disabled { opacity: .3; pointer-events: none; }
-.lb-actions .ico-btn svg { width: 17px; height: 17px; }
+.lb-actions .ico-btn svg { width: var(--ic); height: var(--ic); }
 .lb-pct {
   min-width: 56px; text-align: center;
   border: 0; background: rgba(255, 255, 255, .10); border-radius: var(--r-s);
-  color: #f5f5f7; font-size: 11.5px; font-weight: 500; font-family: inherit;
+  color: #f5f5f7; font-size: var(--fs-s); font-weight: 500; font-family: inherit;
   padding: 7px 8px; font-variant-numeric: tabular-nums;
   cursor: pointer; transition: background .18s var(--ease, ease);
 }
@@ -214,7 +219,7 @@ svg.flip-x { transform: scaleX(-1); }
 }
 .lb-strip-item.is-fav::after {
   content: "★"; position: absolute; top: 2px; right: 5px;
-  color: var(--favorite, #ffd60a); font-size: 10px;
+  color: var(--favorite, #ffd60a); font-size: var(--fs-2xs);
 }
 
 /* ============================================================
@@ -286,11 +291,11 @@ svg.flip-x { transform: scaleX(-1); }
 .lb-info-body {
   overflow-y: auto; height: 100%;
   padding: 16px 16px 8px;
-  font-size: 12.5px; color: rgba(245, 245, 247, .92);
+  font-size: var(--fs); color: rgba(245, 245, 247, .92);
   scrollbar-width: thin;
 }
 .lb-info-body h4 {
-  margin: 0 0 10px; font-size: 10.5px; letter-spacing: .18em;
+  margin: 0 0 10px; font-size: var(--fs-xs); letter-spacing: .18em;
   color: rgba(235, 235, 245, .42); font-weight: 600; text-transform: uppercase;
 }
 .lb-info-row {
@@ -300,9 +305,9 @@ svg.flip-x { transform: scaleX(-1); }
   line-height: 1.5;
 }
 .lb-info-row:last-of-type { border-bottom: 0; }
-.lb-info-k { flex: none; width: 58px; color: rgba(235, 235, 245, .5); font-size: 11.5px; }
+.lb-info-k { flex: none; width: 58px; color: rgba(235, 235, 245, .5); font-size: var(--fs-s); }
 .lb-info-v { flex: 1; min-width: 0; word-break: break-all; }
-.lb-info-note { margin-top: 8px; color: rgba(235, 235, 245, .38); font-size: 11.5px; line-height: 1.7; }
+.lb-info-note { margin-top: 8px; color: rgba(235, 235, 245, .38); font-size: var(--fs-s); line-height: 1.7; }
 /* 信息面板在右侧展开：底部 HUD 与右翻页键让开 332px（面板 304 + 16 右边距 + 12 间隙）。
    关闭键不用让 —— 它在 top:16 + 40 高 = 56px 处就结束了，而面板从 top:72 才开始，
    竖向不重叠；硬挪到面板左侧只会让它在开面板的瞬间横跳一下。 */
