@@ -74,7 +74,9 @@ svg.flip-x { transform: scaleX(-1); }
 }
 .lb-err svg { width: var(--ic-xl); height: var(--ic-xl); opacity: .6; }
 .lb-err p { font-size: var(--fs); line-height: 1.7; }
-.lb-err span { color: rgba(255, 255, 255, .4); font-size: var(--fs-s); word-break: break-all; }
+/* .4 压黑底只有 3.66:1（102,102,102）—— 这是这张图打不开、文件叫什么的唯一线索，
+   不能比装饰文字还淡。.55 提到 5.5:1。 */
+.lb-err span { color: rgba(255, 255, 255, .55); font-size: var(--fs-s); word-break: break-all; }
 /* 失败原因（比文件名更值得读）：单独一行、更亮一点、限宽可读 */
 .lb-err .lb-err-why { display: block; margin-top: 8px; max-width: 380px; color: rgba(255, 255, 255, .62); font-size: var(--fs); }
 

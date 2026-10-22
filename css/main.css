@@ -43,6 +43,16 @@
   --accent: #0071e3;           /* 系统蓝（主操作） */
   --accent-hover: #0077ed;
   --accent-soft: rgba(0, 113, 227, .12);
+  /* 强调色有三张面孔，**别混用**：
+       --accent        图标 / 焦点环 / 边框 / 半透明底 —— 只要不是"白字压上去"
+       --accent-solid  **白字压在上面的实色底**。白字对它的对比度必须 ≥4.5
+       --accent-text   **浅色底上的强调文字**。蓝字压在 #f1f1f3 这类浅灰上
+     为什么非要拆：同一个 #0071e3，当底色用（白字压）是 4.70:1，当文字色用
+     （压在 #f1f1f3 上）只有 4.17:1 —— 差一点点，但一个是达标一个不达标。
+     深色主题更极端：--accent 是 #0a84ff（亮蓝，当图标好看），白字压上去只有
+     3.65:1，所以实底必须单独压暗到 #0b6bcb（5.48:1）。 */
+  --accent-solid: #0071e3;
+  --accent-text: #0062c4;
   --sel: #0071e3;              /* 选中 */
   --sel-soft: rgba(0, 113, 227, .14);
   --ring: rgba(0, 113, 227, .42);
@@ -158,6 +168,11 @@ body[data-theme="dark"] {
   --accent: #0a84ff;
   --accent-hover: #3d9bff;
   --accent-soft: rgba(10, 132, 255, .20);
+  /* 深色下 --accent 变亮（#0a84ff 当图标/焦点环很好看），但白字压上去只有
+     3.65:1 —— 所以实底要**反着来**：压暗到 #0b6bcb 才有 5.48:1。
+     这是"深色下更深是反的"这条规则唯一的例外，原因是这里比较的是白字而不是底色。 */
+  --accent-solid: #0b6bcb;
+  --accent-text: #4da3ff;
   --sel: #0a84ff;
   --sel-soft: rgba(10, 132, 255, .22);
   --ring: rgba(10, 132, 255, .55);
@@ -356,7 +371,10 @@ html.snap-single .topbar {
   /* 上下各 3px：这条工具栏常驻 overflow-y: hidden（横向要能滚），
      而选中滑片的投影是 0 1px 2px —— 贴着边就正好被裁掉，看着像"边缘脏了"。
      留 3px 给它落地，控件本身仍是 32px 一条基线。 */
-  padding: 3px 0;
+  /* 四边各 4px = 焦点环的 outline 2px + offset 2px。少了任何一边，
+     那个方向的蓝边就会被 padding box 裁掉 —— 键盘 Tab 时看到的是
+     "这个按钮只有三面有框"，很像渲染坏了。 */
+  padding: 4px;
 }
 /* 组间：一根 16px 发丝线 + 两侧各 6px 空气（线是唯一的分组标记，不再靠底色）。
    16px 是 32px 基线的一半 —— 与 40px 胶囊里 20px 的比例一致。 */
@@ -536,7 +554,7 @@ input[type="range"]::-moz-range-thumb {
 .btn svg { width: var(--ic); height: var(--ic); }
 .btn:active:not(:disabled) { transform: scale(.97); }
 .btn-primary {
-  background: var(--accent); color: #fff;
+  background: var(--accent-solid); color: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
 }
 .btn-primary:hover { background: var(--accent-hover); }
@@ -894,7 +912,8 @@ body.has-wco .sidebar {
 .sb-scroll {
   flex: 1; min-height: 0;
   overflow-y: auto; overflow-x: hidden;
-  padding: 0 8px 10px;
+  /* top 4px：第一个 chip 的焦点环要 outline 2px + offset 2px，贴着上沿就被裁掉 */
+  padding: 4px 8px 10px;
   scrollbar-width: thin;
 }
 .sb-foot { flex: none; padding: 8px; border-top: .5px solid var(--line); }
@@ -920,13 +939,13 @@ body.has-wco .sidebar {
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .src-chip:hover { background: var(--fill-2); color: var(--ink); }
-.src-chip.is-on { background: var(--accent); color: #fff; }
-.src-chip.is-on .sc-count { color: #fff; background: rgba(255, 255, 255, .22); }
+.src-chip.is-on { background: var(--accent-solid); color: #fff; }
+.src-chip.is-on .sc-count { color: #fff; background: rgba(0, 0, 0, .24); }
 /* 0 张的来源：**不改文字颜色**（换浅一档就掉到 4.3:1），
    只把数量徽标降到最浅的填充，说明放进 title —— 点进去是空图库，
    至少点之前能知道为什么。 */
 .src-chip.is-empty .sc-count { background: var(--fill-1); }
-.src-chip.is-on.is-empty .sc-count { background: rgba(255, 255, 255, .22); }
+.src-chip.is-on.is-empty .sc-count { background: rgba(0, 0, 0, .24); }
 /* 移除键默认不显示：一列十行都挂着叉号，会把「切换来源」这个主操作压下去。
    悬停当前行才出现，且鼠标移上去再加深一次。 */
 .src-chip .sc-x {
@@ -1144,8 +1163,9 @@ body.has-wco .sidebar {
   font-size: var(--fs); font-weight: 600; letter-spacing: -.005em; color: var(--ink);
 }
 .tp-clear, .tp-open, .tp-viewall {
-  border: 0; background: transparent; color: var(--accent);
-  font-size: var(--fs-s); font-weight: 500; padding: 2px 4px; border-radius: var(--r-xs);
+  border: 0; background: transparent; color: var(--accent-text);
+  font-size: var(--fs-s); font-weight: 500; padding: 3px 6px; border-radius: var(--r-xs);
+  min-height: 24px; display: inline-flex; align-items: center;
 }
 .tp-clear:hover, .tp-open:hover, .tp-viewall:hover { background: var(--accent-soft); }
 .tp-viewall { font-weight: 600; }
@@ -1165,7 +1185,7 @@ body.has-wco .sidebar {
   border: 0; background: var(--fill-2); color: var(--ink);
   font-size: var(--fs-s); font-weight: 500; padding: 4px 11px; border-radius: var(--r-s); white-space: nowrap;
 }
-.tp-restore:hover { background: var(--accent); color: #fff; }
+.tp-restore:hover { background: var(--accent-solid); color: #fff; }
 .tp-foot {
   display: flex; align-items: center; justify-content: space-between;
   padding: 9px 14px; border-top: .5px solid var(--line); background: var(--fill-1);
@@ -1309,7 +1329,7 @@ body.has-wco .sidebar {
 
 /* 文字按钮 */
 .sp-btn {
-  border: 0; background: var(--fill-1); color: var(--accent);
+  border: 0; background: var(--fill-1); color: var(--accent-text);
   font-family: inherit; font-size: var(--fs-s); font-weight: 500;
   padding: 5px 11px; border-radius: var(--r-s);
   transition: background .16s var(--ease), color .16s var(--ease);
@@ -1322,14 +1342,20 @@ body.has-wco .sidebar {
 .sp-foot {
   display: flex; align-items: center; justify-content: space-between;
   padding: 9px 16px; border-top: .5px solid var(--line); background: var(--fill-1);
+  /* 底栏是 flex:none 固定在面板底部，但 .sp-body 的内容会从它下面滚过。
+     --fill-1 只有 16% 不透明度，滚过去的半行字清清楚楚透出来。
+     补一层背景模糊把它压住（面板本身已有 30px 模糊，这里再收一道）。 */
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
   flex: none;
 }
 .sp-tip { font-size: var(--fs-xs); color: var(--muted); }
 /* 版本号：报障时用来确认所跑版本，弱化处理，不抢视觉 */
-.sp-ver { font-variant-numeric: tabular-nums; opacity: .72; }
+.sp-ver { font-variant-numeric: tabular-nums; }
 .sp-reset {
-  border: 0; background: transparent; color: var(--accent);
-  font-family: inherit; font-size: var(--fs-s); font-weight: 500; padding: 3px 5px; border-radius: var(--r-xs);
+  border: 0; background: transparent; color: var(--accent-text);
+  font-family: inherit; font-size: var(--fs-s); font-weight: 500; padding: 3px 6px; border-radius: var(--r-xs);
+  /* 命中框不低于 24px：12px 字 × 1.5 行高 = 18，加 2×3 padding 才 24 —— 差 2px 也算不达标 */
+  min-height: 24px; display: inline-flex; align-items: center;
 }
 .sp-reset:hover { background: var(--accent-soft); }
 
@@ -1506,7 +1532,7 @@ body.has-wco .sidebar {
 .tv-chk svg { width: var(--ic-xs); height: var(--ic-xs); opacity: 0; }
 .tv-card:hover .tv-chk { opacity: 1; transform: none; }
 .tv-card.is-sel { border-color: var(--sel); box-shadow: 0 0 0 2px var(--sel) inset; }
-.tv-card.is-sel .tv-chk { opacity: 1; transform: none; background: var(--sel); border-color: var(--sel); }
+.tv-card.is-sel .tv-chk { opacity: 1; transform: none; background: var(--accent-solid); border-color: var(--sel); }
 .tv-card.is-sel .tv-chk svg { opacity: 1; }
 
 .tv-one {
@@ -1517,7 +1543,7 @@ body.has-wco .sidebar {
   opacity: 0; transform: translateY(-2px); transition: opacity .15s var(--ease), transform .15s var(--ease);
 }
 .tv-card:hover .tv-one { opacity: 1; transform: none; }
-.tv-one:hover { background: var(--accent); }
+.tv-one:hover { background: var(--accent-solid); }
 
 .tv-cap { display: block; padding: 10px 12px 12px; }
 .tv-name {
@@ -1576,6 +1602,10 @@ body.privacy-blur .tile::after {
   .ctrls { flex-wrap: nowrap; gap: 4px; flex: 0 1 auto; min-width: 0; }
   .ctrls > .sep { display: none; }
   .seg-txt { display: none; }
+  /* 尺寸滑杆两端的 -/+ 收起：滑杆本身可拖、可键盘左右调，这两个按钮只是
+     重复入口，却各占 32px。窄窗下把它们的位置让给右侧的「设置」——
+     后者是唯一入口，被横滚裁出屏幕就等于功能消失（用户也看不出右边还有东西）。 */
+  .sizectl > .ico-btn { display: none; }
   .search.is-open input { width: 150px; max-width: 150px; }
 }
 @media (max-width: 720px) {

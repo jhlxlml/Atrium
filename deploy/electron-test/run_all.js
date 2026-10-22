@@ -1297,13 +1297,18 @@ const SUITES = [
       const clear = (c) => c === 'rgba(0, 0, 0, 0)' || c === 'transparent';
       const uniq = (a) => [...new Set(a)];
 
-      /* 外框：底色 / 描边 / 圆角 / 横向内边距四件套，缺一件都还是"盒子"。
-         纵向 3px 不算 —— 那是给选中滑片的投影留的落地空间（横向 overflow 常驻，
-         不留这 3px 投影就会被裁成硬边）。 */
-      check('控件簇没有外框（无底色 / 无描边 / 无圆角 / 无横向内边距）',
-        clear(C.bg) && parseFloat(C.border) === 0 && parseFloat(C.radius) === 0
-          && C.padX === 0,
+      /* 外框：底色 / 描边 / 圆角三件套，缺一件都还是"盒子"。
+         横向内边距单独看（见下一条）—— 它现在有了正当用途，不能再算进"外框"。 */
+      check('控件簇没有外框（无底色 / 无描边 / 无圆角）',
+        clear(C.bg) && parseFloat(C.border) === 0 && parseFloat(C.radius) === 0,
         'bg=' + C.bg + ' border=' + C.border + ' radius=' + C.radius + ' padding=' + C.padding);
+
+      /* 横向内边距只允许 4px/边 —— 正好是焦点环的 outline 2px + offset 2px。
+         再大就是"胶囊内边距"换个形式回来了：外框的底色描边都去掉了，但留白
+         还在，视觉上依然是一个盒子套着一排键。 */
+      check('横向内边距只留焦点环所需（≤4px/边）',
+        C.padX <= 8,
+        'padX=' + C.padX + ' padding=' + C.padding);
 
       /* 小图网格那组的灰色轨道是第二层外框 */
       check('分段控件没有轨道（灰底槽已去掉，无内边距）',
@@ -1363,6 +1368,83 @@ const SUITES = [
         check('窄窗下工具栏不横向溢出（分段文字收起后仍放得下）',
           nr.scrolls === false, JSON.stringify(nr));
       }
+    },
+  },
+
+  /* ---------- 9a. UI 审查 · 对比度 / 焦点环 / 命中框 / 截断 ---------- */
+  /* 这四项有个共同点：**它们在截图里都不显眼**。
+     对比度差 0.3 人眼分辨不出（4.17 vs 4.50）；焦点环少一条边看起来像"设计成
+     只有三面"；22px 的按钮和 24px 的按钮并排放看不出差别；截断的标题反正都有
+     省略号。所以只能靠算，不能靠看。
+     探针自己也要被审：它踩过三个坑（模板字符串吃反斜杠、隐藏窗口动画节流、
+     滚动容器假阳性），每个坑都会让它输出"看起来正常"的假绿。 */
+  {
+    id: 'uxaudit',
+    title: 'UI 审查 · 文字对比度 ≥4.5 / 焦点环不被裁 / 命中框 ≥24px / 无静默截断',
+    kind: 'probe',
+    script: 'probe_uxaudit.js',
+    keys: ['UXAUDIT '],
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.keys['UXAUDIT '];
+      if (!d) { check('探针返回数据', false, '未解析到 UXAUDIT 输出'); return; }
+
+      const SCENES = ['gallery-light', 'gallery-dark', 'selectbar', 'lightbox',
+        'settings', 'trash', 'empty', 'narrow-760'];
+      const missing = SCENES.filter((s) => !d[s]);
+      check('8 个场景都测到（浅/深、选择条、灯箱、设置、回收站、空态、窄窗）',
+        missing.length === 0, missing.join(', '));
+
+      /* 自证：主题真的切了、过渡真的关了。不查这两条，深色场景可能整段
+         量的是浅色值 —— 曾经因此把 #a1a1a6 的浅灰文字报成"2.3:1"。 */
+      check('浅色场景主题为 light 且过渡已关闭',
+        d['gallery-light'] && d['gallery-light'].theme === 'light' && d['gallery-light'].diag.anim === '0',
+        JSON.stringify(d['gallery-light'] && d['gallery-light'].diag));
+      check('深色场景主题为 dark 且变量已切到深色值',
+        d['gallery-dark'] && d['gallery-dark'].theme === 'dark' && d['gallery-dark'].diag.paper === '#141416',
+        JSON.stringify(d['gallery-dark'] && d['gallery-dark'].diag));
+
+      /* ① 对比度：正文 4.5 / 大字 3.0。disabled 控件 WCAG 豁免，但探针仍会
+         列出来 —— 这里只统计"非 disabled"的，避免把灰掉的按钮算成缺陷。 */
+      const badContrast = [];
+      for (const s of SCENES) {
+        for (const c of ((d[s] || {}).contrast || [])) {
+          if (!c.disabled) badContrast.push(s + ': ' + c.r + ':1 "' + c.text + '" ' + c.el);
+        }
+      }
+      check('所有可见文字的对比度达标（正文 ≥4.5 / 大字 ≥3.0）',
+        badContrast.length === 0, badContrast.slice(0, 6).join(' | '));
+
+      /* ② 焦点环：outline 2px + offset 2px 必须整圈画得出来。被 overflow
+         裁掉一条边的焦点环，键盘用户看到的是"这个按钮只有三面有框"。 */
+      const badClip = [];
+      for (const s of SCENES) {
+        for (const c of ((d[s] || {}).clip || [])) {
+          badClip.push(s + ': ' + c.el + ' 被 ' + c.by + ' 裁 ' + JSON.stringify(c.cut));
+        }
+      }
+      check('焦点环四边都画得出来（没有被 overflow 祖先裁掉）',
+        badClip.length === 0, badClip.slice(0, 5).join(' | '));
+
+      /* ③ 命中框：WCAG 2.2 AA 2.5.8 要求 ≥24×24 */
+      const small = [];
+      for (const s of SCENES) {
+        for (const t of ((d[s] || {}).target || [])) {
+          small.push(s + ': ' + t.w + '×' + t.h + ' ' + t.el);
+        }
+      }
+      check('可交互元素命中框 ≥24×24（WCAG 2.2 AA）',
+        small.length === 0, small.slice(0, 5).join(' | '));
+
+      /* ④ 静默截断：被裁了又没有任何补偿（无 title / 无 aria-label） */
+      const trunc = [];
+      for (const s of SCENES) {
+        for (const t of ((d[s] || {}).trunc || [])) {
+          trunc.push(s + ': "' + t.text + '" ' + t.scrollW + '>' + t.clientW + ' ' + t.el);
+        }
+      }
+      check('没有"截断了却不说"的文字（有省略号就得有 title / aria-label）',
+        trunc.length === 0, trunc.slice(0, 5).join(' | '));
     },
   },
 
