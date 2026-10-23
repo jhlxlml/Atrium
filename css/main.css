@@ -45,13 +45,26 @@
   --accent-soft: rgba(0, 113, 227, .12);
   /* 强调色有三张面孔，**别混用**：
        --accent        图标 / 焦点环 / 边框 / 半透明底 —— 只要不是"白字压上去"
-       --accent-solid  **白字压在上面的实色底**。白字对它的对比度必须 ≥4.5
+       --accent-solid  **压字在上面的实色底**。字对它必须 ≥4.5
        --accent-text   **浅色底上的强调文字**。蓝字压在 #f1f1f3 这类浅灰上
      为什么非要拆：同一个 #0071e3，当底色用（白字压）是 4.70:1，当文字色用
      （压在 #f1f1f3 上）只有 4.17:1 —— 差一点点，但一个是达标一个不达标。
      深色主题更极端：--accent 是 #0a84ff（亮蓝，当图标好看），白字压上去只有
-     3.65:1，所以实底必须单独压暗到 #0b6bcb（5.48:1）。 */
+     3.65:1，所以实底必须单独压暗到 #0b6bcb（5.28:1）。
+
+     第四支是 v1.20.0 加的：--on-accent = **压在实底上的那层字**。
+     它存在的理由是"强调色可以自定义"：用户选一支纯黄 #ffcc00 时，
+     白字只有 1.4:1 —— 正确做法是**把字换深**，而不是为了迁就白字
+     把黄涂成深橄榄（后者用户会觉得"我选的色没生效"）。
+     任意颜色与纯白/纯黑的对比度至少有一个 ≥4.58，所以"换字色"总能达标。
+     推导规则见 js/theme.js，门禁见 test/theme.test.js。 */
   --accent-solid: #0071e3;
+  --on-accent: #fff;
+  /* 实底上再叠一档（来源列表的数量徽标、选中行里的悬停圆底）。
+     **方向必须背离 --on-accent**：字白就叠黑、字深就叠白 —— 叠加只会让字更清楚。
+     这里默认白字，所以是 24% 黑；自定义强调色时 js/theme.js 会按实际字色改写
+     （纯黄实底配深字，就得叠白而不是叠黑，否则深字被压到 2.63:1）。 */
+  --accent-step: rgba(0, 0, 0, .24);
   --accent-text: #0062c4;
   --sel: #0071e3;              /* 选中 */
   --sel-soft: rgba(0, 113, 227, .14);
@@ -169,10 +182,12 @@ body[data-theme="dark"] {
   --accent-hover: #3d9bff;
   --accent-soft: rgba(10, 132, 255, .20);
   /* 深色下 --accent 变亮（#0a84ff 当图标/焦点环很好看），但白字压上去只有
-     3.65:1 —— 所以实底要**反着来**：压暗到 #0b6bcb 才有 5.48:1。
+     3.65:1 —— 所以实底要**反着来**：压暗到 #0b6bcb 才有 5.28:1。
      这是"深色下更深是反的"这条规则唯一的例外，原因是这里比较的是白字而不是底色。 */
   --accent-solid: #0b6bcb;
   --accent-text: #4da3ff;
+  /* --on-accent 不在这里重定义：深色默认实底 #0b6bcb 上仍是白字，
+     沿用 :root 的 #fff。自定义强调色时由 js/theme.js 写在 body 行内样式上。 */
   --sel: #0a84ff;
   --sel-soft: rgba(10, 132, 255, .22);
   --ring: rgba(10, 132, 255, .55);
@@ -554,7 +569,7 @@ input[type="range"]::-moz-range-thumb {
 .btn svg { width: var(--ic); height: var(--ic); }
 .btn:active:not(:disabled) { transform: scale(.97); }
 .btn-primary {
-  background: var(--accent-solid); color: #fff;
+  background: var(--accent-solid); color: var(--on-accent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
 }
 .btn-primary:hover { background: var(--accent-hover); }
@@ -774,7 +789,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .tile.is-sel .tile-chk {
   opacity: 1; transform: none;
-  background: var(--sel); border-color: var(--sel); color: #fff;
+  background: var(--accent-solid); border-color: var(--sel); color: var(--on-accent);
 }
 .tile.is-sel .tile-chk svg { opacity: 1; }
 
@@ -796,10 +811,12 @@ body.marquee-on .tile { cursor: default; }
   position: fixed; left: calc(50% + var(--side-w, 0px) / 2); bottom: 76px; transform: translateX(-50%);
   z-index: 60; display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; border-radius: 999px;
-  background: rgba(28, 28, 30, .82);
+  /* 材质随主题走：浅色模式下浮在浅色页面上仍是一条**深色**横带，
+     等于把"深色主题"的观感漏进了浅色界面（v1.20.0 修）。 */
+  background: var(--material-strong);
   -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
-  color: #fff;
-  border: .5px solid rgba(255, 255, 255, .12);
+  color: var(--ink);
+  border: .5px solid var(--line);
   box-shadow: var(--shadow-3);
   animation: selbar-in .24s var(--ease-spring) both;
   max-width: calc(100vw - 32px);
@@ -818,15 +835,15 @@ body.marquee-on .tile { cursor: default; }
   flex: none; white-space: nowrap;
 }
 .selbar .sb-tip {
-  font-size: var(--fs-xs); color: rgba(255, 255, 255, .55);
+  font-size: var(--fs-xs); color: var(--muted);
   min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .selbar .sb-sp { flex: 1 1 auto; min-width: 4px; }
 .selbar .btn {
-  background: rgba(255, 255, 255, .12); color: #fff;
+  background: var(--fill-2); color: var(--ink);
   flex: none; white-space: nowrap;
 }
-.selbar .btn:hover:not(:disabled) { background: rgba(255, 255, 255, .22); }
+.selbar .btn:hover:not(:disabled) { background: var(--fill-3); }
 .selbar .btn-danger { background: var(--danger); color: #fff; }
 .selbar .btn-danger:hover:not(:disabled) { background: var(--danger-hover); }
 .selbar .btn:disabled { opacity: .45; cursor: not-allowed; }
@@ -939,13 +956,13 @@ body.has-wco .sidebar {
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .src-chip:hover { background: var(--fill-2); color: var(--ink); }
-.src-chip.is-on { background: var(--accent-solid); color: #fff; }
-.src-chip.is-on .sc-count { color: #fff; background: rgba(0, 0, 0, .24); }
+.src-chip.is-on { background: var(--accent-solid); color: var(--on-accent); }
+.src-chip.is-on .sc-count { color: var(--on-accent); background: var(--accent-step); }
 /* 0 张的来源：**不改文字颜色**（换浅一档就掉到 4.3:1），
    只把数量徽标降到最浅的填充，说明放进 title —— 点进去是空图库，
    至少点之前能知道为什么。 */
 .src-chip.is-empty .sc-count { background: var(--fill-1); }
-.src-chip.is-on.is-empty .sc-count { background: rgba(0, 0, 0, .24); }
+.src-chip.is-on.is-empty .sc-count { background: var(--accent-step); }
 /* 移除键默认不显示：一列十行都挂着叉号，会把「切换来源」这个主操作压下去。
    悬停当前行才出现，且鼠标移上去再加深一次。 */
 .src-chip .sc-x {
@@ -957,7 +974,8 @@ body.has-wco .sidebar {
 .src-chip .sc-x svg { width: var(--ic-xs); height: var(--ic-xs); }
 .src-chip:hover .sc-x, .src-chip.is-on .sc-x { opacity: .55; }
 .src-chip .sc-x:hover { background: var(--fill-3); opacity: 1; }
-.src-chip.is-on .sc-x:hover { background: rgba(255, 255, 255, .24); opacity: 1; }
+/* 悬停圆底同样跟着 --accent-step 走：它压在实底上，方向必须背离字色 */
+.src-chip.is-on .sc-x:hover { background: var(--accent-step); opacity: 1; }
 /* 「添加文件夹」：贴底常驻，不与列表一起滚动 */
 .src-add {
   display: flex; align-items: center; gap: 7px;
@@ -1110,11 +1128,11 @@ body.has-wco .sidebar {
 .toast {
   position: fixed; left: 50%; bottom: 32px; z-index: 200;
   transform: translate(-50%, 12px) scale(.98);
-  background: rgba(28, 28, 30, .88);
+  background: var(--material-strong);
   -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
-  color: #fff;
+  color: var(--ink);
   padding: 10px 18px; border-radius: var(--r-m);
-  border: .5px solid rgba(255, 255, 255, .12);
+  border: .5px solid var(--line);
   font-size: var(--fs); font-weight: 500; box-shadow: var(--shadow-3);
   opacity: 0; transition: opacity .26s var(--ease), transform .26s var(--ease-spring);
   max-width: 78vw; text-align: center; pointer-events: none;
@@ -1122,11 +1140,11 @@ body.has-wco .sidebar {
 .toast.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
 .toast.toast-act { display: flex; align-items: center; gap: 14px; pointer-events: auto; }
 .toast-btn {
-  border: 0; background: rgba(255, 255, 255, .16); color: #fff;
+  border: 0; background: var(--fill-2); color: var(--ink);
   font-size: var(--fs); font-weight: 600; padding: 5px 12px; border-radius: var(--r-s);
   letter-spacing: .01em;
 }
-.toast-btn:hover { background: rgba(255, 255, 255, .28); }
+.toast-btn:hover { background: var(--fill-3); }
 .toast-ic { width: 16px; height: 16px; flex: none; }
 .toast.toast-top { bottom: auto; top: 18px; transform: translate(-50%, -12px) scale(.98); }
 .toast.toast-top.show { transform: translate(-50%, 0) scale(1); }
@@ -1185,7 +1203,7 @@ body.has-wco .sidebar {
   border: 0; background: var(--fill-2); color: var(--ink);
   font-size: var(--fs-s); font-weight: 500; padding: 4px 11px; border-radius: var(--r-s); white-space: nowrap;
 }
-.tp-restore:hover { background: var(--accent-solid); color: #fff; }
+.tp-restore:hover { background: var(--accent-solid); color: var(--on-accent); }
 .tp-foot {
   display: flex; align-items: center; justify-content: space-between;
   padding: 9px 14px; border-top: .5px solid var(--line); background: var(--fill-1);
@@ -1245,6 +1263,10 @@ body.has-wco .sidebar {
   height: .5px; background: var(--line);
 }
 .sp-row:hover { background: var(--fill-1); }
+/* 竖排行：色块组这类"右侧塞不下"的控件改成名称在上、控件在下。
+   七个 24px 色块横排要 216px，挤在 352px 面板的右侧会把名称折成三行。 */
+.sp-row.is-stack { flex-direction: column; align-items: stretch; gap: 9px; }
+.sp-row.is-stack .sp-ctl { justify-content: flex-start; }
 .sp-label { flex: 1 1 auto; min-width: 0; }
 .sp-name { font-size: var(--fs); color: var(--ink); line-height: 1.35; letter-spacing: -.004em; }
 .sp-desc { font-size: var(--fs-s); color: var(--muted); line-height: 1.4; margin-top: 2px; }
@@ -1296,6 +1318,48 @@ body.has-wco .sidebar {
 .sp-row.is-disabled .sp-name { color: var(--muted); }
 .sp-row.is-disabled .sp-desc { opacity: .75; }
 .sp-row.is-disabled:hover { background: transparent; }
+
+/* ---------- 强调色色块（v1.20.0） ----------
+   命中框 24×24（WCAG 2.2 AA 2.5.8），但视觉上的圆点是 20px ——
+   所以按钮本身透明，用 ::before 画点，四周留 2px 空气。
+   这样"看起来精致"和"点得中"不冲突（uxaudit 套件按 24 量命中框）。 */
+.sp-swatches {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+}
+.sp-sw {
+  position: relative; width: 24px; height: 24px; flex: none;
+  border: 0; padding: 0; border-radius: 50%; background: transparent;
+  cursor: pointer; -webkit-appearance: none; appearance: none;
+}
+.sp-sw::before {
+  content: ""; position: absolute; inset: 2px; border-radius: 50%;
+  background: var(--sw, var(--accent));
+  /* 浅色圆点（如石墨）压在浅色面板上要有边界，否则像"没画满" */
+  box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .18);
+  transition: box-shadow .18s var(--ease), transform .18s var(--ease-spring);
+}
+.sp-sw:hover::before { transform: scale(1.08); }
+/* 选中：圆点内缩一圈面板底色的环 —— 不往外扩，不会被面板边缘裁掉 */
+.sp-sw.is-on::before {
+  box-shadow: inset 0 0 0 2px var(--surface), inset 0 0 0 4px var(--sw, var(--accent));
+}
+/* 自定义取色器：没有自定义色时显示一条色环（"这里可以选任意颜色"），
+   选中后换成用户那支色。input 透明覆盖在整块上，点它就是调系统取色器。 */
+.sp-sw-pick::before {
+  background: conic-gradient(from 210deg,
+    #ff3b30, #ff9500, #ffcc00, #34c759, #30b0c7, #0071e3, #5e5ce6, #af52de, #ff3b30);
+}
+.sp-sw-pick.is-custom::before { background: var(--sw, var(--accent)); }
+.sp-color {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; border: 0; padding: 0; cursor: pointer;
+  -webkit-appearance: none; appearance: none; background: transparent;
+}
+/* 取色器自己的焦点环画在透明的 input 上，用外层 span 承接更明显 */
+.sp-color:focus-visible { outline: none; }
+.sp-sw-pick:has(.sp-color:focus-visible) {
+  outline: 2px solid var(--ring); outline-offset: 1px;
+}
 
 /* 数字输入（滑块配合） */
 .sp-num {
@@ -1532,7 +1596,7 @@ body.has-wco .sidebar {
 .tv-chk svg { width: var(--ic-xs); height: var(--ic-xs); opacity: 0; }
 .tv-card:hover .tv-chk { opacity: 1; transform: none; }
 .tv-card.is-sel { border-color: var(--sel); box-shadow: 0 0 0 2px var(--sel) inset; }
-.tv-card.is-sel .tv-chk { opacity: 1; transform: none; background: var(--accent-solid); border-color: var(--sel); }
+.tv-card.is-sel .tv-chk { opacity: 1; transform: none; background: var(--accent-solid); border-color: var(--sel); color: var(--on-accent); }
 .tv-card.is-sel .tv-chk svg { opacity: 1; }
 
 .tv-one {
@@ -1543,7 +1607,7 @@ body.has-wco .sidebar {
   opacity: 0; transform: translateY(-2px); transition: opacity .15s var(--ease), transform .15s var(--ease);
 }
 .tv-card:hover .tv-one { opacity: 1; transform: none; }
-.tv-one:hover { background: var(--accent-solid); }
+.tv-one:hover { background: var(--accent-solid); color: var(--on-accent); }
 
 .tv-cap { display: block; padding: 10px 12px 12px; }
 .tv-name {

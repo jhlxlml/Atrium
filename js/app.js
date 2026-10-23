@@ -27,7 +27,7 @@
 
   const App = {
     /* 版本号唯一来源：界面（设置面板底部）与构建脚本共用，报障时可一眼确认版本 */
-    VERSION: '1.19.0',
+    VERSION: '1.20.0',
     el: {},
     resizeToken: null,
     /** 弹层标题 id 的自增序号（可及名称用，见 modal()） */
@@ -164,7 +164,7 @@
         }).catch(() => {});
       }
       // 外观类设置（主题 / 密度 / 文件名 / 数量角标）启动时先应用一次
-      for (const k of ['theme', 'density', 'showNames', 'showCnt', 'sidebarOpen']) this.applySetting(k, State.settings[k]);
+      for (const k of ['theme', 'accent', 'density', 'showNames', 'showCnt', 'sidebarOpen']) this.applySetting(k, State.settings[k]);
       // 主题定下来之后再推标题栏配色（浮层是系统画的，读不到 CSS 变量）
       this.wireCapOverlay();
       this.applySetting('wheelMode', State.settings.wheelMode);
@@ -211,12 +211,24 @@
           if (this._themeMQ) { try { this._themeMQ.onchange = null; } catch (e) { /* 忽略 */ } this._themeMQ = null; }
           if (val === 'auto' && global.matchMedia) {
             this._themeMQ = global.matchMedia('(prefers-color-scheme: dark)');
-            const on = () => { b.dataset.theme = this._themeMQ.matches ? 'dark' : 'light'; };
+            const on = () => {
+              b.dataset.theme = this._themeMQ.matches ? 'dark' : 'light';
+              // 系统跟着切的时候，自定义强调色要按**新模式**重算一遍：
+              // 同一支黄，浅色下要压暗当文字、深色下要提亮当图标，不能沿用旧的一套。
+              this.applyAccent();
+            };
             try { this._themeMQ.addEventListener('change', on); } catch (e) { this._themeMQ.onchange = on; }
             on();
           }
+          this.applyAccent();
           break;
         }
+        /* 强调色（v1.20.0）。这里必须有一个分支 —— 否则设置面板里点了色块只会
+           写进 State、界面纹丝不动，正是本项目栽过五次的那种静默失效。
+           推导与写入全在 Theme.apply() 里（纯函数算值、apply 写 body 行内样式）。 */
+        case 'accent':
+          this.applyAccent();
+          break;
         case 'density':
           b.dataset.density = val;
           if (global.Grid && global.Grid.layout) requestAnimationFrame(() => global.Grid.layout(true));
@@ -359,6 +371,15 @@
       }
       // 菜单勾选态与界面状态保持一致（模式 / 收藏筛选 / 隐私模式 / 置顶 / 是否有选中）
       this.syncMenu();
+    },
+
+    /** 把强调色落到页面上（v1.20.0）。
+        真正的推导在 Theme.derive()（纯函数、可单测），这里只做两件事：
+        ① 调 Theme.apply() 写 body 行内样式；② 让需要"自己算一遍颜色"的地方跟上。
+        目前只有一处：主进程画的窗口标题栏浮层只吃 --paper / --ink-2，
+        不吃强调色，所以没有额外推送 —— 若将来标题栏要用强调色，在这里补推。 */
+    applyAccent() {
+      if (global.Theme) global.Theme.apply();
     },
 
     /* ================= 版本更新检测（v1.14.0，仅桌面版） ================= */

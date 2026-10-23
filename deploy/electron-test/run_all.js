@@ -97,6 +97,23 @@ const SUITES = [
     },
   },
 
+  /* ---------- 1a. 纯函数 · 强调色推导（任意颜色 → 一套可用令牌） ----------
+     为什么值得单列一个套件：颜色算错**不会报错**，只是某些色在某个主题下
+     悄悄变得读不清 —— 而用户拖取色器的那一刻，恰好是我们最不可能逐一
+     肉眼验证每个组合的时刻。这里是 228 条断言，覆盖预设色、极端色
+     （纯黄/纯白/纯黑/荧光绿）与两种模式的全部组合，外加三条反向用例。 */
+  {
+    id: 'themeunit',
+    title: '纯函数 · 强调色推导：任意色 × 两主题都满足对比度（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'theme.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('主题色推导测试全部通过（含极端色与反向用例）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
   /* ---------- 1b. 纯函数 · 图片头尺寸解析（性能优化的正确性地基） ---------- */
   {
     id: 'header',
@@ -1389,10 +1406,10 @@ const SUITES = [
       const check = ctx.check, d = ctx.keys['UXAUDIT '];
       if (!d) { check('探针返回数据', false, '未解析到 UXAUDIT 输出'); return; }
 
-      const SCENES = ['gallery-light', 'gallery-dark', 'selectbar', 'lightbox',
-        'settings', 'trash', 'empty', 'narrow-760'];
+      const SCENES = ['gallery-light', 'gallery-dark', 'selectbar', 'lightbox', 'lightbox-panel',
+        'accent-light', 'accent-dark', 'settings', 'trash', 'empty', 'narrow-760'];
       const missing = SCENES.filter((s) => !d[s]);
-      check('8 个场景都测到（浅/深、选择条、灯箱、设置、回收站、空态、窄窗）',
+      check('11 个场景都测到（浅/深、选择条、灯箱、灯箱面板、自定义强调色×2、设置、回收站、空态、窄窗）',
         missing.length === 0, missing.join(', '));
 
       /* 自证：主题真的切了、过渡真的关了。不查这两条，深色场景可能整段
@@ -1414,6 +1431,32 @@ const SUITES = [
       }
       check('所有可见文字的对比度达标（正文 ≥4.5 / 大字 ≥3.0）',
         badContrast.length === 0, badContrast.slice(0, 6).join(' | '));
+
+      /* ①b 自定义强调色（v1.20.0）：纯黄 #ffcc00 是最不利的一支 ——
+         白字压它只有 1.4:1、黄字压浅灰只有 1.3:1。这里既查"渲染出来的文字
+         读得清"（已由上面那条覆盖），也查**色真的设进去了、且推导真的做了事**：
+           · 实底仍是亮的（用户选的黄没被涂成深橄榄）
+           · 实底上的字换成了深色，且两者 ≥4.5
+           · 强调文字压纸底 ≥4.5、图标 ≥3
+         不查后半段的话，一旦 Theme 哪天静默不生效，上面那条会**全绿** ——
+         因为界面退回默认蓝，而默认蓝本来就达标。恒真的门禁比没有门禁更糟。 */
+      {
+        const L = d['accent-light'], K = d['accent-dark'];
+        const okLight = L && L.diag.solid && L.diag.onSolid >= 4.5 && L.diag.textOnPaper >= 4.5
+          && L.diag.accentOnPaper >= 3;
+        const okDark = K && K.diag.solid && K.diag.onSolid >= 4.5 && K.diag.textOnPaper >= 4.5
+          && K.diag.accentOnPaper >= 3;
+        check('自定义强调色在浅色主题下推导正确（实底上的字 ≥4.5 / 文字 ≥4.5 / 图标 ≥3）',
+          okLight, L ? JSON.stringify({ solid: L.diag.solid, on: L.diag.onAccent, onSolid: L.diag.onSolid, text: L.diag.accentText, textOnPaper: L.diag.textOnPaper, accent: L.diag.accent, accentOnPaper: L.diag.accentOnPaper }) : '缺场景');
+        check('自定义强调色在深色主题下推导正确（同上，且是**反过来**提亮）',
+          okDark, K ? JSON.stringify({ solid: K.diag.solid, on: K.diag.onAccent, onSolid: K.diag.onSolid, text: K.diag.accentText, textOnPaper: K.diag.textOnPaper, accent: K.diag.accent, accentOnPaper: K.diag.accentOnPaper }) : '缺场景');
+        /* 反向：如果推导只是"原样照抄"，实底会是 #ffcc00 + 白字（1.4:1）。
+           这条断言把那种情况直接指出来，而不是让人去猜 onSolid 为什么变小。 */
+        check('浅色下纯黄没有被涂暗（实底仍亮），而是把字换成了深色',
+          !!(L && L.diag.solid && L.diag.onAccent && L.diag.onSolid >= 4.5
+            && String(L.diag.onAccent).toLowerCase() !== '#ffffff'),
+          L ? 'solid=' + L.diag.solid + ' on=' + L.diag.onAccent : '缺场景');
+      }
 
       /* ② 焦点环：outline 2px + offset 2px 必须整圈画得出来。被 overflow
          裁掉一条边的焦点环，键盘用户看到的是"这个按钮只有三面有框"。 */

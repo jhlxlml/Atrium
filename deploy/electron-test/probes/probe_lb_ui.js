@@ -29,8 +29,21 @@ function collect(dir) {
   return out;
 }
 
+/* 读颜色前先把过渡收干净。
+   隐藏窗口会节流动画时钟：`.ico-btn` 的 `color .18s` 实测要走 1s 以上，
+   点完按钮等 400ms 再读，很可能读到的正是**起点值**。
+   这条一直存在，只是过去浅色灯箱的图标底色是白的、蓝白插值也满足 `b > r+40`，
+   于是"起点恰好也像蓝的"这层巧合把问题盖住了。v1.20.0 浅色灯箱改用深灰图标
+   （`--lb-icon: rgba(60,60,67,.80)`），巧合消失，两条断言当场变红 —— 而界面是对的。
+   必须 flush→finish 走两轮：改动后若还没重算过，transition 尚不存在，第一轮抓不到。 */
+const SETTLE = `
+  void document.body.offsetHeight;
+  document.getAnimations().forEach((a) => { try { a.finish(); } catch (e) {} });
+  void document.body.offsetHeight;
+  document.getAnimations().forEach((a) => { try { a.finish(); } catch (e) {} });`;
+
 /* 量关闭键与 HUD */
-const MEASURE = `(() => {
+const MEASURE = `(() => {${SETTLE}
   const close = document.getElementById('lbClose');
   const cb = close.getBoundingClientRect();
   const vw = window.innerWidth, vh = window.innerHeight;
@@ -140,7 +153,7 @@ app.whenReady().then(async () => {
   // ---- 滚轮按钮切到 nav 模式：图标应变成左右箭头，且颜色是蓝不是黄 ----
   await w.webContents.executeJavaScript(`(() => { document.getElementById('lbWheel').click(); return true; })()`);
   await new Promise((r) => setTimeout(r, 400));
-  R.wheelNav = await w.webContents.executeJavaScript(`(() => {
+  R.wheelNav = await w.webContents.executeJavaScript(`(() => {${SETTLE}
     const b = document.getElementById('lbWheel');
     const u = b.querySelector('use');
     return { icon: u && u.getAttribute('href'), on: b.classList.contains('is-on'), color: getComputedStyle(b).color };
@@ -154,7 +167,7 @@ app.whenReady().then(async () => {
   // ---- 收藏：应为黄色 ----
   await w.webContents.executeJavaScript(`(() => { document.getElementById('lbFav').click(); return true; })()`);
   await new Promise((r) => setTimeout(r, 400));
-  R.fav = await w.webContents.executeJavaScript(`(() => {
+  R.fav = await w.webContents.executeJavaScript(`(() => {${SETTLE}
     const b = document.getElementById('lbFav');
     const u = b.querySelector('use');
     return { icon: u && u.getAttribute('href'), fav: b.classList.contains('is-fav'), on: b.classList.contains('is-on'), color: getComputedStyle(b).color };

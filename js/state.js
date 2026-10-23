@@ -117,6 +117,11 @@
 
       /* --- 外观 --- */
       theme: 'light',          // 'light' | 'dark' | 'auto'
+      /* 强调色（v1.20.0）：'auto' = 样式表里那套手工调过的系统蓝；
+         其它值是 '#rrggbb'，由 Theme.derive() 推导出整套令牌（含对比度保证）。
+         **存的是用户选的那一支色，不是推导后的结果** —— 推导随明暗模式变，
+         存推导值等于把"深色下的那一套"焊死，切回浅色就错。 */
+      accent: 'auto',
       density: 'cozy',         // 'cozy' | 'compact'  网格间距/信息密度
       showNames: false,        // 网格是否显示文件名浮层
       showCnt: true,           // 来源行是否显示数量角标
@@ -167,6 +172,11 @@
       if (typeof v.blurPreview === 'boolean') d.blurPreview = v.blurPreview;
 
       if (v.theme === 'light' || v.theme === 'dark' || v.theme === 'auto') d.theme = v.theme;
+      /* 强调色：只收 'auto' 或**六位 hex**。写进 localStorage 的东西可能是手工改过的、
+         也可能是旧版本留下的，认不出就回落到 auto（绝不让一支坏色把界面染成一片）。
+         校验放在这里而不是 Theme 里：Theme 是纯函数层，它只负责"给我合法 hex 就推导"。 */
+      if (v.accent === 'auto') d.accent = 'auto';
+      else if (typeof v.accent === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.accent)) d.accent = v.accent.toLowerCase();
       if (v.density === 'cozy' || v.density === 'compact') d.density = v.density;
       for (const k of ['showNames', 'showCnt', 'sidebarOpen', 'animOn', 'stripAuto', 'infoAuto', 'confirmDelete', 'rememberLast', 'alwaysOnTop', 'showFrame', 'trayOn', 'trayClose', 'hotkeyOn', 'updateCheck']) {
         if (typeof v[k] === 'boolean') d[k] = v[k];

@@ -216,6 +216,13 @@
               key: 'theme', type: 'seg', name: '主题', desc: '界面配色方案',
                 options: [['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']],
               },
+            /* 强调色（v1.20.0）。语义色**不跟着走**：收藏星是琥珀、删除是红、
+               播放中是绿 —— 那三支表达的是"发生了什么"，不是"可以点"。
+               让强调色去抢它们的含义，用户就会读错状态（v1.18.0 刚把开关从绿改回蓝）。 */
+            {
+              key: 'accent', type: 'swatch', name: '强调色',
+              desc: '按钮、选中态与焦点环的颜色。语义色（收藏 / 删除 / 播放）不跟随；文字与图标的对比度由程序按明暗模式自动校正',
+            },
               /* 排列模式（v1.12.0）。与顶栏那排图标是**同一个设置值**
                  （State.settings.mode）：这里点了立刻换排法（走 applySetting），
                  顶栏点了则在面板下次打开时刷新选中态（sync 是面板自己的事）。
@@ -324,6 +331,9 @@
     _row(def) {
       const row = document.createElement('div');
       row.className = 'sp-row';
+      // 色块组要**独占一行**：七个 24px 色块横排就 216px，塞在 352px 面板的
+      // 右侧会把左边的名称挤成三行。这一类改成"名称在上、控件在下"的竖排。
+      if (def.type === 'swatch') row.classList.add('is-stack');
       // options 允许写成函数：像「相框相册」这种要列出当前已加载文件夹的选项，
       // 必须每次重建面板时现算，不能在建面板那一刻就定死。
       const opts = typeof def.options === 'function' ? (def.options() || []) : (def.options || []);
@@ -429,6 +439,63 @@
         ctl.appendChild(b);
         this._rows[def.key] = { type: 'button', el: b };
 
+      } else if (def.type === 'swatch') {
+        /* 强调色色块组（v1.20.0）。**必须是原生按钮 + 原生 color input**：
+           自己画一个取色面板要处理拖拽、键盘、色域、取消，而且做不到系统级的
+           吸管取色；`<input type="color">` 在 Chromium 里直接调系统取色器。
+           无障碍：色块是 role=radio（一组互斥选项），取色器是一个覆盖在色块上的
+           透明 input，自带键盘操作与 aria-label —— 不做"按钮里套 input"那种
+           嵌套交互元素（屏幕阅读器会读成两层）。 */
+        const wrap = document.createElement('div');
+        wrap.className = 'sp-swatches';
+        wrap.setAttribute('role', 'radiogroup');
+        wrap.setAttribute('aria-label', def.name);
+
+        const presets = (global.Theme && global.Theme.PRESETS) || [];
+        for (const p of presets) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'sp-sw';
+          b.dataset.val = p.id;
+          b.style.setProperty('--sw', p.hex);
+          b.title = p.name;
+          b.setAttribute('role', 'radio');
+          b.setAttribute('aria-checked', 'false');
+          b.setAttribute('aria-label', p.name);
+          b.addEventListener('click', () => {
+            // 预设「系统蓝」存 'auto' 而不是它的 hex —— 那样才回落到样式表里
+            // 手工调过的那一套（含深色下压暗的实底），与"没改过"完全一致。
+            const v = p.id === 'auto' ? 'auto' : p.hex;
+            State.setSetting(def.key, v);
+            this.apply(def.key, v);
+            this.sync();
+          });
+          wrap.appendChild(b);
+        }
+
+        const pick = document.createElement('span');
+        pick.className = 'sp-sw sp-sw-pick';
+        pick.title = '自定义颜色';
+        const inp = document.createElement('input');
+        inp.type = 'color';
+        inp.className = 'sp-color';
+        inp.setAttribute('aria-label', '自定义强调色');
+        // 拖动取色器时实时预览（input 连续触发）；松手（change）再落一次，
+        // 保证最终值一定写进 localStorage。
+        const live = () => {
+          const v = String(inp.value || '').toLowerCase();
+          if (!/^#[0-9a-f]{6}$/.test(v)) return;
+          State.setSetting(def.key, v);
+          this.apply(def.key, v);
+        };
+        inp.addEventListener('input', live);
+        inp.addEventListener('change', () => { live(); this.sync(); });
+        pick.appendChild(inp);
+        wrap.appendChild(pick);
+
+        ctl.appendChild(wrap);
+        this._rows[def.key] = { type: 'swatch', el: wrap, pick: pick, input: inp };
+
       } else {  // select
         const sel = document.createElement('select');
         sel.className = 'sp-select';
@@ -462,6 +529,23 @@
           for (const b of r.el.children) b.classList.toggle('is-on', b.dataset.val === String(s[k]));
         } else if (r.type === 'range') {
           r.el.value = String(Math.round(s[k] / r.scale));
+        } else if (r.type === 'swatch') {
+          /* 当前值 → 哪个色块是选中的。
+             'custom' 表示"用户自己调的色"，此时把取色器那块显示成那支色
+             （而不是永远一条彩虹），用户才知道自己选的是什么。 */
+          const cur = String(s[k] || 'auto');
+          const id = (global.Theme && global.Theme.presetOf(cur)) || 'auto';
+          for (const b of r.el.children) {
+            if (!b.dataset || !b.dataset.val) continue;
+            const on = b.dataset.val === id;
+            b.classList.toggle('is-on', on);
+            b.setAttribute('aria-checked', String(on));
+          }
+          const custom = id === 'custom';
+          r.pick.classList.toggle('is-on', custom);
+          r.pick.classList.toggle('is-custom', custom);
+          if (custom) r.pick.style.setProperty('--sw', cur);
+          if (custom) r.input.value = cur;
         } else if (r.type === 'select') {
           // 选项是动态的：来源被移除后旧值可能已不在列表里 → 回落到「全部图片」
           const want = String(s[k]);
@@ -754,7 +838,10 @@
 
   /** 需要「重新应用」的设置键（恢复默认时全量重放） */
   const ALL_KEYS = [
-    'theme', 'density', 'showNames', 'showCnt', 'alwaysOnTop',
+    /* accent（v1.20.0）：与 updateCheck 同理 —— 它是面板上真实存在的一行，
+       漏登记就等于「恢复默认后强调色不参与重放」，用户点了恢复默认、
+       界面还停在他自己挑的那支色上。通用不变量断言当场抓到了这一条。 */
+    'theme', 'accent', 'density', 'showNames', 'showCnt', 'alwaysOnTop',
     'wheelMode', 'animOn', 'infoAuto', 'stripAuto', 'slideshowMs',
     'confirmDelete', 'blurPreview', 'rememberLast',
     /* updateCheck 与上面那些"纯 UI 项"不同：它有真实副作用（出网）。

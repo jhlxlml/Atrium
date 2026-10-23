@@ -63,8 +63,20 @@ const MEASURE = (opts) => String.raw`(() => {
      隐藏窗口（show:false）里 Chromium 会节流动画时钟，--dur: .2s 的颜色过渡
      实测要走 1s 以上；只靠 sleep 等，读到的是插值中间值。曾经因此把
      "深色下侧栏文字 #a1a1a6" 误报成 "2.3:1 不达标" —— 而截图里它明明是浅灰的。
-     getAnimations().finish() 是同步跳到终态，比任何 sleep 都可靠。 */
-  try { document.getAnimations().forEach((a) => { try { a.finish(); } catch (e) { } }); } catch (e) { }
+     getAnimations().finish() 是同步跳到终态，比任何 sleep 都可靠。
+
+     **必须 flush→finish→flush→finish 走两轮**（v1.20.0 补）：
+     如果改动之后还没发生过一次样式重算，transition 此刻**尚不存在**，
+     第一轮 finish() 抓不到它；而紧接着的 getComputedStyle 正好触发重算、
+     就地新建一条从"旧值"起步的过渡 —— 读到的仍是旧颜色。
+     这一条让 accent 场景间歇性报 "全部图片 1.51:1"（白字压纯黄），
+     单跑必过、整套跑偶尔红，最难查。flush 一下先把过渡建出来，第二轮才收得掉。 */
+  const flush = () => { void document.body.offsetHeight; };
+  for (let i = 0; i < 2; i++) {
+    flush();
+    try { document.getAnimations().forEach((a) => { try { a.finish(); } catch (e) { } }); } catch (e) { }
+  }
+  flush();
 
   /* ---------- 颜色工具 ---------- */
   const parse = (s) => {
@@ -386,12 +398,37 @@ const MEASURE = (opts) => String.raw`(() => {
     scene: O.scene || '',
     theme: document.body.dataset.theme || 'light',
     /* 自证字段：探针必须能证明"主题真的切了、过渡真的关了"。
-       否则读到的浅色值会被当成"深色对比度不足"，白改一通 CSS。 */
-    diag: {
-      anim: document.body.dataset.anim || '(unset)',
-      ink2: getComputedStyle(document.body).getPropertyValue('--ink-2').trim(),
-      paper: getComputedStyle(document.body).getPropertyValue('--paper').trim(),
-    },
+       否则读到的浅色值会被当成"深色对比度不足"，白改一通 CSS。
+       v1.20.0 又加了三支强调色 —— 自定义色的门禁同样是"可证伪"的：
+       如果探针没真的把色设进去，对比度当然全绿，那是恒真的假门禁。
+       所以这里直接报出 --accent-solid / --on-accent / --accent 的**实测比值**。 */
+    diag: (function () {
+      const hex = (s) => {
+        const m = /^#([0-9a-f]{6})$/i.exec(String(s || '').trim());
+        if (!m) return null;
+        const v = parseInt(m[1], 16);
+        return [(v >> 16) & 255, (v >> 8) & 255, v & 255, 1];
+      };
+      const any = (s) => hex(s) || parse(s);
+      const b = getComputedStyle(document.body);
+      const solid = any(b.getPropertyValue('--accent-solid'));
+      const onAcc = any(b.getPropertyValue('--on-accent'));
+      const acc = any(b.getPropertyValue('--accent'));
+      const paper = any(b.getPropertyValue('--paper'));
+      return {
+        anim: document.body.dataset.anim || '(unset)',
+        ink2: b.getPropertyValue('--ink-2').trim(),
+        paper: b.getPropertyValue('--paper').trim(),
+        accent: b.getPropertyValue('--accent').trim(),
+        solid: b.getPropertyValue('--accent-solid').trim(),
+        onAccent: b.getPropertyValue('--on-accent').trim(),
+        accentText: b.getPropertyValue('--accent-text').trim(),
+        onSolid: (solid && onAcc) ? ratio(solid, onAcc) : null,
+        accentOnPaper: (acc && paper) ? ratio(acc, paper) : null,
+        textOnPaper: (any(b.getPropertyValue('--accent-text')) && paper)
+          ? ratio(any(b.getPropertyValue('--accent-text')), paper) : null,
+      };
+    })(),
     counts: { contrast: contrast.length, clip: clip.length, target: target.length, trunc: trunc.length },
     contrast: contrast.slice(0, MAX),
     clip: clip.slice(0, MAX),
@@ -453,9 +490,17 @@ async function run() {
   /* 等界面稳定：隐藏窗口（show:false）里 Chromium 会节流样式重算，固定 sleep
      不可靠 —— 实测切主题后 450ms 读到的是浅色旧值（深色下误报 "侧栏 2.3:1"），
      2200ms 才稳定。改成轮询到连续两次读数一致，自适应又不浪费时间。 */
-  const STABLE = `(() => [...document.querySelectorAll('.src-chip .sc-name')]
-    .map((e) => getComputedStyle(e).color).join('|')
-    + '#' + getComputedStyle(document.body).backgroundColor)()`;
+  const STABLE = `(() => {
+    /* 先建过渡再收过渡（见 MEASURE 里同一段注释）：
+       不这么做，这里可能连续两次读到同一批**旧值**，settle 于是"稳定在错误状态"上。 */
+    void document.body.offsetHeight;
+    document.getAnimations().forEach((a) => { try { a.finish(); } catch (e) {} });
+    void document.body.offsetHeight;
+    document.getAnimations().forEach((a) => { try { a.finish(); } catch (e) {} });
+    return [...document.querySelectorAll('.src-chip .sc-name')]
+      .map((e) => getComputedStyle(e).color).join('|')
+      + '#' + getComputedStyle(document.body).backgroundColor;
+  })()`;
   const settle = async (maxMs = 6000) => {
     /* 先等 900ms 再开始轮询：样式重算还没启动时，连续两次读到的是同一批旧值，
        cur===prev 立刻成立 —— 会「稳定在错误状态」上，而且比不等待更危险。 */
@@ -500,7 +545,38 @@ async function run() {
     await js(`(() => { const t = document.querySelector('.tile'); if (t) t.click(); return true; })()`);
     await sleep(1100);
     await measure('lightbox');
+    /* 再打开信息面板 + 缩略图条量一遍：这两块里有**最弱的一档文字**
+       （信息面板的键名 .lb-info-k 与脚注），而它们默认不展开 ——
+       只量"刚打开的样子"等于永远不量那一档。v1.20.0 之前深色下
+       那档只有 2.7:1，就是因为从来没被量过。 */
+    await js(`(() => {
+      const a = document.getElementById('lbInfo'); if (a) a.click();
+      const b = document.getElementById('lbStripBtn'); if (b) b.click();
+      return true;
+    })()`);
+    await sleep(1000);
+    await measure('lightbox-panel');
     await js(`(() => { if (window.Lightbox && window.Lightbox.close) window.Lightbox.close(); return true; })()`);
+    await sleep(500);
+  }
+
+  /* 自定义强调色（v1.20.0）：用**最不利**的一支色 —— 纯黄 #ffcc00。
+     白字压纯黄只有 1.4:1、黄字压浅灰只有 1.3:1，朴素做法必红。
+     推导正确时：实底仍是黄、字换成近黑；强调文字压暗成橄榄色。
+     两个主题各量一遍 —— 同一支色在浅色下要压暗、深色下要提亮，
+     只量一个主题会漏掉一半。 */
+  if (SCENE === 'all' || SCENE === 'accent') {
+    const ACC = '#ffcc00';
+    await js(`window.App.applySetting('theme', 'light')`);
+    await sleep(500);
+    await js(`(() => { window.State.setSetting('accent', '${ACC}'); window.App.applySetting('accent', '${ACC}'); return true; })()`);
+    await sleep(400);
+    await measure('accent-light');
+    await js(`window.App.applySetting('theme', 'dark')`);
+    await sleep(600);
+    await measure('accent-dark');
+    // 还原：不留一支黄在后续场景里
+    await js(`(() => { window.State.setSetting('accent', 'auto'); window.App.applySetting('accent', 'auto'); window.App.applySetting('theme', 'light'); return true; })()`);
     await sleep(500);
   }
 

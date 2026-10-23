@@ -73,13 +73,13 @@ Update checking is **off by default** — it is the only feature in the whole ap
 
 ### Using the portable build
 
-1. Download **`Atrium_Electron_v1.17.2_x64.zip`** (112.6 MB, Windows x64) from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
+1. Download **`Atrium_Electron_v1.20.0_x64.zip`** (112.6 MB, Windows x64) from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
 2. Unzip it, then double-click **`Atrium.cmd`** (**not** `Atrium.exe`).
 3. Click "添加文件夹" (Add folder), or drag a folder / images straight into the window.
 
 > **Why a `.cmd` and not the exe**: WorkBuddy and some Node environments inject `NODE_OPTIONS`, which makes a packaged Electron app **exit immediately on launch**. The launcher clears that variable first, then starts the app. It looks for `Atrium.exe` by name and only falls back to "the first exe in the folder" if it is missing.
 
-> The downloadable asset is named `Atrium_Electron_v1.17.2_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
+> The downloadable asset is named `Atrium_Electron_v1.20.0_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
 
 > **Where your data lives**: a `data/` folder appears automatically next to the app (settings / favourites / rotation records / thumbnail cache).
 > It is **portable** — copy the whole folder and you take your entire configuration with you, no re-configuring on another machine.
@@ -112,7 +112,7 @@ npm test
 
 | Command | Purpose |
 |---|---|
-| `npm test` | Full regression: **38 suites / 449 assertions**, roughly 335 s |
+| `npm test` | Full regression: **39 suites / 484 assertions**, roughly 280 s |
 | `npm run test:fast` | Quick pass: 13 suites / 61 assertions, ~8 s (**includes `tf`, which needs electron**) |
 | `npm run build` | Build the portable Electron package |
 | `npm run pack` | Produce the release ZIP |
@@ -167,7 +167,7 @@ platform      native.js (renderer-side adapter) ──IPC──▶ preload.js (a
 
 A few deliberate decisions:
 
-- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation) and the update-check rules (version comparison, URL allow-list) are factored into pure functions that depend on neither the DOM nor Electron, so **872** fine-grained assertions run in milliseconds under Node without opening a window.
+- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation) and the update-check rules (version comparison, URL allow-list) are factored into pure functions that depend on neither the DOM nor Electron, so **1195** fine-grained assertions run in milliseconds under Node without opening a window.
 - **`desktop-spec.js` is pure data** (menu template, accelerators, command vocabulary) and is **not allowed to `require('electron')`** — which is why 76 assertions can test it directly under Node.
 - **Security baseline**: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, a custom privileged `vf://` protocol, a preload allow-list, and new windows / external navigation refused. Every desktop-integration IPC channel **verifies the sender**, and untrusted calls are rejected. **Opening external links also goes through an allow-list** — only the official repository is let through, locked down by 21 reverse cases.
 
@@ -177,7 +177,7 @@ The project tries hard to turn "potholes we fell into" into **mechanisms**. Curr
 
 | Metric | Value |
 |---|---|
-| Regression | **38 suites / 449 assertions**, non-zero exit on any failure |
+| Regression | **39 suites / 484 assertions**, non-zero exit on any failure |
 | Source size | `js/` 9,923 lines across 15 modules · `css/` 2,268 lines across 3 files · `index.html` 433 lines · main-process side 3,047 lines across 6 files |
 | IPC | 35 invoke + 1 renderer→main + 3 main→renderer = **39 unique channel names** |
 | Runtime dependencies | **0** (`electron` and `rcedit` are build-time only) |
@@ -191,11 +191,11 @@ Several layers of the regression are **mutually independent lines of defence**:
 - **Security criteria go into the regression too**: the `update` suite locks the `openExternal` URL allow-list with **21 reverse cases** (subdomain spoofing, userinfo spoofing, non-default port, path traversal, `file://`, `javascript:` …) — testing only that "the official link passes" would be an always-true gate.
 - **Failures explain themselves**: assertion messages carry field evidence such as "how many announcements fired, and what the last one said", instead of just `false`.
 
-> **On the number**: `449` counts **suite-level entries**, and it is *not* a stable coverage metric — it moves for three reasons:
-> ① Seven pure-function suites expand into far more fine-grained assertions internally (872 in total) but are counted as one entry each — so **do not add them up**;
+> **On the number**: `484` counts **suite-level entries**, and it is *not* a stable coverage metric — it moves for three reasons:
+> ① Eight pure-function suites expand into far more fine-grained assertions internally (1195 in total) but are counted as one entry each — so **do not add them up**;
 > ② the `zip` suite has **2 conditional assertions** that only run when the **delivery ZIP is present** (fewer in a source-only checkout);
 > ③ once the `appself` suite fails "the self-check as a whole passed" it **returns early**, and the 31 frame assertions after it never execute —
-> which is why a sandbox without `alwaysOnTop` reports `449` while a healthy environment reports `480`.
+> which is why a sandbox without `alwaysOnTop` reports `453` while a healthy environment reports `484`.
 > **A smaller number does not mean fewer tests** — first find which step produced no output.
 
 ## Repository layout

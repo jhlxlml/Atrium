@@ -74,7 +74,13 @@ app.whenReady().then(async () => {
     if (n >= 24) break;
   }
   console.log('TILES ' + n);
-  if (n < 24) { console.log('样张没出全，截图可能不完整'); }
+  /* 样张没出全就**别写文件**：一张空图库盖掉 README 里的图，比没截图更糟
+     （v1.20.0 遇到过：机器负载高时 24 张只渲染出 0 张，脚本却照样 SAVED）。 */
+  if (n < 24) {
+    console.log('ERROR 样张没出全（' + n + '/24），不写任何截图');
+    app.quit();
+    return;
+  }
 
   /* 等所有缩略图真的解码完再截。
      原来只 sleep(1500)，截出来常有几块空白 —— 缩略图是 createImageBitmap 异步解码的，
@@ -102,25 +108,58 @@ app.whenReady().then(async () => {
   })()`);
   await sleep(600);
 
-  fs.writeFileSync(path.join(OUT, 'grid.png'), (await w.webContents.capturePage()).toPNG());
+  /* 截图前把过渡推到终态。
+     `data-anim="0"` 只把 `transition-duration` 压到 .01ms，**仍需要一帧**才落地；
+     而这个窗口没有真实桌面在合成，帧可能迟迟不来 —— 实测灯箱的淡入会停在
+     `opacity: 0` 上（DOM 已就绪、`elementFromPoint` 也命中，就是画不出来）。
+     所以不信"等多久"，直接 finish 掉；flush→finish 走两轮，先把过渡建出来再收。 */
+  const SETTLE = `(() => {
+    void document.body.offsetHeight;
+    document.getAnimations().forEach((a) => { try { a.finish(); } catch (e) {} });
+    void document.body.offsetHeight;
+    document.getAnimations().forEach((a) => { try { a.finish(); } catch (e) {} });
+    return true;
+  })()`;
+
+  await w.webContents.executeJavaScript(SETTLE);
+  const gridPng = (await w.webContents.capturePage()).toPNG();
+  fs.writeFileSync(path.join(OUT, 'grid.png'), gridPng);
   console.log('SAVED grid.png');
 
   /* 打开灯箱（点第一张瓦片） */
   const clicked = await w.webContents.executeJavaScript(
     "(()=>{const t=document.querySelector('.tile');if(!t)return false;t.dispatchEvent(new MouseEvent('click',{bubbles:true}));return true})()");
-  await sleep(2200);
+  await sleep(1200);
   const lbOpen = await w.webContents.executeJavaScript("!document.getElementById('lightbox').hasAttribute('hidden')");
   console.log('CLICKED ' + clicked + '  LIGHTBOX_OPEN ' + lbOpen);
   /* 把鼠标移到下缘热区，让操作栏显形 —— 否则沉浸态下 HUD 是 opacity:0，
      截出来只有一张图，看不出这版重做过的底部图标。合成的 mousemove 必须打在
-     #lightbox 上（监听挂在 Lightbox.el），打在 document 上不会冒泡过去。 */
+     #lightbox 上（监听挂在 Lightbox.el），文档级监听收不到它。 */
   await w.webContents.executeJavaScript(`(() => {
     const lb = document.getElementById('lightbox');
     lb.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: Math.round(innerWidth / 2), clientY: innerHeight - 30 }));
     return true;
   })()`);
-  await sleep(400);
-  fs.writeFileSync(path.join(OUT, 'lightbox.png'), (await w.webContents.capturePage()).toPNG());
+  await w.webContents.executeJavaScript(SETTLE);
+
+  /* 截到"确实换了画面"为止。
+     `capturePage` 拿的是**合成器最后一帧**：这个窗口没有真实桌面在合成，
+     新图层可能好几帧都上不去 —— 直接截会得到**背后的网格**
+     （v1.20.0 就截成这样：`LIGHTBOX_OPEN true`，图里却是一整屏瓦片）。
+     判据不猜时间，而是**与开灯箱之前那一帧逐字节比**，一样就说明还没上屏。 */
+  let lbPng = null;
+  for (let i = 0; i < 15; i++) {
+    const png = (await w.webContents.capturePage()).toPNG();
+    if (Buffer.compare(png, gridPng) !== 0) { lbPng = png; break; }
+    await w.webContents.executeJavaScript(SETTLE);
+    await sleep(400);
+  }
+  if (!lbPng) {
+    console.log('ERROR 灯箱没有上屏（15 次截图都与网格帧相同）');
+    app.quit();
+    return;
+  }
+  fs.writeFileSync(path.join(OUT, 'lightbox.png'), lbPng);
   console.log('SAVED lightbox.png');
 
   app.quit();
