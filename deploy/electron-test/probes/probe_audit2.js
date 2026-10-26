@@ -9,7 +9,7 @@ const APPDIR = path.resolve(__dirname, '..', '..', '..');
 app.setPath('userData', path.resolve(__dirname, '..', 'logs', 'ud_audit2_' + Date.now()));
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
-protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } }]);
 ipcMain.handle('vf:trashLog', () => []);
 
 async function run() {
@@ -21,7 +21,7 @@ async function run() {
     // ⚠️ CSS 必须返回 text/css：标成 text/html 时浏览器直接拒载，全站样式静默失效
     // （症状是"所有元素都是无样式默认外观"，量出来的数字全是垃圾）。
     try { return new Response(await fs.promises.readFile(abs), { status: 200,
-      headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } }); }
+      headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } }); }
     catch (e) { return new Response('404', { status: 404 }); }
   });
 

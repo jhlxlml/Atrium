@@ -30,7 +30,7 @@ const LOGS = path.resolve(__dirname, '..', 'logs');
 
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
-protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } }]);
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg' };
 const IMG_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
@@ -136,13 +136,13 @@ app.whenReady().then(async () => {
       const abs = Buffer.from(decodeURIComponent(u.pathname).replace(/^\/+/, ''), 'base64url').toString('utf8');
       try {
         const b = await fs.promises.readFile(abs);
-        return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'Access-Control-Allow-Origin': '*' } });
+        return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'Access-Control-Allow-Origin': 'vf://app' } });
       } catch (e) { return new Response('404', { status: 404 }); }
     }
     const abs = path.resolve(APPDIR, decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'index.html');
     try {
       const b = await fs.promises.readFile(abs);
-      return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } });
+      return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } });
     } catch (e) { return new Response('404', { status: 404 }); }
   };
   protocol.handle('vf', handleVf);

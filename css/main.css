@@ -11,6 +11,12 @@
    · 排版：SF Pro 语汇（Windows 上回落到 Segoe UI Variable），标题负字距
    ============================================================ */
 
+/* ---------- 内联 SVG 图标精灵：不占位、不进无障碍树 ----------
+   原先这行写在 index.html 的 <svg style="display:none"> 上，是整份文档里
+   唯一的内联 style 属性 —— 它会逼着 CSP 的 style-src 放行 'unsafe-inline'。
+   改成规则后 style-src 可以是严格的 'self'。 */
+#iconSprite { display: none; }
+
 /* ---------- 设计变量 ---------- */
 :root {
   /* 表面 */

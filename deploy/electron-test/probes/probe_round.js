@@ -16,7 +16,7 @@ const APPDIR = path.resolve(__dirname, '..', '..', '..');
 app.setPath('userData', path.resolve(__dirname, '..', 'logs', 'ud_round_' + Date.now()));
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
-protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } }]);
 ipcMain.handle('vf:trashLog', () => []);
 
 async function run() {
@@ -27,7 +27,7 @@ async function run() {
       // ⚠️ CSS 必须是 text/css：标成 text/html 浏览器静默拒载，量出来的数字全是垃圾
       '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg' };
     try { return new Response(await fs.promises.readFile(abs), { status: 200,
-      headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } }); }
+      headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } }); }
     catch (e) { return new Response('404', { status: 404 }); }
   });
 

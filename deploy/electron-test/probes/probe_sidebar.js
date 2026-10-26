@@ -25,7 +25,7 @@ app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
+  { scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } },
 ]);
 
 /* 桌面集成桩之外的 IPC：侧栏本身不需要，但 App.init 会调 */
@@ -62,7 +62,7 @@ async function run() {
       const abs = Buffer.from(decodeURIComponent(u.pathname).replace(/^\/+/, ''), 'base64url').toString('utf8');
       try {
         return new Response(await fs.promises.readFile(abs), { status: 200,
-          headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } });
+          headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } });
       } catch (e) { return new Response('404', { status: 404 }); }
     }
     if (u.host !== 'app') return new Response('unknown', { status: 404 });
@@ -71,7 +71,7 @@ async function run() {
     if (!(abs === APPDIR || abs.startsWith(APPDIR + path.sep))) return new Response('forbidden', { status: 403 });
     try {
       return new Response(await fs.promises.readFile(abs), { status: 200,
-        headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } });
+        headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } });
     } catch (e) { return new Response('404', { status: 404 }); }
   });
 
@@ -315,12 +315,17 @@ async function run() {
     const main = document.getElementById('main').getBoundingClientRect();
     const ctrls = document.querySelector('.ctrls');
     const cw = document.documentElement.clientWidth;
+    /* "主区正好吃掉剩余宽度"要用**未取整**的和去比：
+       两边各自 Math.round 再加起来，会把 .5 各进一次，凭空多出 1px
+       （Chromium 140 起侧栏是 212.0、主区 800.5，各取整后 212+801=1013 > 1012）。
+       真正要抓的失效是"留了 212px 的空隙"或"溢出几十像素"，1px 属于子像素取整，
+       不是布局问题。 */
     return {
       sideW: Math.round(sb.width),
       mainW: Math.round(main.width),
       mainLeft: Math.round(main.left),
       docClientW: cw,
-      sumOk: Math.round(sb.width + main.width) === cw,
+      sumOk: Math.abs(sb.width + main.width - cw) <= 1,
       ctrlsOverflow: ctrls.scrollWidth > ctrls.clientWidth + 1,
     };
   })()`);

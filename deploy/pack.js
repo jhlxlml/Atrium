@@ -37,13 +37,13 @@ const VER = pkg.version;
 const doElectron = true;
 
 /* 打包前先自检校验器：参照物本身要是错的，后面全白搭 */
-(function guardCrc() {
+function guardCrc() {
   const st = crcSelfTest();
   if (!st.ok) {
     console.error('× CRC 实现自检未通过，拒绝打包：\n  ' + st.fails.join('\n  '));
     process.exit(1);
   }
-})();
+}
 
 /* ---------- CRC32 ---------- */
 const CRC_TABLE = (() => {
@@ -71,23 +71,121 @@ function dosTime(d) {
 const U32_MAX = 0xffffffff;
 const U16_MAX = 0xffff;
 
+/* ============================================================
+   允许清单（v1.20.1）
+   ------------------------------------------------------------
+   原来这里是 `walk(appDir, '', [])` —— **递归收集整个产物目录**，一个都不排除。
+   风险很具体：开发者用构建产物浏览过私人照片之后，直接 `npm run pack`，
+   那份 `data/`（设置 / 收藏 / 旋转记录 / 缩略图缓存，以及 Chromium 的
+   Local Storage 与 IndexedDB）就会被原样打进交付 ZIP。
+   这不是"可能"，是"只要顺序错了就必然"。
+
+   改成**允许清单**：只收明确属于运行时的条目，其余一律拒绝打包。
+   宁可因为"多了一个没见过的文件"而拒绝，也不要"多带了不该带的文件"而发出去。
+   清单里的模式按 Electron 运行时的实际构成写（见 BUILD-INFO 与 107 条目清单）；
+   Electron 大版本升级后如果多了新文件，这里会**当场拒绝并点名**，不会静默漏掉。
+   ============================================================ */
+
+/** 任何层级出现即拒绝：便携数据 / 浏览器缓存 / 日志 / 临时文件 */
+const SENSITIVE = [
+  /^data$/i, /^cache$/i, /^code cache$/i, /^gpucache$/i, /^dawn(graphite|webgpu)cache$/i,
+  /^indexeddb$/i, /^local storage$/i, /^session storage$/i, /^webstorage$/i,
+  /^shared dictionary$/i, /^dictionaries$/i, /^network$/i, /^blob_storage$/i,
+  /^sharedstorage$/i, /^preferences$/i, /^local state$/i,
+  /^trash-log\.json$/i, /^last-dir\.json$/i, /^build-info\.json$/i,
+  /\.log$/i, /\.tmp$/i, /\.dmp$/i, /^\.ds_store$/i, /^thumbs\.db$/i,
+];
+
+/** 顶层文件：Electron 运行时的那几类 + 我们自己放的 exe / 启动器 / 许可证 */
+const TOP_FILE = [
+  /^Atrium\.(exe|cmd)$/i,
+  /^version$/i,
+  /^LICENSE$/i,
+  /^LICENSES\.chromium\.html$/i,
+  /\.(dll|pak|bin|dat|json)$/i,
+];
+
+/** 顶层目录：只有这两个是运行时的一部分 */
+const TOP_DIR = ['locales', 'resources'];
+
+/** resources/ 下允许的条目 */
+const RES_ENTRY = [/^app$/i, /^default_app\.asar$/i, /\.pak$/i];
+
+/** resources/app 下允许的文件（应用自身的源码与资源） */
+const APP_FILE = [/\.(js|css|html|json|ico|png|svg)$/i];
+/** resources/app 下允许的子目录 */
+const APP_DIR = ['js', 'css'];
+
+function isSensitive(name) { return SENSITIVE.some((re) => re.test(name)); }
+
 /**
- * 收集要打包的文件：[{ name（zip 内相对路径，/ 分隔）, abs, dir? }]
+ * 按允许清单收集条目。
+ * @returns {{entries:Array, rejected:Array<{name:string, why:string}>}}
  */
-function walk(absDir, base, out) {
-  for (const f of fs.readdirSync(absDir)) {
-    const abs = path.join(absDir, f);
-    const rel = base ? base + '/' + f : f;
+function collectEntries(appDir) {
+  const entries = [];
+  const rejected = [];
+  const push = (rel, abs, st) => entries.push(
+    st.isDirectory() ? { name: rel + '/', dir: true } : { name: rel, abs: abs, dir: false, mtime: st.mtime }
+  );
+  const deny = (rel, why) => rejected.push({ name: rel, why: why });
+
+  const list = (dir) => fs.readdirSync(dir).sort();
+
+  for (const f of list(appDir)) {
+    const abs = path.join(appDir, f);
     const st = fs.statSync(abs);
+    if (isSensitive(f)) { deny(f, '便携数据 / 缓存 / 日志类条目'); continue; }
     if (st.isDirectory()) {
-      out.push({ name: rel + '/', dir: true });
-      walk(abs, rel, out);
+      if (TOP_DIR.indexOf(f.toLowerCase()) < 0) { deny(f + '/', '不在允许的顶层目录里'); continue; }
+      push(f, abs, st);
+      if (f.toLowerCase() === 'locales') {
+        for (const n of list(abs)) {
+          const a = path.join(abs, n), s = fs.statSync(a);
+          if (s.isDirectory()) { deny(f + '/' + n + '/', 'locales 下不应有子目录'); continue; }
+          if (!/\.pak$/i.test(n)) { deny(f + '/' + n, 'locales 下只允许 .pak'); continue; }
+          push(f + '/' + n, a, s);
+        }
+      } else {
+        for (const n of list(abs)) {
+          const a = path.join(abs, n), s = fs.statSync(a);
+          if (isSensitive(n)) { deny('resources/' + n, '便携数据 / 缓存 / 日志类条目'); continue; }
+          if (!RES_ENTRY.some((re) => re.test(n))) { deny('resources/' + n, '不在 resources 允许清单里'); continue; }
+          push('resources/' + n, a, s);
+          if (n.toLowerCase() !== 'app' || !s.isDirectory()) continue;
+          for (const m of list(a)) {
+            const am = path.join(a, m), sm = fs.statSync(am);
+            const rel = 'resources/app/' + m;
+            if (isSensitive(m)) { deny(rel, '便携数据 / 缓存 / 日志类条目'); continue; }
+            if (sm.isDirectory()) {
+              if (APP_DIR.indexOf(m.toLowerCase()) < 0) { deny(rel + '/', '不在 app 允许的子目录里'); continue; }
+              push(rel, am, sm);
+              for (const k of list(am)) {
+                const ak = path.join(am, k), sk = fs.statSync(ak);
+                if (isSensitive(k)) { deny(rel + '/' + k, '便携数据 / 缓存 / 日志类条目'); continue; }
+                if (sk.isDirectory() || !APP_FILE.some((re) => re.test(k))) {
+                  deny(rel + '/' + k, '不在 app 允许的文件类型里');
+                  continue;
+                }
+                push(rel + '/' + k, ak, sk);
+              }
+            } else {
+              if (!APP_FILE.some((re) => re.test(m))) { deny(rel, '不在 app 允许的文件类型里'); continue; }
+              push(rel, am, sm);
+            }
+          }
+        }
+      }
     } else {
-      out.push({ name: rel, abs: abs, dir: false, mtime: st.mtime });
+      if (!TOP_FILE.some((re) => re.test(f))) { deny(f, '不在允许的顶层文件清单里'); continue; }
+      push(f, abs, st);
     }
   }
-  return out;
+  return { entries: entries, rejected: rejected };
 }
+
+/* 旧的 `walk()`（递归收集整个目录）已删除 —— 它没有排除任何东西，
+   正是"私人数据被打进交付包"那条风险的入口。现在只走 collectEntries() 的允许清单。 */
 
 /**
  * 写一个 ZIP（写完后立即强校验）。entries = [{ name, abs?, dir, mtime? }]
@@ -203,20 +301,52 @@ function reportFailure(name, r) {
 let failed = 0;
 
 /* ---------- Electron 便携版 ---------- */
-if (doElectron) {
+function packElectron() {
   const appDir = path.join(ROOT, 'deploy', 'dist-electron', 'Atrium_Electron版');
   if (!fs.existsSync(appDir)) {
     console.error('× 找不到 Electron 产物，请先跑 node deploy/electron/assemble.js');
     process.exit(1);
   }
-  const entries = walk(appDir, '', []);
+
+  /* 先看有没有便携数据。有就**直接拒绝**，不"顺手排除"——
+     排除会让"跑过一次产物再打包"变成一条安静的、每次都成功的路，
+     而这条路上一旦哪天清单写漏，漏出去的就是用户照片与设置。
+     拒绝 + 指名 + 给出处理办法，才是可审计的行为。 */
+  const dataDir = path.join(appDir, 'data');
+  if (fs.existsSync(dataDir)) {
+    console.error('× 产物目录里有便携数据 data/，拒绝打包：');
+    console.error('    ' + dataDir);
+    console.error('  那是"在本机跑过这个产物"留下的设置 / 收藏 / 缩略图缓存（含 Chromium 的');
+    console.error('  Local Storage 与 IndexedDB）。把它打进交付 ZIP 等于泄露用户数据。');
+    console.error('  确认不需要后手动移走或删除，再重新打包：');
+    console.error('    ren "' + dataDir + '" data-backup   （或直接删掉）');
+    process.exit(1);
+  }
+
+  const { entries, rejected } = collectEntries(appDir);
+  if (rejected.length) {
+    console.error('× 产物目录里有不在允许清单里的条目，拒绝打包：');
+    for (const r of rejected.slice(0, 20)) console.error('   · ' + r.name + '  —— ' + r.why);
+    if (rejected.length > 20) console.error('   · …另有 ' + (rejected.length - 20) + ' 条');
+    console.error('  要么把它们清掉，要么（如果是 Electron 升级带来的新文件）把它们加进');
+    console.error('  deploy/pack.js 的允许清单 —— 别直接放行整个目录。');
+    process.exit(1);
+  }
+
   const zip = path.join(ROOT, 'Atrium_Electron版_v' + VER + '.zip');
   const r = writeZip(zip, entries);
   if (!r.ok) { reportFailure('便携版', r); failed++; }
   else {
     console.log('OK 便携版  → ' + path.basename(zip) + '  (' + mb(r.size) + '，' + entries.length + ' 个条目)');
     console.log('   ' + summarize(r.report));
+    console.log('   允许清单校验：' + entries.length + ' 个条目全部在清单内，0 个被拒');
   }
 }
 
-if (failed) process.exit(1);
+if (require.main === module) {
+  guardCrc();
+  if (doElectron) packElectron();
+  if (failed) process.exit(1);
+}
+
+module.exports = { collectEntries, isSensitive, TOP_FILE, TOP_DIR, RES_ENTRY, APP_FILE, APP_DIR };

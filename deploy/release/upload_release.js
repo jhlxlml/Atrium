@@ -13,7 +13,12 @@
    中途失败只会留下一个草稿（对外不可见），**不会**出现
    "release 已公开但附件没传上去"这种半成品 —— 那个状态对下载者最难受。
 
-   幂等：若该 tag 已有 release，直接复用它（已存在同名资产则跳过上传）。
+   幂等：若该 tag 已有 release，直接复用它。**但"已有同名资产"不等于"可以跳过"**：
+   v1.20.0 之前只比对文件大小，于是"上传被截断但长度恰好一样"、"上次传的是另一份
+   构建产物"这两种情况都会被安静地当成"已经传好了"。
+   现在比对 **SHA-256**，并且把校验和作为 `.sha256` 资产一起发布（下载者能自己验）。
+   已公开的 release 若内容不一致，**直接报错退出**而不是悄悄替换 ——
+   换掉一个已经有人下载过的发布包属于必须由人决定的事。
 
    资产名：上传时用**显式 ASCII 名** `Atrium_Electron_v<VER>_x64.zip`（见 ASSET_NAME），
    不用本地 ZIP 的 basename —— 后者含「版」，GitHub 会把它替换成 `.`。
@@ -22,6 +27,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const DRY = process.argv.includes('--dry');
@@ -41,6 +47,9 @@ const NOTES = path.join(ROOT, 'Atrium_v' + VER + '_更新说明.md');
    只在**上传时**改名。带 `_x64` 是为了将来出 arm64 包时两者能在同一 release 里共存。 */
 const ARCH = 'x64';
 const ASSET_NAME = 'Atrium_Electron_v' + VER + '_' + ARCH + '.zip';
+/* 校验和作为独立资产一起发布：下载者能自己核对，脚本也能用它做"内容是否一致"的判定
+   （比下载 112MB 回来算一遍便宜得多）。格式与 `sha256sum -c` 兼容。 */
+const ASSET_SHA_NAME = ASSET_NAME + '.sha256';
 
 const UA = { 'User-Agent': 'atrium-release-uploader', 'Accept': 'application/vnd.github+json' };
 const auth = () => Object.assign({ Authorization: 'Bearer ' + TOKEN }, UA);
@@ -63,8 +72,19 @@ async function api(method, url, body) {
   return json;
 }
 
+/** 流式算 SHA-256（112 MB 不能整个读进内存） */
+function sha256File(file) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha256');
+    const rs = fs.createReadStream(file);
+    rs.on('error', reject);
+    rs.on('data', (d) => h.update(d));
+    rs.on('end', () => resolve(h.digest('hex')));
+  });
+}
+
 /** 流式上传资产（112 MB，不能整个读进内存） */
-function uploadAsset(uploadUrl, file, name) {
+function uploadAsset(uploadUrl, file, name, ctype) {
   const size = fs.statSync(file).size;
   const u = new URL(uploadUrl + '?name=' + encodeURIComponent(name));
   return new Promise((resolve, reject) => {
@@ -73,7 +93,7 @@ function uploadAsset(uploadUrl, file, name) {
       hostname: u.hostname,
       path: u.pathname + u.search,
       headers: Object.assign(auth(), {
-        'Content-Type': 'application/zip',
+        'Content-Type': ctype || 'application/zip',
         'Content-Length': size,
       }),
     }, (res) => {
@@ -91,6 +111,15 @@ function uploadAsset(uploadUrl, file, name) {
   });
 }
 
+/** 读回一个小资产的内容（只用于 .sha256，几十字节） */
+async function downloadAssetText(id) {
+  const res = await fetch(API + '/repos/' + REPO + '/releases/assets/' + id, {
+    headers: Object.assign(auth(), { Accept: 'application/octet-stream' }),
+  });
+  if (!res.ok) throw new Error('读回资产失败 ' + res.status);
+  return (await res.text()).trim();
+}
+
 (async function main() {
   /* ---------- 前置检查（在发任何请求之前全部做完） ---------- */
   if (!TOKEN) throw new Error('缺少 GH_TOKEN 环境变量（需要 repo 权限的 token）');
@@ -100,20 +129,30 @@ function uploadAsset(uploadUrl, file, name) {
   const zipSize = fs.statSync(ZIP).size;
   const zipName = path.basename(ZIP);
   const body = fs.readFileSync(NOTES, 'utf8');
+  const zipSha = await sha256File(ZIP);
+  const shaBody = zipSha + '  ' + ASSET_NAME + '\n';
+  const shaTmp = path.join(path.dirname(ZIP), '.sha256-tmp');
+  fs.writeFileSync(shaTmp, shaBody, 'utf8');
 
   console.log('仓库     : ' + REPO);
   console.log('tag      : ' + TAG);
   console.log('本地 ZIP : ' + zipName + '  (' + mb(zipSize) + ')');
+  console.log('SHA-256  : ' + zipSha);
   console.log('发布资产 : ' + ASSET_NAME + '  （ASCII 名，与本地名不同是刻意的）');
+  console.log('         + ' + ASSET_SHA_NAME + '  （校验和，sha256sum 可直接 -c）');
   console.log('发布说明 : ' + path.basename(NOTES) + '  (' + body.length + ' 字符)');
 
-  if (DRY) { console.log('\n[dry] 以上为将要执行的内容，未发送任何请求。'); return; }
+  if (DRY) {
+    fs.rmSync(shaTmp, { force: true });
+    console.log('\n[dry] 以上为将要执行的内容，未发送任何请求。');
+    return;
+  }
 
   /* ---------- 1. 复用或新建 draft ---------- */
   let rel = null;
   try {
     rel = await api('GET', API + '/repos/' + REPO + '/releases/tags/' + TAG);
-    console.log('\n· 该 tag 已有 release（id=' + rel.id + '），复用它');
+    console.log('\n· 该 tag 已有 release（id=' + rel.id + '，' + (rel.draft ? '草稿' : '已公开') + '），复用它');
   } catch (e) {
     if (!/-> 404 /.test(e.message)) throw e;
     rel = await api('POST', API + '/repos/' + REPO + '/releases', {
@@ -126,22 +165,73 @@ function uploadAsset(uploadUrl, file, name) {
     console.log('\n· 已创建 draft release（id=' + rel.id + '）');
   }
 
-  /* ---------- 2. 上传资产（已存在则跳过） ---------- */
-  const existing = await api('GET', API + '/repos/' + REPO + '/releases/' + rel.id + '/assets');
-  if (existing.some((a) => a.name === ASSET_NAME)) {
-    console.log('· 资产已存在，跳过上传：' + ASSET_NAME);
-  } else {
+  /* ---------- 2. 资产：按 SHA-256 判定"是不是同一份东西" ----------
+     不能只看"同名资产存在"或"大小一样"：
+       · 传输被截断但长度恰好相同 → 旧的跳过逻辑会当成传好了；
+       · 上次传的是另一份构建产物 → 同样被跳过，且对外已经能下载。
+     判定依据是 .sha256 资产里的十六进制摘要（回读一次，几十字节）。 */
+  const assetsUrl = API + '/repos/' + REPO + '/releases/' + rel.id + '/assets';
+  const existing = await api('GET', assetsUrl);
+  const byName = (n) => existing.filter((a) => a.name === n)[0] || null;
+  const oldZip = byName(ASSET_NAME);
+  const oldSha = byName(ASSET_SHA_NAME);
+
+  let needUpload = true;
+  let reason = '资产还不存在';
+  if (oldZip && oldSha) {
+    const remoteHex = (String(await downloadAssetText(oldSha.id)).split(/\s+/)[0] || '').toLowerCase();
+    if (remoteHex === zipSha && oldZip.size === zipSize) {
+      needUpload = false;
+      console.log('· 资产已存在且 SHA-256 一致（' + zipSha.slice(0, 16) + '…），跳过上传');
+    } else {
+      reason = '内容不一致（远端 ' + (remoteHex.slice(0, 16) || '无法解析') + '… / 本地 '
+        + zipSha.slice(0, 16) + '…）';
+    }
+  } else if (oldZip || oldSha) {
+    reason = '资产不完整（缺 ' + (oldZip ? ASSET_SHA_NAME : ASSET_NAME) + '）';
+  }
+
+  if (needUpload) {
+    if (oldZip || oldSha) {
+      /* 已公开的 release 换包 = 把别人下载过的产物换掉，必须由人决定。
+         这里直接报错退出，把选择权交回给人（改版本号，或手工删资产）。 */
+      if (!rel.draft) {
+        fs.rmSync(shaTmp, { force: true });
+        throw new Error('release ' + TAG + ' 已公开，但资产与本地构建不一致：' + reason
+          + '\n  → 若确实要替换：先到 GitHub 删除 ' + ASSET_NAME + ' 与 ' + ASSET_SHA_NAME + ' 后重跑；'
+          + '\n  → 更推荐的做法是改版本号，发一个新 tag。');
+      }
+      console.log('· 旧资产需要替换：' + reason);
+      for (const a of [oldZip, oldSha]) {
+        if (!a) continue;
+        await api('DELETE', API + '/repos/' + REPO + '/releases/assets/' + a.id);
+        console.log('  → 已删除旧资产 ' + a.name);
+      }
+    }
+
+    const upUrl = rel.upload_url.replace('{?name,label}', '');
     process.stdout.write('· 上传中（' + mb(zipSize) + '）… ');
     const t0 = Date.now();
-    const asset = await uploadAsset(rel.upload_url.replace('{?name,label}', ''), ZIP, ASSET_NAME);
+    const asset = await uploadAsset(upUrl, ZIP, ASSET_NAME, 'application/zip');
     console.log('完成，用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
     console.log('  → ' + asset.browser_download_url);
-
-    /* ---------- 3. 校验：大小必须一致 ---------- */
     if (asset.size !== zipSize) {
-      throw new Error('上传后大小不一致！本地 ' + zipSize + ' / 远端 ' + asset.size + '（release 仍为草稿，请重试）');
+      fs.rmSync(shaTmp, { force: true });
+      throw new Error('上传后大小不一致！本地 ' + zipSize + ' / 远端 ' + asset.size
+        + '（release 仍为草稿，请重试）');
     }
     console.log('  → 大小校验通过：' + mb(asset.size));
+
+    const shaAsset = await uploadAsset(upUrl, shaTmp, ASSET_SHA_NAME, 'text/plain');
+    fs.rmSync(shaTmp, { force: true });
+    /* 回读校验和，确认它真的传上去了、内容也对 —— 后面所有人都靠它验证下载包 */
+    const back = (String(await downloadAssetText(shaAsset.id)).split(/\s+/)[0] || '').toLowerCase();
+    if (back !== zipSha) {
+      throw new Error('校验和资产回读不一致！本地 ' + zipSha + ' / 远端 ' + (back || '空'));
+    }
+    console.log('  → 校验和资产已上传并回读确认：' + ASSET_SHA_NAME);
+  } else {
+    fs.rmSync(shaTmp, { force: true });
   }
 
   /* ---------- 4. 转为公开 ---------- */
@@ -151,6 +241,8 @@ function uploadAsset(uploadUrl, file, name) {
   }
   console.log('\n✓ ' + rel.html_url);
 })().catch((e) => {
+  /* 临时校验和文件不许留在仓库根目录（.gitignore 之外，容易被误提交） */
+  try { fs.rmSync(path.join(ROOT, '.sha256-tmp'), { force: true }); } catch (_) { /* 忽略 */ }
   console.error('\n✗ ' + e.message);
   process.exit(1);
 });

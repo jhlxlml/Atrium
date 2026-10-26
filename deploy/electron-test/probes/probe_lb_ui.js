@@ -16,7 +16,7 @@ const PICDIR = path.join(__dirname, '..', 'fixtures', '照片夹');
 app.setPath('userData', path.resolve(__dirname, '..', 'logs', 'ud_lbui_' + Date.now()));
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
-protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } }]);
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.gif': 'image/gif' };
 
 function collect(dir) {
@@ -80,7 +80,7 @@ app.whenReady().then(async () => {
     if (u.host === 'pic') {
       const b64 = decodeURIComponent(u.pathname).replace(/^\/+/, '');
       const abs = Buffer.from(b64, 'base64url').toString('utf8');
-      try { const b = await fs.promises.readFile(abs); return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } }); }
+      try { const b = await fs.promises.readFile(abs); return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } }); }
       catch (e) { return new Response('404', { status: 404 }); }
     }
     const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');

@@ -172,6 +172,43 @@ const SUITES = [
     },
   },
 
+  /* ---------- 1b3c. 纯函数：回收站 $I 解析与「只认这一次删除」的判据（Node） ----------
+     撤销删除的语义是"撤销**这一次**"。判据靠三样东西：原路径、大小、删除时刻。
+     历史实现把后两样写成 `(rec.size)|0` / `(rec.ts)|0` —— 位或截成有符号 32 位：
+       · ts 约 1.77e12 → 截成一个负数 → `afterMs` 远早于真实删除时刻 →
+         "不早于这次删除"的护栏**静默失效**，撤销会把用户昨天手动删的同名文件搬回来；
+       · size ≥ 2GiB → 截成负数 → 与 $I 里的真实大小永不相等 → 大文件永远还原不了。
+     这两条都**不会报错**，界面上只会显示"撤销失败"或"已撤销"。所以这套的重点是
+     反向用例：先用 `|0` 亲手复现失真，再断言修复后处理对。 */
+  {
+    id: 'trash',
+    title: '纯函数 · 回收站 $I 解析 / 撤销只认这一次删除 / ≥2GiB 大小不截断（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'trash.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('回收站纯逻辑测试全部通过（78 断言，含 6 条反向用例）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
+  /* ---------- 1b3d. 纯函数：vf://pic 的读盘授权（Node） ----------
+     `vf://pic/<base64 路径>` 原先是"解出什么路径就读什么路径"，等于给了渲染层
+     一台读任意文件的机器（`.ssh\id_rsa` 拼个 base64 就出来了）。现在只放行
+     用户真正打开过的目录。判定里有三种必须被拒的绕过：`..` 折叠、前缀无边界
+     （`Pics2` vs `Pics`）、大小写/分隔符混用。所以这套的重点是反向用例。 */
+  {
+    id: 'pathauth',
+    title: '纯函数 · vf://pic 读盘授权：只放行打开过的目录，.. 与前缀越权一律拒（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'pathauth.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('读盘授权纯逻辑测试全部通过（45 断言，含 9 条越权反向用例）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
   /* ---------- 1b4. 纯函数：瀑布流的列分配 / 高度 / 二分代理不变量（Node） ----------
      核心不变量：positions[i].y 单调不减（可安全二分），而 y+h **不单调**
      （同列里后放的矮图底边可能更靠上）→ 网格的可见区裁剪 / 滚动锚定 / 框选
@@ -259,6 +296,169 @@ const SUITES = [
     },
   },
 
+  /* ---------- 1b4a. 打包允许清单：私人数据一律拒收（Node） ----------
+     交付 ZIP 是用 Node 自己的 ZIP 写入器从产物目录打出来的。原先的收集函数是
+     `walk(appDir,'',[])` —— **递归整个目录，一个都不排除**。于是"用构建产物看过
+     私人照片 → 直接 npm run pack"这条再正常不过的操作，会把 data/（设置 / 收藏 /
+     旋转记录 / 缩略图缓存 + Chromium 的 Local Storage 与 IndexedDB）原样打进交付包。
+
+     这条套件用**一个造出来的假产物目录**去撞清单：运行时文件必须收、data/ 与日志
+     必须拒，并且"拒收清单"要能被逐个点名 —— 只断言"条数变少了"是抓不到漏的。 */
+  {
+    id: 'packlist',
+    title: '打包允许清单 · data/ 与缓存一律拒收，未知条目也拒收（Node）',
+    kind: 'node',
+    run: function (ctx) {
+      const check = ctx.check;
+      let P;
+      try { P = require(path.join(ROOT, 'deploy', 'pack.js')); }
+      catch (e) {
+        check('pack.js 可被 require（主逻辑不在 import 时执行）', false, String((e && e.message) || e));
+        return;
+      }
+      check('pack.js 可被 require（主逻辑不在 import 时执行）', typeof P.collectEntries === 'function');
+
+      const tmp = path.join(LOGS, 'packlist-fixture');
+      fs.rmSync(tmp, { recursive: true, force: true });
+      const mk = (rel, content) => {
+        const abs = path.join(tmp, rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, content == null ? 'x' : content);
+      };
+      /* 运行时该有的（照真实产物的一小部分） */
+      mk('Atrium.exe'); mk('Atrium.cmd'); mk('version'); mk('LICENSE');
+      mk('ffmpeg.dll'); mk('resources.pak');
+      mk('locales/zh-CN.pak');
+      mk('resources/default_app.asar');
+      mk('resources/app/index.html'); mk('resources/app/main.js'); mk('resources/app/icon.ico');
+      mk('resources/app/js/app.js'); mk('resources/app/css/main.css');
+      /* 不该出现的 */
+      mk('data/last-dir.json', '{"dir":"C:\\\\Users\\\\me\\\\Photos"}');
+      mk('data/Local Storage/leveldb/000003.log');
+      mk('debug.log');
+      mk('screenshots/private.png');
+      mk('notes.txt');
+
+      const r = P.collectEntries(tmp);
+      const names = r.entries.map((e) => e.name);
+      const rn = r.rejected.map((x) => x.name);
+
+      check('运行时文件全部收进清单',
+        ['Atrium.exe', 'version', 'ffmpeg.dll', 'resources.pak', 'locales/zh-CN.pak',
+          'resources/app/js/app.js', 'resources/app/css/main.css'].every((n) => names.indexOf(n) >= 0),
+        names.join(', '));
+      check('data/ 被拒收（私人数据不外泄）', rn.indexOf('data') >= 0, rn.join(', '));
+      check('data/ 里的任何文件都没进清单（不是只拒了目录名）',
+        !names.some((n) => /^data\//.test(n)), names.filter((n) => /^data/.test(n)).join(', '));
+      check('日志 / 未知目录 / 未知文件都被拒收',
+        ['debug.log', 'screenshots/', 'notes.txt'].every((n) => rn.indexOf(n) >= 0), rn.join(', '));
+      const unexpected = rn.filter((n) => ['data', 'debug.log', 'screenshots/', 'notes.txt'].indexOf(n) < 0);
+      check('没有额外的误拒（清单没有紧到把运行时文件挡在外面）',
+        unexpected.length === 0, unexpected.join(', '));
+
+      /* 真实产物：除 data/（本机跑过产物才会有）之外，不应有任何被拒条目。
+         这条是"清单与当前 Electron 运行时对得上"的活体检 —— 升级 Electron 后
+         多出新文件时，它会在打包之前就红，而不是等 pack 报错。 */
+      const real = path.join(ROOT, 'deploy', 'dist-electron', 'Atrium_Electron版');
+      if (fs.existsSync(real)) {
+        const rr = P.collectEntries(real);
+        const bad = rr.rejected.filter((x) => x.name !== 'data');
+        check('真实产物里除 data/ 外没有被拒条目', bad.length === 0,
+          bad.map((b) => b.name + '：' + b.why).join(' | '));
+        check('真实产物条目数 ≥ 100（没有把该带的漏掉）', rr.entries.length >= 100, 'n=' + rr.entries.length);
+      } else {
+        check('真实产物存在（先跑 npm run build）', false, real);
+      }
+
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+
+  /* ---------- 1b4a2. 构建安全：`/MIR` 不许碰 data/（Node，会真的跑一次 robocopy） ----------
+     assemble.js 用 `robocopy /MIR` 把运行时镜像到产物目录。/MIR = /E + /PURGE，
+     **会删掉目标里"源没有"的一切** —— 而便携数据 data/ 恰好只在目标里有。
+     于是"用产物看一眼照片 → 再 npm run build"会把用户设置、收藏、旋转记录、
+     缩略图缓存全部清空，构建却打印 OK。
+
+     这套不只是查源码里有没有写 /XD：它在临时目录里**真的跑一次 robocopy**，
+     放一个哨兵文件进 dst/data/，然后
+       ① 带上和构建脚本一模一样的参数 → 哨兵必须还在；
+       ② 故意去掉 /XD → 哨兵必须消失。
+     ②是必须的：只做①的话，"robocopy 根本没删东西"这种环境差异会让门禁恒真。 */
+  {
+    id: 'buildsafe',
+    title: '构建安全 · robocopy /MIR 不删 data/（真跑一次）+ 主进程依赖全进产物（Node）',
+    kind: 'node',
+    run: function (ctx) {
+      const check = ctx.check;
+      const asmSrc = fs.readFileSync(path.join(ROOT, 'deploy', 'electron', 'assemble.js'), 'utf8');
+      check('assemble.js 的镜像参数里有 /XD data',
+        /const MIRROR_EXCLUDE = \['\/XD', 'data'\]/.test(asmSrc),
+        (asmSrc.match(/[^\n]*MIRROR_EXCLUDE[^\n]*/g) || []).join(' | '));
+      check('检测到 data/ 时会明确打印"不会删除"（不许无声）',
+        asmSrc.indexOf('已排除在镜像之外（不会删除）') >= 0);
+      check('构建会反向核对主进程 require（MAIN_FILES 漏文件就失败，不留到运行时）',
+        asmSrc.indexOf('main-process requires resolved') >= 0);
+
+      /* 主进程依赖清单：从源码里把本地 require 全抠出来，逐个核对是否在 MAIN_FILES */
+      {
+        const dir = path.join(ROOT, 'deploy', 'electron');
+        const mf = (asmSrc.match(/const MAIN_FILES = \[([\s\S]*?)\];/) || [])[1] || '';
+        const listed = (mf.match(/'([^']+)'/g) || []).map((s) => s.slice(1, -1));
+        const need = new Set();
+        for (const f of ['main.js', 'desktop.js', 'preload.js']) {
+          const p = path.join(dir, f);
+          if (!fs.existsSync(p)) continue;
+          for (const m of fs.readFileSync(p, 'utf8').matchAll(/require\('(\.\/[A-Za-z0-9_.-]+)'\)/g)) {
+            need.add(m[1].slice(2));
+          }
+        }
+        const missing = Array.from(need).filter((n) => listed.indexOf(n) < 0);
+        check('MAIN_FILES 覆盖 main/desktop/preload 的全部本地 require',
+          need.size > 0 && missing.length === 0,
+          '缺 ' + JSON.stringify(missing) + '（清单 ' + listed.length + ' 项）');
+      }
+
+      /* 真跑一次 robocopy：临时目录，不碰任何真实产物 */
+      const tmp = path.join(LOGS, 'buildsafe-' + Date.now());
+      const src = path.join(tmp, 'src');
+      const dst = path.join(tmp, 'dst');
+      fs.mkdirSync(src, { recursive: true });
+      fs.mkdirSync(path.join(dst, 'data'), { recursive: true });
+      fs.writeFileSync(path.join(src, 'electron.exe'), 'exe');
+      fs.writeFileSync(path.join(src, 'ffmpeg.dll'), 'dll');
+      fs.writeFileSync(path.join(dst, 'stale-old-file.dll'), 'old'); // /MIR 该清掉它
+      fs.writeFileSync(path.join(dst, 'data', '_sentinel.txt'), 'sentinel');
+
+      const run = (extra) => {
+        const args = [src, dst, '/MIR'].concat(extra, ['/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:1', '/W:1']);
+        const r = spawnSync('robocopy', args);
+        return { status: r.status, err: r.error ? String(r.error.message) : '' };
+      };
+      const has = (p) => fs.existsSync(p);
+
+      const withXD = run(['/XD', 'data']);
+      check('robocopy 能跑起来（这台机器上有它）',
+        withXD.err === '', withXD.err);
+      check('带 /XD data 时：哨兵仍在（构建不会删用户数据）',
+        has(path.join(dst, 'data', '_sentinel.txt')),
+        'robocopy status=' + withXD.status);
+      check('带 /XD data 时：运行时文件照常镜像过去',
+        has(path.join(dst, 'electron.exe')) && has(path.join(dst, 'ffmpeg.dll')));
+      check('带 /XD data 时：目标里的旧垃圾文件仍被 /MIR 清掉（没有把镜像变成只增不减）',
+        !has(path.join(dst, 'stale-old-file.dll')));
+
+      /* 反向：去掉 /XD，哨兵必须消失 —— 证明起作用的确实是这条参数 */
+      fs.writeFileSync(path.join(dst, 'data', '_sentinel.txt'), 'sentinel');
+      const noXD = run([]);
+      check('反向：去掉 /XD 后哨兵被删（证明 /XD 就是那道保险）',
+        !has(path.join(dst, 'data', '_sentinel.txt')),
+        'robocopy status=' + noXD.status);
+
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
+
   /* ---------- 1b4b. IPC 链路完整性（源级，不需要 Electron） ----------
      渲染层能调的每一条通道，主进程侧都必须有 handler；
      `desktop.js` 的每一条通道，探针桩（`_desktop_stub.js`）都必须补上。
@@ -310,6 +510,113 @@ const SUITES = [
       check('desktop.js 的每条通道都有探针桩（否则探针里是"假失败"）',
         desktopCh.length > 0 && noStub.length === 0,
         '桌面通道 ' + desktopCh.length + ' 条，缺桩=' + JSON.stringify(noStub));
+    },
+  },
+
+  /* ---------- 1b4c. 安全基线（源级） ----------
+     这一套守的是"安全上的默认值"，它们**被改回去也不会报错**，只会安静地变弱：
+       · bypassCSP: true → 文档里的 CSP 直接失效（等于没有 CSP）；
+       · 沙箱起不来就自动 --no-sandbox 重启 → 用户全程不知情地失去沙箱隔离；
+       · 内联 style 属性 → 逼着 style-src 放行 'unsafe-inline'，CSP 少一半价值；
+       · IPC 通道不校验来源 → 页面里一处 HTML 注入就能调 preload 暴露的全部能力。
+     源级检查而不是运行时检查：这几条都在"启动之前"，跑起来再看就晚了。 */
+  {
+    id: 'secboot',
+    title: '安全基线 · 无 bypassCSP / 严格 CSP / 沙箱不静默降级 / IPC 校验来源（源级）',
+    kind: 'node',
+    run: function (ctx) {
+      const check = ctx.check;
+      const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+      let main, html;
+      try { main = read('deploy/electron/main.js'); html = read('index.html'); }
+      catch (e) { check('安全基线源文件可读', false, String((e && e.message) || e)); return; }
+
+      /* ---- CSP ---- */
+      check('main.js 不再声明 bypassCSP（它会让文档里的 CSP 整份失效）',
+        !/bypassCSP\s*:\s*true/.test(main),
+        (main.match(/[^\n]*bypassCSP[^\n]*/g) || []).join(' | '));
+      /* corsEnabled 不是"可有可无的性能开关"：Electron 45 起，不在 CORS 允许列表里的
+         自定义协议**一律拒绝跨源 fetch**，而缩略图正是靠 fetch vf://pic 拿 Blob 的。
+         少了它页面不报错，只是所有缩略图都不出现。 */
+      check('main.js 的 vf:// 特权里有 corsEnabled（否则缩略图全都不出）',
+        /corsEnabled\s*:\s*true/.test(main));
+      {
+        const probeDir = path.join(ROOT, 'deploy', 'electron-test', 'probes');
+        const need = fs.readdirSync(probeDir).filter((f) => {
+          const s = fs.readFileSync(path.join(probeDir, f), 'utf8');
+          return /host === 'pic'/.test(s) && !/corsEnabled/.test(s);
+        });
+        check('每个会加载图片的探针都开了 corsEnabled（探针要能复现真实协议行为）',
+          need.length === 0, need.join(', '));
+      }
+      const m = html.match(/<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]+)"/i);
+      check('index.html 里有 CSP（meta http-equiv）', !!m, '没找到 CSP meta');
+      if (m) {
+        const csp = m[1];
+        check('CSP 默认拒绝：default-src 收窄到 self', /default-src 'self'/.test(csp), csp);
+        check('CSP script-src 只放 self（无 unsafe-inline / unsafe-eval）',
+          /script-src 'self'/.test(csp)
+            && !/script-src[^;]*unsafe-inline/.test(csp)
+            && !/script-src[^;]*unsafe-eval/.test(csp), csp);
+        check('CSP style-src 不含 unsafe-inline（靠"没有内联 style"来成立）',
+          /style-src 'self'/.test(csp) && !/style-src[^;]*unsafe-inline/.test(csp), csp);
+        check('CSP 封掉 object / base / form 三个跳板',
+          /object-src 'none'/.test(csp) && /base-uri 'none'/.test(csp) && /form-action 'none'/.test(csp), csp);
+        check('CSP 的 img-src 放行 vf: 与 data:（缩略图与图标要用）',
+          /img-src[^;]*vf:/.test(csp) && /img-src[^;]*data:/.test(csp), csp);
+        check('CSP 的 connect-src 放行 vf:（缩略图要 fetch 成 Blob 才能降采样）',
+          /connect-src[^;]*vf:/.test(csp), csp);
+      }
+      /* style-src 'self' 要成立，文档里就不能有内联 style 属性 / <style> 块 */
+      check('index.html 里没有内联 style 属性（否则 style-src 得放行 unsafe-inline）',
+        !/\sstyle="/.test(html),
+        (html.match(/[^\n]*\sstyle="[^"]{0,40}/g) || []).join(' | '));
+      check('index.html 里没有内联 <script> 块',
+        !/<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i.test(html));
+      check('图标精灵靠 #iconSprite 规则隐藏（内联 style 的替代）',
+        /id="iconSprite"/.test(html) && /#iconSprite\s*\{[^}]*display:\s*none/.test(read('css/main.css')));
+
+      /* ---- 沙箱不静默降级 ---- */
+      {
+        const askIdx = main.indexOf('showMessageBoxSync(mainWin');
+        const relaunchIdx = main.indexOf("concat(['--no-sandbox'])");
+        check('带 --no-sandbox 的重启一定排在用户确认之后（不是自动的）',
+          askIdx >= 0 && relaunchIdx > askIdx,
+          'askIdx=' + askIdx + ' relaunchIdx=' + relaunchIdx);
+      }
+      check('降级前必须弹窗询问，且默认按钮是"取消"',
+        /showMessageBoxSync\(mainWin,\s*\{[\s\S]{0,900}?defaultId:\s*0/.test(main),
+        '没找到带 defaultId:0 的确认框');
+      check('降级询问里的按钮顺序是 [取消, 用兼容模式重启]',
+        /buttons:\s*\[\s*'取消'\s*,\s*'用兼容模式重启'\s*\]/.test(main));
+
+      /* ---- IPC 来源校验 ---- */
+      check('main.js 有 isTrustedSender（只认 vf://app/ 下的本进程窗口）',
+        /function isTrustedSender\(e\)/.test(main)
+          && /vf:\\\/\\\/app\\\//.test(main)
+          && /getAllWindows\(\)\.some/.test(main));
+      check('IPC 校验一次性包住所有注册（新增通道不会漏）',
+        /function installIpcGuard\(\)/.test(main)
+          && /ipcMain\.handle\s*=\s*\(ch,\s*fn\)/.test(main)
+          && /ipcMain\.on\s*=\s*\(ch,\s*fn\)/.test(main));
+      check('校验在 wireIpc / desktop.wireIpc 之前安装（装晚了会漏一批通道）',
+        main.indexOf('installIpcGuard();') >= 0
+          && main.indexOf('installIpcGuard();') < main.indexOf('wireIpc();')
+          && main.indexOf('installIpcGuard();') < main.indexOf('desktop.wireIpc();'));
+      check('未通过校验的调用会抛错（不会被当成一条业务失败吞掉）',
+        /throw new Error\('untrusted sender/.test(main));
+
+      /* ---- 跨源与读盘 ---- */
+      check('vf://pic 不再回 Access-Control-Allow-Origin: *',
+        main.indexOf("'Access-Control-Allow-Origin', '*'") < 0);
+
+      /* ---- 删除链路的两处静默失败 ---- */
+      check('删除日志原子写（.tmp + rename），不再裸 writeFile',
+        /const tmp = f \+ '\.tmp'/.test(main) && /await fs\.rename\(tmp, f\)/.test(main));
+      check('trashItem 报错时只认 ENOENT 为"文件确实不在了"',
+        /e2\.code === 'ENOENT'/.test(main));
+      check('删除日志写失败会作为 warned 带回渲染层（不再吞异常）',
+        /log-write-failed/.test(main));
     },
   },
 

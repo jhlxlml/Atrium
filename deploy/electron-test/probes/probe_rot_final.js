@@ -12,7 +12,7 @@ const PICDIR = path.join(__dirname, '..', 'fixtures', '照片夹');
 app.setPath('userData', path.resolve(__dirname, '..', 'logs', 'ud_rotfinal_' + Date.now()));
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
-protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } }]);
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg' };
 function collect(dir) {
   const out = [];
@@ -29,14 +29,14 @@ app.whenReady().then(async () => {
     const u = new URL(req.url);
     if (u.host === 'pic') {
       const abs = Buffer.from(decodeURIComponent(u.pathname).replace(/^\/+/, ''), 'base64url').toString('utf8');
-      try { const b = await fs.promises.readFile(abs); return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } }); }
+      try { const b = await fs.promises.readFile(abs); return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } }); }
       catch (e) { return new Response('404', { status: 404 }); }
     }
     // app 资源：从打包后的 app 目录静态服务（index.html + css/* + js/*）
     const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'index.html';
     const abs = path.resolve(APPDIR, rel);
     if (abs !== APPDIR && !abs.startsWith(APPDIR + path.sep)) return new Response('403', { status: 403 });
-    try { const b = await fs.promises.readFile(abs); return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } }); }
+    try { const b = await fs.promises.readFile(abs); return new Response(b, { headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } }); }
     catch (e) { return new Response('404', { status: 404 }); }
   });
 

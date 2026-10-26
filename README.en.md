@@ -73,13 +73,16 @@ Update checking is **off by default** — it is the only feature in the whole ap
 
 ### Using the portable build
 
-1. Download **`Atrium_Electron_v1.20.0_x64.zip`** (112.6 MB, Windows x64) from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
+1. Download **`Atrium_Electron_v1.20.1_x64.zip`** (Windows x64) and the matching **`.sha256`** from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
 2. Unzip it, then double-click **`Atrium.cmd`** (**not** `Atrium.exe`).
 3. Click "添加文件夹" (Add folder), or drag a folder / images straight into the window.
 
 > **Why a `.cmd` and not the exe**: WorkBuddy and some Node environments inject `NODE_OPTIONS`, which makes a packaged Electron app **exit immediately on launch**. The launcher clears that variable first, then starts the app. It looks for `Atrium.exe` by name and only falls back to "the first exe in the folder" if it is missing.
 
-> The downloadable asset is named `Atrium_Electron_v1.20.0_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
+> **Verify the checksum** (since v1.20.1 the release script uploads a `.sha256` alongside the ZIP):
+> `sha256sum -c Atrium_Electron_v1.20.1_x64.zip.sha256` (PowerShell: `Get-FileHash`).
+
+> The downloadable asset is named `Atrium_Electron_v1.20.1_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
 
 > **Where your data lives**: a `data/` folder appears automatically next to the app (settings / favourites / rotation records / thumbnail cache).
 > It is **portable** — copy the whole folder and you take your entire configuration with you, no re-configuring on another machine.
@@ -112,7 +115,8 @@ npm test
 
 | Command | Purpose |
 |---|---|
-| `npm test` | Full regression: **39 suites / 484 assertions**, roughly 280 s |
+| `npm test` | Full regression: **43 suites / 525 assertions**, roughly 290 s |
+| `npm run test:unit` | Pure Node unit tests only: **10 files**, zero dependencies, ~3 s (what CI should run) |
 | `npm run test:fast` | Quick pass: 13 suites / 61 assertions, ~8 s (**includes `tf`, which needs electron**) |
 | `npm run build` | Build the portable Electron package |
 | `npm run pack` | Produce the release ZIP |
@@ -167,9 +171,9 @@ platform      native.js (renderer-side adapter) ──IPC──▶ preload.js (a
 
 A few deliberate decisions:
 
-- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation) and the update-check rules (version comparison, URL allow-list) are factored into pure functions that depend on neither the DOM nor Electron, so **1195** fine-grained assertions run in milliseconds under Node without opening a window.
+- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation), the update-check rules (version comparison, URL allow-list), the recycle-bin `$I` matching rules and the `vf://pic` read authorisation are factored into pure functions that depend on neither the DOM nor Electron, so **1318** fine-grained assertions run in milliseconds under Node without opening a window.
 - **`desktop-spec.js` is pure data** (menu template, accelerators, command vocabulary) and is **not allowed to `require('electron')`** — which is why 76 assertions can test it directly under Node.
-- **Security baseline**: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, a custom privileged `vf://` protocol, a preload allow-list, and new windows / external navigation refused. Every desktop-integration IPC channel **verifies the sender**, and untrusted calls are rejected. **Opening external links also goes through an allow-list** — only the official repository is let through, locked down by 21 reverse cases.
+- **Security baseline**: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, a strict CSP (no `bypassCSP`, no `unsafe-inline`), a custom privileged `vf://` protocol, a preload allow-list, and new windows / external navigation refused. Every IPC channel **verifies the sender** in one place, and untrusted calls throw. **Opening external links also goes through an allow-list** — only the official repository is let through, locked down by 21 reverse cases.
 
 ## Engineering and regression
 
@@ -177,9 +181,9 @@ The project tries hard to turn "potholes we fell into" into **mechanisms**. Curr
 
 | Metric | Value |
 |---|---|
-| Regression | **39 suites / 484 assertions**, non-zero exit on any failure |
-| Source size | `js/` 9,923 lines across 15 modules · `css/` 2,268 lines across 3 files · `index.html` 433 lines · main-process side 3,047 lines across 6 files |
-| IPC | 35 invoke + 1 renderer→main + 3 main→renderer = **39 unique channel names** |
+| Regression | **43 suites / 525 assertions**, non-zero exit on any failure |
+| Source size | `js/` 10,400 lines across 16 modules · `css/` 2,414 lines across 3 files · `index.html` 444 lines · main-process side 3,393 lines across 8 files · `test/` 2,499 lines across 10 files |
+| IPC | 37 invoke + 1 renderer→main + 3 main→renderer = **41 unique channel names** |
 | Runtime dependencies | **0** (`electron` and `rcedit` are build-time only) |
 
 Several layers of the regression are **mutually independent lines of defence**:
@@ -191,11 +195,12 @@ Several layers of the regression are **mutually independent lines of defence**:
 - **Security criteria go into the regression too**: the `update` suite locks the `openExternal` URL allow-list with **21 reverse cases** (subdomain spoofing, userinfo spoofing, non-default port, path traversal, `file://`, `javascript:` …) — testing only that "the official link passes" would be an always-true gate.
 - **Failures explain themselves**: assertion messages carry field evidence such as "how many announcements fired, and what the last one said", instead of just `false`.
 
-> **On the number**: `484` counts **suite-level entries**, and it is *not* a stable coverage metric — it moves for three reasons:
-> ① Eight pure-function suites expand into far more fine-grained assertions internally (1195 in total) but are counted as one entry each — so **do not add them up**;
+> **On the number**: `525` counts **suite-level entries**, and it is *not* a stable coverage metric — it moves for three reasons:
+> ① Ten pure-function suites expand into far more fine-grained assertions internally (1318 in total) but are counted as one entry each — so **do not add them up**;
 > ② the `zip` suite has **2 conditional assertions** that only run when the **delivery ZIP is present** (fewer in a source-only checkout);
-> ③ once the `appself` suite fails "the self-check as a whole passed" it **returns early**, and the 31 frame assertions after it never execute —
-> which is why a sandbox without `alwaysOnTop` reports `453` while a healthy environment reports `484`.
+> ③ once the `appself` suite fails "the self-check as a whole passed" it **returns early**, and the 31 frame assertions after it never execute;
+> likewise a probe that times out makes its suite count only 2 entries ("process exited normally" + "returned data") and skip the rest —
+> which is why a sandbox without `alwaysOnTop` reports `494`, a load-starved run reports `511`, and a healthy environment reports `525`.
 > **A smaller number does not mean fewer tests** — first find which step produced no output.
 
 ## Repository layout
@@ -245,8 +250,11 @@ Atrium/
 | File | Contents |
 |---|---|
 | [`Atrium_开发上手手册.md`](Atrium_开发上手手册.md) | **Handbook**: commands, the five layers, landmine list, standard procedures for adding a setting or an IPC channel, frozen identifiers |
-| [`Atrium_v1.18.0_更新说明.md`](Atrium_v1.18.0_更新说明.md) | This version: icons unified on Lucide / type scale collapsed to 8 steps / colour semantics split / selection-bar text no longer wraps |
-| [`Atrium_v1.17.2_更新说明.md`](Atrium_v1.17.2_更新说明.md) | Previous release: in single-column view the previous image no longer shows through the top bar |
+| [`Atrium_v1.20.1_更新说明.md`](Atrium_v1.20.1_更新说明.md) | This version: security & data-reliability fixes (builds no longer delete `data/`, packaging allow-list, 32-bit truncation in undo-delete, CSP, no silent sandbox downgrade, `vf://pic` read authorisation, Electron 33→45) |
+| [`Atrium_v1.20.0_更新说明.md`](Atrium_v1.20.0_更新说明.md) | Previous release: customisable accent colour (one colour derived into a whole token set) / lightbox follows the theme |
+| [`Atrium_v1.19.0_更新说明.md`](Atrium_v1.19.0_更新说明.md) | Older: site-wide contrast audit / clipped focus rings / 24 px hit targets / Settings pushed off-screen in narrow windows |
+| [`Atrium_v1.18.0_更新说明.md`](Atrium_v1.18.0_更新说明.md) | Older: icons unified on Lucide / type scale collapsed to 8 steps / colour semantics split / selection-bar text no longer wraps |
+| [`Atrium_v1.17.2_更新说明.md`](Atrium_v1.17.2_更新说明.md) | Older: in single-column view the previous image no longer shows through the top bar |
 | [`Atrium_v1.17.1_更新说明.md`](Atrium_v1.17.1_更新说明.md) | Older: single-column view no longer hides the top of images behind the chrome (regression fix) |
 | [`Atrium_v1.17.0_更新说明.md`](Atrium_v1.17.0_更新说明.md) | Previous release: Apple HIG rebuild / sources moved to a left rail / two grid views / 10 UI fixes |
 | [`Atrium_v1.14.0_更新说明.md`](Atrium_v1.14.0_更新说明.md) | Older: portable data directory / About panel / update check |

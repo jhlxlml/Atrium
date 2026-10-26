@@ -11,7 +11,7 @@ const APPDIR = path.resolve(__dirname, '..', '..', '..');
 app.setPath('userData', path.resolve(__dirname, '..', 'logs', 'ud_uifix_' + Date.now()));
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
-protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } }]);
 ipcMain.handle('vf:trashLog', () => []);
 
 async function run() {
@@ -22,7 +22,7 @@ async function run() {
       '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg' };
     // ⚠️ CSS 必须返回 text/css：标成 text/html 时浏览器直接拒载样式表，零报错、全是垃圾数据
     try { return new Response(await fs.promises.readFile(abs), { status: 200,
-      headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } }); }
+      headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } }); }
     catch (e) { return new Response('404', { status: 404 }); }
   });
 

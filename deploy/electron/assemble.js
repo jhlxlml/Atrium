@@ -57,8 +57,13 @@ for (const f of fs.readdirSync(path.join(ROOT, 'css'))) {
 }
 /* 主进程侧的文件全部平铺到 resources/app 根下。
    新增一个主进程模块**必须**加进这个列表 —— 漏了的话构建照样成功、
-   exe 也能起，直到运行时 require 失败才炸（而且只在用到那条路径时才炸）。 */
-const MAIN_FILES = ['main.js', 'preload.js', 'exportlib.js', 'updatelib.js', 'desktop.js', 'desktop-spec.js', 'package.json'];
+   exe 也能起，直到运行时 require 失败才炸（而且只在用到那条路径时才炸）。
+   v1.20.1 就踩过：新抽出的 trashlib.js / pathauth.js 忘了加，产物一启动就
+   `Cannot find module './trashlib.js'`，而构建打印的是 OK。
+   所以下面 [1b] 加了一道**反向校验**：从 main.js / desktop.js 里把
+   `require('./x.js')` 全抠出来，逐个核对是否真的在 STAGE 里 —— 漏一个就构建失败。 */
+const MAIN_FILES = ['main.js', 'preload.js', 'exportlib.js', 'updatelib.js', 'trashlib.js',
+  'pathauth.js', 'desktop.js', 'desktop-spec.js', 'package.json'];
 for (const f of MAIN_FILES) {
   if (!fs.existsSync(path.join(HERE, f))) throw new Error('主进程文件缺失：' + f);
   copy(path.join(HERE, f), path.join(STAGE, 'app', f));
@@ -82,14 +87,57 @@ if (missingRefs.length) {
   throw new Error('index.html 引用了不存在的本地文件：\n  ' + missingRefs.join('\n  '));
 }
 console.log('[1/3] local refs all present (' + localRefs.length + ')');
+
+/* 1c) 反向校验：主进程模块之间的 require('./x.js') 必须都能在 STAGE 里找到。
+   这道闸是给 MAIN_FILES 那份**手写清单**兜底的：清单漏一个文件，构建照样
+   打印 OK、exe 也照样起得来，直到运行时走到那条 require 才炸
+   （v1.20.1 的 trashlib.js 就是这么漏的，产物一启动就 Cannot find module）。
+   从 staged 的 main.js / desktop.js 里把本地 require 全抠出来逐个核对。 */
+{
+  const seen = new Set();
+  const stack = ['main.js', 'desktop.js', 'preload.js'];
+  const missing = [];
+  while (stack.length) {
+    const name = stack.pop();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const abs = path.join(STAGE, 'app', name);
+    if (!fs.existsSync(abs)) { missing.push(name); continue; }
+    const src = fs.readFileSync(abs, 'utf8');
+    for (const m of src.matchAll(/require\('(\.\/[A-Za-z0-9_.-]+)'\)/g)) {
+      const dep = m[1].slice(2);
+      if (!fs.existsSync(path.join(STAGE, 'app', dep))) missing.push(dep + '  ← 被 ' + name + ' require');
+      else stack.push(dep);
+    }
+  }
+  if (missing.length) {
+    throw new Error('主进程本地依赖没有全部进产物（MAIN_FILES 漏了？）：\n  '
+      + missing.join('\n  '));
+  }
+  console.log('[1/3] main-process requires resolved (' + seen.size + ' files)');
+}
 console.log('[1/3] app resources staged at', STAGE);
 
 /* 2) 同步 electron 运行时到输出目录。
    策略：robocopy /MIR 镜像——源里同名文件覆盖、目标多余文件（旧 exe/app）自动清除。
-   全程不做目录删除（fs.rm / cmd rmdir 会被安全垫片/过滤器拦截且大目录不稳）。 */
+   全程不做目录删除（fs.rm / cmd rmdir 会被安全垫片/过滤器拦截且大目录不稳）。
+
+   ⚠️ **必须 /XD data**（v1.20.1 修）：/MIR 会删掉目标里"源没有"的一切，
+      而 Atrium 的便携数据（设置 / 收藏 / 旋转记录 / 缩略图缓存，连同 Chromium 的
+      Local Storage 与 IndexedDB）就放在 exe 旁边的 data/ 里。
+      只要开发者跑过一次构建产物（哪怕只是跑回归里的 appself），
+      再执行 npm run build 就会**无声地删光全部用户数据** —— 没有任何提示。
+      /XD 把 data/ 从镜像里排除：既不复制、也不删除，原地保留。
+      这条不变量有回归守着（buildsafe 套件会真的建一个哨兵文件再重建一次）。 */
+const DATA_DIR = path.join(OUT, 'data');
+if (fs.existsSync(DATA_DIR)) {
+  console.log('[2/3] 检测到便携数据目录，已排除在镜像之外（不会删除）：' + DATA_DIR);
+}
 fs.mkdirSync(OUT, { recursive: true });
+const MIRROR_EXCLUDE = ['/XD', 'data'];
 const mir = (src, dst, label) => {
-  const r = spawnSync('robocopy', [src, dst, '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:1', '/W:1'], { encoding: 'utf8' });
+  const args = [src, dst, '/MIR'].concat(MIRROR_EXCLUDE, ['/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:1', '/W:1']);
+  const r = spawnSync('robocopy', args, { encoding: 'utf8' });
   if (r.error) throw r.error;
   if (r.status >= 8) throw new Error('robocopy /MIR failed [' + label + '] status=' + r.status + '\n' + r.stdout);
   return r.status;

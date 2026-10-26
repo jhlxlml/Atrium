@@ -18,7 +18,7 @@ app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
+  { scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } },
 ]);
 
 /* 回收站要两条通道：记录列表 + 缩略图（返回 1x1 透明 png 的数据 URL） */
@@ -51,14 +51,14 @@ async function run() {
       const abs = Buffer.from(decodeURIComponent(u.pathname).replace(/^\/+/, ''), 'base64url').toString('utf8');
       try {
         return new Response(await fs.promises.readFile(abs), { status: 200,
-          headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } });
+          headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } });
       } catch (e) { return new Response('404', { status: 404 }); }
     }
     if (u.host !== 'app') return new Response('unknown', { status: 404 });
     const abs = path.resolve(APPDIR, decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'index.html');
     try {
       return new Response(await fs.promises.readFile(abs), { status: 200,
-        headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream' } });
+        headers: { 'content-type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'access-control-allow-origin': 'vf://app' } });
     } catch (e) { return new Response('404', { status: 404 }); }
   });
 

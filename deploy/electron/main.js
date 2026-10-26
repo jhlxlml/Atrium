@@ -16,6 +16,8 @@ const path = require('path');
 const fsx = require('fs');
 const exportLib = require('./exportlib.js');   // 导出落盘（与回归探针共用）
 const updateLib = require('./updatelib.js');   // 更新检测的纯逻辑（版本比较 / URL 白名单）
+const trashLib = require('./trashlib.js');     // 回收站 $I 解析与匹配判据（纯逻辑，可单测）
+const pathAuth = require('./pathauth.js');     // vf://pic 的读盘授权（纯逻辑，可单测）
 const { createDesktop } = require('./desktop.js');   // 桌面集成（菜单/托盘/任务栏）
 const fs = fsx.promises;
 
@@ -27,7 +29,18 @@ const trace = (s) => {
 };
 trace('main-load');
 
-/* ---------- 顶层：协议特权必须在 app ready 前注册 ---------- */
+/* ---------- 顶层：协议特权必须在 app ready 前注册 ----------
+   **没有 bypassCSP**：它会让 vf:// 下的资源无视文档里的 CSP，等于把 CSP 关掉。
+   CSP 写在 index.html 的 <meta> 里（见那里的注释），这里只负责让 vf:// 具备
+   standard / secure 语义，好让 'self' 与 vf: 在策略里有确定含义。
+
+   **必须有 corsEnabled**：缩略图要走 fetch 拿 Blob（"解码即降采样"）才能省内存，
+   而 vf://app 与 vf://pic 是两个源。Electron 33 里跨源 fetch 自定义协议不受 CORS
+   约束，**Electron 45（Chromium 140+）改了**：不在 CORS 允许列表里的协议一律
+   拒绝 —— 报错是 `Cross origin requests are only supported for protocol schemes:
+   chrome, chrome-extension, chrome-untrusted, data, http, https`。
+   症状极具迷惑性：页面不报错、只是**所有缩略图都不出现**，网格退化成空瓦片。
+   加上它之后，vf://pic 的响应必须带匹配的 Access-Control-Allow-Origin（见 handleVf）。 */
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'vf',
@@ -36,7 +49,7 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       stream: true,
-      bypassCSP: true,
+      corsEnabled: true,
     },
   },
 ]);
@@ -162,73 +175,68 @@ async function readTrashLog() {
     return (j && Array.isArray(j.items)) ? j.items : [];
   } catch (e) { return []; }
 }
+/** 原子写：先写 .tmp 再 rename。半截的 JSON 会让下次启动读不出整份删除日志
+ *  （撤销历史全丢），而"写了一半"恰恰是断电/崩溃时最常见的结果。
+ *  失败时**抛错**，由 trashAdd 转成结果 —— 静默吞掉会让"文件已进回收站、
+ *  但撤销记录没写进去"变成一个用户完全看不见的状态。 */
 async function writeTrashLog(items) {
-  try { await fs.writeFile(trashFile(), JSON.stringify({ v: 1, items }), 'utf8'); } catch (e) { /* 忽略 */ }
+  const f = trashFile();
+  const tmp = f + '.tmp';
+  await fs.writeFile(tmp, JSON.stringify({ v: 1, items }), 'utf8');
+  await fs.rename(tmp, f);
 }
+/** 追加一条删除记录。返回 { ok } | { ok:false, message }，不抛。 */
 async function trashAdd(rec) {
-  const items = await readTrashLog();
-  items.unshift(rec);
-  await writeTrashLog(items.slice(0, TRASH_MAX));
+  try {
+    const items = await readTrashLog();
+    items.unshift(rec);
+    await writeTrashLog(items.slice(0, TRASH_MAX));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: String((e && e.message) || e) };
+  }
 }
 async function trashDrop(id) {
-  const items = await readTrashLog();
-  const next = items.filter((r) => !r || r.id !== id);
-  if (next.length !== items.length) await writeTrashLog(next);
-}
-
-/* ---- $I 元数据解析（Win10+ v2 / 老版 v1） ---- */
-function ftToMs(ft) { return ft > 0 ? Math.round(ft / 10000 - 11644473600000) : 0; }
-function isAbsWin(s) { return typeof s === 'string' && s.length > 3 && s[1] === ':' && (s[2] === '\\' || s[2] === '/'); }
-function parseTrashInfo(file) {
   try {
-    const b = fsx.readFileSync(file);
-    if (b.length < 24) return null;
-    const ver = b.readInt32LE(0);
-    if (ver === 2) {
-      // 实测 Win10/11 布局（比常见文档多 4 字节保留位）：
-      //   0 版本(4) · 4 保留(4) · 8 大小(8) · 16 删除时刻 FILETIME(8) · 24 路径字符数(4) · 28 路径(UTF-16LE)
-      const size = Number(b.readBigInt64LE(8));
-      const ms = ftToMs(Number(b.readBigInt64LE(16)));
-      const len = b.readInt32LE(24);
-      if (!(len > 0) || len > 32767 || 28 + len * 2 > b.length) return null;
-      const s = b.slice(28, 28 + len * 2).toString('utf16le').replace(/\0+$/, '');
-      return { ver, size, ms, orig: s };
-    }
-    if (ver === 1) {
-      const size = Number(b.readBigInt64LE(4));
-      const ms = ftToMs(Number(b.readBigInt64LE(12)));
-      const s = b.slice(20, Math.min(b.length, 20 + 520)).toString('utf16le').replace(/\0+$/, '');
-      return { ver, size, ms, orig: s };
-    }
-    return null; // v0（Win95 格式）已绝迹，直接忽略
-  } catch (e) { return null; }
+    const items = await readTrashLog();
+    const next = items.filter((r) => !r || r.id !== id);
+    if (next.length !== items.length) await writeTrashLog(next);
+    return true;
+  } catch (e) { return false; }
 }
 
-/** 在回收站里定位刚被删除的文件：匹配原路径（+大小+删除时刻），同一路径取最新一条 */
+/* ---- $I 元数据解析（Win10+ v2 / 老版 v1）----
+   字节布局与"安全整数"校验都在 trashlib.js 里（纯函数，可单测）；
+   这里只负责读文件。 */
+function parseTrashInfo(file) {
+  try { return trashLib.parseTrashInfoBuf(fsx.readFileSync(file)); }
+  catch (e) { return null; }
+}
+
+/** 在回收站里定位刚被删除的文件：匹配原路径（+大小+删除时刻），同一路径取最新一条
+ *  sizeHint / afterMs 由 trashLib.hintsOf 校验过，0 表示"不限制" */
 async function findTrashed(origPath, sizeHint, afterMs) {
   const rb = path.join(path.parse(origPath).root, '$Recycle.Bin');
   let sids = [];
   try { sids = await fs.readdir(rb); } catch (e) { return null; }
   const want = String(origPath).toLowerCase();
-  let best = null;
+  const hits = [];
   for (const sid of sids) {
     if (sid === 'desktop.ini') continue;
     let ents = [];
     try { ents = await fs.readdir(path.join(rb, sid)); } catch (e) { continue; }
     for (const n of ents) {
-      if (n.charCodeAt(0) !== 36 || n[1] !== 'I') continue; // 只看 $I…
+      if (!trashLib.isInfoName(n)) continue; // 只看 $I…
       const rec = parseTrashInfo(path.join(rb, sid, n));
-      if (!rec || !isAbsWin(rec.orig) || rec.orig.toLowerCase() !== want) continue;
-      if (sizeHint && rec.size && rec.size !== sizeHint) continue;
-      if (afterMs && rec.ms && rec.ms + 2000 < afterMs) continue;
-      const rFile = path.join(rb, sid, '$R' + n.slice(2));
+      if (!trashLib.matchRecord(rec, want, sizeHint, afterMs)) continue;
+      const rFile = path.join(rb, sid, trashLib.rNameOf(n));
       let isFile = false;
       try { isFile = fsx.statSync(rFile).isFile(); } catch (e) { isFile = false; }
       if (!isFile) continue;
-      if (!best || rec.ms > best.ms) best = { ms: rec.ms, size: rec.size, rFile, iFile: path.join(rb, sid, n) };
+      hits.push({ ms: rec.ms, size: rec.size, rFile, iFile: path.join(rb, sid, n) });
     }
   }
-  return best;
+  return trashLib.pickNewest(hits);
 }
 
 /** 从回收站还原：把 $R 搬回原路径并清掉 $I/$R；返回 {ok,size?,reason?} */
@@ -244,7 +252,9 @@ async function restoreFromTrash(origPath, sizeHint, afterMs) {
   try {
     await fs.rename(hit.rFile, origPath);
   } catch (err) {
-    if (err && (err.code === 'EXDEV' || err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'EXDEV')) {
+    /* 跨卷（EXDEV）或权限受限（EPERM/EACCES）时退回复制+删除。
+       注意原来这里写了两次 EXDEV（复制粘贴留下的），等于漏了 EACCES 的语义检查。 */
+    if (err && (err.code === 'EXDEV' || err.code === 'EPERM' || err.code === 'EACCES')) {
       await fs.copyFile(hit.rFile, origPath);
       await fs.unlink(hit.rFile).catch(() => {});
     } else {
@@ -317,6 +327,10 @@ async function scanOne(it, items, files) {
 }
 
 /* ---------- vf:// 协议：应用资源 + 图片流 ---------- */
+/* 允许 vf://pic 读取的根目录。只有用户真正打开过的目录会被登记进来
+   （见 vf:loadDir）。空清单 = 一个都不许读，默认拒绝。 */
+const picAuth = pathAuth.createAllowlist();
+
 function toResponse(resp, status) {
   return resp && resp.ok ? resp : new Response(null, { status: status || 404 });
 }
@@ -335,14 +349,21 @@ async function handleVf(req) {
       const b64 = decodeURIComponent(u.pathname).replace(/^\/+/, '');
       const abs = Buffer.from(b64, 'base64url').toString('utf8');
       if (!abs) return new Response('bad', { status: 400 });
+      /* 授权检查必须在 stat 之前：不能靠"文件存不存在"来泄露信息，
+         也不能让未授权路径的 stat 成为探测手段。 */
+      if (!picAuth.has(abs)) {
+        trace('pic-deny ' + abs);
+        return new Response('forbidden', { status: 403 });
+      }
       try { const st = await fs.stat(abs); if (!st.isFile()) return new Response('not found', { status: 404 }); }
       catch (e) { return new Response('not found', { status: 404 }); }
       const resp = await net.fetch(pathToFileURL(abs).toString());
-      // 渲染进程要用 fetch 把图片读成 Blob 才能走「解码即降采样」，
-      // 而 vf://app 与 vf://pic 是两个源，跨源取必须显式放行。
-      // 只加在 pic 上：app 资源是本地的，不需要放宽。
+      /* 渲染进程要用 fetch 把图片读成 Blob 才能走「解码即降采样」，
+         而 vf://app 与 vf://pic 是两个源，跨源取必须显式放行。
+         **只放行 vf://app 这一个源**（原来是 `*`：任何源都能读回图片字节，
+         配合"读任意路径"就是一个跨源任意文件读取）。 */
       const h = new Headers(resp.headers);
-      h.set('Access-Control-Allow-Origin', '*');
+      h.set('Access-Control-Allow-Origin', 'vf://app');
       h.set('Cache-Control', 'no-store');
       return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: h });
     }
@@ -352,6 +373,47 @@ async function handleVf(req) {
   }
 }
 const { pathToFileURL } = require('url');
+
+/* ============================================================
+   IPC 发送方校验（默认拒绝）
+   ------------------------------------------------------------
+   渲染进程是 sandbox + contextIsolation，但 preload 把一批"能读盘 / 能删文件 /
+   能改设置"的能力挂在了 window.vfNative 上。通道本身分不清"是应用在调"还是
+   "是注入进页面的脚本在调" —— 只要页面里有一处 HTML 注入，那些通道就全都在
+   攻击者手里了。
+
+   所以每条通道都加一道来源校验：只接受**本进程创建的窗口**，且该窗口当前
+   文档在 vf://app/ 之下。校验一次性包住所有注册（含 desktop.js 的），
+   这样以后新增通道不会因为"忘了加 guard"而漏掉 —— 那正是最容易发生的事。
+   未通过时抛错：让 invoke 走 reject，渲染层的 catch 会把它当成"没生效"，
+   不会伪装成一条业务失败。
+   ============================================================ */
+function isTrustedSender(e) {
+  try {
+    const wc = e && e.sender;
+    if (!wc) return false;
+    const frame = e.senderFrame;
+    const url = String((frame && frame.url) || (wc.getURL && wc.getURL()) || '');
+    if (!/^vf:\/\/app\//.test(url)) return false;
+    return BrowserWindow.getAllWindows().some((w) => w && !w.isDestroyed() && w.webContents === wc);
+  } catch (err) {
+    return false;
+  }
+}
+
+let ipcGuardOn = false;
+function installIpcGuard() {
+  if (ipcGuardOn) return;
+  ipcGuardOn = true;
+  const deny = (ch) => {
+    trace('ipc-deny ' + ch);
+    throw new Error('untrusted sender: ' + ch);
+  };
+  const rawHandle = ipcMain.handle.bind(ipcMain);
+  const rawOn = ipcMain.on.bind(ipcMain);
+  ipcMain.handle = (ch, fn) => rawHandle(ch, (e, ...a) => (isTrustedSender(e) ? fn(e, ...a) : deny(ch)));
+  ipcMain.on = (ch, fn) => rawOn(ch, (e, ...a) => { if (!isTrustedSender(e)) { trace('ipc-deny ' + ch); return; } fn(e, ...a); });
+}
 
 /* ---------- IPC ---------- */
 function wireIpc() {
@@ -387,6 +449,9 @@ function wireIpc() {
       const st = await fs.stat(dir);
       if (!st.isDirectory()) return { ok: false };
       const files = await listImages(dir);
+      /* 授权 vf://pic 读这个目录 —— 这是**唯一**的授权入口，
+         与"用户真的打开过这个目录"严格对应。 */
+      picAuth.add(dir);
       return { ok: true, name: path.basename(dir), files };
     } catch (err) {
       return { ok: false };
@@ -421,24 +486,34 @@ function wireIpc() {
     const logRec = {
       id: 't' + ts.toString(36) + Math.random().toString(36).slice(2, 6),
       name: (rec && rec.name) || path.basename(p),
-      path: p, size: size || ((rec && rec.size) | 0), ts,
+      /* size 用刚 stat 出来的真实值。**不要**再写 `size || ((rec && rec.size) | 0)`：
+         0 字节文件会被 || 骗过去用渲染层的提示值；位运算还会把 ≥2GiB 截成负数。 */
+      path: p, size, ts,
       meta: (rec && rec.meta) || null,
     };
+    /* 日志写失败不能吞：文件已经进了回收站，但撤销记录没落盘 ——
+       用户点"撤销"时会得到 not-found，且完全不知道为什么。所以把它
+       作为 warned 带回去，由界面提示"已删除，但本次撤销记录没能保存"。 */
+    const logWarn = (lg) => (lg && lg.ok ? undefined : ('log-write-failed: ' + ((lg && lg.message) || '?')));
     try {
       await shell.trashItem(p);
-      await trashAdd(logRec);
-      return { ok: true, mode: 'trash', ts, size, logId: logRec.id, path: p, name: logRec.name };
+      const lg = await trashAdd(logRec);
+      return { ok: true, mode: 'trash', ts, size, logId: logRec.id, path: p, name: logRec.name,
+        warned: logWarn(lg) };
     } catch (err) {
-      // 少数 Windows 环境下 trashItem 会「文件已移走但仍报错」：复核文件是否真的还在，
-      // 只有确实还存在于磁盘上才判定为失败（绝不把“已删除”误报成失败）。
-      try {
-        await fs.stat(p);
+      /* 少数 Windows 环境下 trashItem 会「文件已移走但仍报错」。此时不能一律当成
+         "已删除" —— 只有**能证明文件确实不在了**才算成功，否则用户会看到"已删除"
+         但文件还在原地（下次打开目录它又回来了，非常困惑）。
+         能证明"不在了"的只有 ENOENT。EPERM / EACCES / EBUSY / EIO 之类只是
+         "我们不知道"，一律按失败上报，让用户重试。 */
+      let gone = false;
+      try { await fs.stat(p); } catch (e2) { gone = !!(e2 && e2.code === 'ENOENT'); }
+      if (!gone) {
         return { ok: false, reason: 'failed', path: p, message: String((err && err.message) || err) };
-      } catch (e2) {
-        await trashAdd(logRec);
-        return { ok: true, mode: 'trash', ts, size, logId: logRec.id, path: p, name: logRec.name,
-          warned: String((err && err.message) || err) };
       }
+      const lg = await trashAdd(logRec);
+      return { ok: true, mode: 'trash', ts, size, logId: logRec.id, path: p, name: logRec.name,
+        warned: String((err && err.message) || err) + (logWarn(lg) ? ' | ' + logWarn(lg) : '') };
     }
   }
 
@@ -461,11 +536,19 @@ function wireIpc() {
 
   /* 撤销删除：把文件从回收站搬回原位置。
      rec = { id?, path, size?, ts? } —— ts 用于只认“这一次删除”产生的回收站条目，
-     避免误还原用户更早手动删掉的同名文件。 */
+     避免误还原用户更早手动删掉的同名文件。
+
+     注意 size/ts 的来历：它们经 trashLib.hintsOf 校验（安全非负整数）。
+     **绝不能写 `(rec.ts) | 0`** —— 位或把 1.77e12 的毫秒时间戳截成 32 位，
+     afterMs 变成远早于真实删除时刻的数，"只认这一次"的护栏就静默失效了；
+     `(rec.size) | 0` 还会把 ≥2GiB 的文件截成负数，导致大文件永远还原失败。
+     校验不过时 fail closed（bad-hint），而不是退回"不限制"——那等于悄悄拆护栏。 */
   ipcMain.handle('vf:restoreFile', async (e, rec) => {
     const p = rec && rec.path;
     if (!p || typeof p !== 'string') return { ok: false, reason: 'bad-path' };
-    const r = await restoreFromTrash(p, (rec && rec.size) | 0, (rec && rec.ts) | 0);
+    const h = trashLib.hintsOf(rec);
+    if (!h) return { ok: false, reason: 'bad-hint', path: p };
+    const r = await restoreFromTrash(p, h.size, h.ts);
     if (r && r.ok && rec && rec.id) await trashDrop(rec.id);
     return r;
   });
@@ -477,7 +560,9 @@ function wireIpc() {
     for (const rec of recs.slice(0, 2000)) {
       const p = rec && rec.path;
       if (!p) { out.push({ ok: false, reason: 'bad-path' }); continue; }
-      const r = await restoreFromTrash(p, (rec.size) | 0, (rec.ts) | 0);
+      const h = trashLib.hintsOf(rec);
+      if (!h) { out.push({ ok: false, reason: 'bad-hint', path: p }); continue; }
+      const r = await restoreFromTrash(p, h.size, h.ts);
       if (r && r.ok && rec.id) await trashDrop(rec.id);
       out.push(Object.assign({ path: p }, r || { ok: false, reason: 'failed' }));
     }
@@ -489,7 +574,9 @@ function wireIpc() {
   ipcMain.handle('vf:trashPreview', async (e, rec) => {
     const p = rec && rec.path;
     if (!p) return { ok: false, reason: 'bad-path' };
-    const hit = await findTrashed(p, (rec.size) | 0, (rec.ts) | 0);
+    const h = trashLib.hintsOf(rec);
+    if (!h) return { ok: false, reason: 'bad-hint' };
+    const hit = await findTrashed(p, h.size, h.ts);
     if (!hit) return { ok: false, reason: 'not-found' };
     try {
       const st = await fs.stat(hit.rFile);
@@ -508,7 +595,7 @@ function wireIpc() {
   /* 删除日志：跨启动保留，供「最近删除」面板展示与撤销 */
   ipcMain.handle('vf:trashLog', async () => (await readTrashLog()).slice(0, 60));
   ipcMain.handle('vf:trashForget', async (e, id) => { await trashDrop(id); return true; });
-  ipcMain.handle('vf:trashClear', async () => { await writeTrashLog([]); return true; });
+  ipcMain.handle('vf:trashClear', async () => { try { await writeTrashLog([]); return true; } catch (e) { return false; } });
 
   /** 打开系统回收站（还原失败时给用户一条人工兜底路径） */
   ipcMain.handle('vf:openRecycleBin', async () => {    try { const err = await shell.openPath('shell:RecycleBinFolder'); return !err; } catch (e) { return false; }
@@ -600,8 +687,11 @@ function wireIpc() {
     }
   });
 
+  /* 读文件头（EXIF / 尺寸探测）。只读前 1MB，但仍然是"任意文件可读"的原语，
+     所以同样按 vf://pic 的授权清单放行 —— 能读的只能是用户打开过的目录里的文件。 */
   ipcMain.handle('vf:readHead', async (e, p, n) => {
     try {
+      if (!picAuth.has(p)) { trace('readhead-deny ' + p); return null; }
       const len = Math.max(1, Math.min(n || 262144, 1024 * 1024));
       const fh = await fs.open(p, 'r');
       const buf = Buffer.allocUnsafe(len);
@@ -1081,20 +1171,41 @@ function createWindow() {
   mainWin.loadURL('vf://app/index.html' + (SELFTEST ? '?selftest=1' : ''));
   if (SELFTEST) runSelfTest(mainWin);
 
-  /* 优雅降级：少数受限环境（无权限创建 Chromium 沙箱进程）首次启动时渲染进程会
-     在加载完成前被系统杀掉（render-process-gone reason=killed）。此时自动以
-     --no-sandbox 重启一次；正常机器全程保留沙箱。 */
+  /* 沙箱兼容模式：少数受限环境（安全策略不允许创建 Chromium 沙箱进程）首次启动时
+     渲染进程会在加载完成前被系统杀掉（render-process-gone reason=killed）。
+
+     **不自动降级**：关掉沙箱是安全上的实质退让（渲染进程失去 OS 级隔离，
+     一旦渲染层被攻破就直接等同主进程权限），绝不能由程序自己悄悄决定。
+     所以这里只**询问**，用户明确点了「用兼容模式重启」才带 --no-sandbox 重启；
+     默认按钮是「取消」，关窗 / Esc 也算取消。
+     —— 改自 v1.20.0 及之前：那时是直接 relaunch，用户全程不知情。 */
   const born = Date.now();
-  let finished = false, autoRelaunch = false;
+  let finished = false, asked = false;
   mainWin.webContents.on('did-finish-load', () => { finished = true; });
   mainWin.webContents.on('render-process-gone', (_e, det) => {
-    if (!SELFTEST && !autoRelaunch && !argv.includes('--no-sandbox') && !finished &&
-        det && det.reason === 'killed' && Date.now() - born < 8000) {
-      autoRelaunch = true;
-      trace('relaunch-with-no-sandbox');
-      app.relaunch({ args: process.argv.slice(1).concat(['--no-sandbox']) });
-      app.exit(0);
-    }
+    if (SELFTEST || asked || argv.includes('--no-sandbox') || finished) return;
+    if (!(det && det.reason === 'killed') || Date.now() - born >= 8000) return;
+    asked = true;
+    trace('sandbox-ask');
+    const r = dialog.showMessageBoxSync(mainWin, {
+      type: 'warning',
+      title: '启动失败',
+      message: '渲染进程被系统结束了',
+      detail: '这通常是本机的安全策略不允许创建 Chromium 沙箱进程（受限的企业环境、'
+        + '某些安全软件都可能这样）。\n\n'
+        + '可以选择「兼容模式」重新启动：界面和功能完全一样，但渲染进程不再有沙箱隔离，'
+        + '安全性会降低。\n\n'
+        + '取消则保持现状 —— 建议先检查系统安全策略。每次启动都会重新询问，'
+        + '不会记住这次的选择。',
+      buttons: ['取消', '用兼容模式重启'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (r !== 1) { trace('sandbox-decline'); return; }
+    trace('relaunch-with-no-sandbox (用户确认)');
+    app.relaunch({ args: process.argv.slice(1).concat(['--no-sandbox']) });
+    app.exit(0);
   });
 }
 
@@ -1839,6 +1950,9 @@ if (!gotLock) {
     // 必须在这里（第一个窗口创建之前）设置，否则会先闪一下 Electron 默认菜单。
     desktop.installAppMenu();
     protocol.handle('vf', handleVf);
+    /* 必须在 wireIpc / desktop.wireIpc 之前装好：它靠包住 ipcMain.handle/on
+       来实现"默认拒绝"，装晚了就会有一批通道漏在门外。 */
+    installIpcGuard();
     wireIpc();
     desktop.wireIpc();
     trace('ready-wired');

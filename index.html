@@ -2,6 +2,15 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<!-- 内容安全策略：应用自己只跑本地脚本，不加载任何远程资源。
+     为什么写在这里而不是只在主进程注入响应头：探针（回归套件）各自注册
+     vf:// 协议直接 loadURL，不经过主进程，只有写进文档才能让"CSP 挡住东西了"
+     在回归里以控制台报错的形式暴露出来。主进程那侧的 bypassCSP 已去掉。
+     说明：style-src 不需要 'unsafe-inline' —— 全项目没有内联 style 属性
+     （图标精灵的 display:none 已改成 #iconSprite 规则），动态样式一律走
+     CSSOM（el.style.xxx / cssText / setProperty），CSSOM 不受 CSP 限制。
+     connect-src 要放 vf: 与 blob: —— 缩略图解码要 fetch vf://pic 拿 Blob。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' vf: data: blob:; font-src 'self' data:; media-src 'self' vf: data: blob:; connect-src 'self' vf: data: blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Atrium · 本地图片浏览</title>
 <meta name="description" content="Atrium · 本地图片浏览 — 选择文件夹，像翻阅作品集一样浏览你的照片。纯本地运行，不上传任何图片。">
@@ -27,7 +36,7 @@
 </div>
 
 <!-- ============ SVG 图标精灵（内联，离线可用） ============ -->
-<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+<svg xmlns="http://www.w3.org/2000/svg" id="iconSprite" aria-hidden="true">
 <!-- SPRITE:BEGIN -->
   <!-- 由 deploy/gen_sprite.js 生成，别手改。
        图标来源：Lucide 1.60.0（ISC 许可，https://lucide.dev）。

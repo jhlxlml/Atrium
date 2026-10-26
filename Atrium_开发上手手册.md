@@ -23,7 +23,7 @@
 | 语言/风格 | vanilla JS + IIFE 挂 `window` + `'use strict'`；中文注释、英文标识符；**注释写"为什么"不写"做什么"**      |
 | 数据存储  | localStorage（设置/收藏/旋转）+ IndexedDB（图片尺寸/缩略图落盘）+ 主进程 JSON（删除日志）；**统一落在应用本体目录的 `data/`**（便携，见 §3.1） |
 | 加载入口  | **2 个**：原生目录选择框（`Ctrl+O`）、拖拽（唯一"条目没有磁盘路径"的通路）                                     |
-| 回归防线  | **39 套件 / 484 项断言**（`run_all.js`，约 280 秒，视机器负载）；含产物自检、校验器的反向门禁、**源级不变量** |
+| 回归防线  | **43 套件 / 525 项断言**（`run_all.js`，约 290 秒，视机器负载）；含产物自检、校验器的反向门禁、**源级不变量** |
 | 当前状态  | 功能完成度高、无障碍四层补齐、相框已转正、四种浏览排布；**没有模块还停在 ★★☆☆☆**                                     |
 
 **一句话**：这是一个"工程纪律极好、防御性断言很密"的小工具项目。它的**风险不在代码质量，而在"改动的接线是否完整"** —— 历史上栽过 6 次的都是同一类病：**功能写好了，但没接到调用链上**（见 §6.1）。
@@ -36,7 +36,8 @@
 
 | 目的         | 命令                                                    | 说明                                                            |
 | ---------- | ----------------------------------------------------- | ------------------------------------------------------------- |
-| 跑全量回归      | `node deploy/electron-test/run_all.js`                | 39 套件 / 484 项 / 约 280 秒。任一失败**非零码退出**。可后台跑               |
+| 跑全量回归      | `node deploy/electron-test/run_all.js`                | 43 套件 / 525 项 / 约 290 秒。任一失败**非零码退出**。可后台跑               |
+| 只跑纯函数单测    | `npm run test:unit`                                   | 10 个文件 / 1318 条细分断言 / 约 3 秒，**零依赖**（CI 用这个）                |
 | 快跑（改小东西时）  | `node deploy/electron-test/run_all.js --fast`         | 13 套件 / 61 项 / 约 8.4 秒。**跳过大部分 Electron 探针，但仍含 `tf`（要 electron）** |
 | 只跑一个套件     | `node deploy/electron-test/run_all.js masonry`        | 套件 id 见 §5.2                                                  |
 | 纯函数单测（毫秒级） | `node test/transform.test.js` 等                       | `transform` / `imageheader` / `frame` / `a11y` / `masonry` / `desktop` / `updatelib` 七个 |
@@ -163,19 +164,20 @@ VF_USERDATA 环境变量存在          → 用它（**优先级最高**：探�
 > 老文档/老记忆里若还提"双目标交付""离线版 ZIP"，那是过期内容。
 > `deploy/` 下现在只有：`assemble.js` / `pack.js` / `verify_zip.js` / `verify_clone.js` / `make_icons.js` / `verify_icon.js` / `clean.js`。
 
-**Electron 安全基线**（已达标，别破坏）：`contextIsolation:true` / `nodeIntegration:false` / `sandbox:true`，preload 只暴露白名单，自定义 `vf://` 特权协议替代 `file://`，`setWindowOpenHandler` 拒绝新窗口，`will-navigate` 拦截外部导航，**桌面集成 7 条 IPC 有 sender 归属校验**（纵深防御）。
+**Electron 安全基线**（已达标，别破坏）：`contextIsolation:true` / `nodeIntegration:false` / `sandbox:true`，preload 只暴露白名单，自定义 `vf://` 特权协议替代 `file://`（`standard` + `secure` + `supportFetchAPI` + `corsEnabled`，**没有 `bypassCSP`**），CSP 写在 `index.html` 的 meta 里且 `script-src 'self'` / `style-src 'self'`（无 `unsafe-inline`），`setWindowOpenHandler` 拒绝新窗口，`will-navigate` 拦截外部导航，**每条 IPC 统一校验 sender 归属**（`installIpcGuard()` 一次性包住所有注册，见 §6 雷区），`vf://pic` 只放行用户打开过的目录。
 
 **IPC 口径（实测）**：
 
 ```
-render → main : 36 条  （35 条 invoke + 1 条单向 send：vf:setLastDir）
+render → main : 38 条  （37 条 invoke + 1 条单向 send：vf:setLastDir）
 main → render :  3 条  （vf:frameClosed / vf:frameMoved / vf:cmd）
-唯一通道名合计: 39 个
+唯一通道名合计: 41 个
 ```
 
-> 数字来源：`preload.js` 的 `ipcRenderer.invoke|send` 与 `main.js`/`desktop.js` 的 `ipcMain.handle|on`。
+> 数字来源：`preload.js` 的 `ipcRenderer.invoke|send|on` 与 `main.js`/`desktop.js` 的 `ipcMain.handle|on`。
 > 回归里有 `ipcchain` 套件做**源级**双向核对（preload 暴露的每条通道都要有 handler；
 > `desktop.js` 的每条通道都要有探针桩），所以这个数字不会悄悄漂。
+> ⚠️ v1.20.1 之前这里写的是 35 / 39 —— 那是旧数，实测为 37 / 41。
 
 ---
 
@@ -185,22 +187,22 @@ main → render :  3 条  （vf:frameClosed / vf:frameMoved / vf:cmd）
 
 | 层               | 位置                                        | 反馈速度 | 覆盖                                                                    |
 | -------------- | ----------------------------------------- | ---- | --------------------------------------------------------------------- |
-| **纯函数单测**       | `test/*.test.js`（Node，`vm` 沙箱）            | 毫秒级  | `transform` 36 · `header` 26 · `frame` 505 · `a11y` 77 · `masonry` 87 · `desktop` 76 · `updatelib` 65 |
-| **源级不变量**       | `run_all.js` 里的 `frozen` / `ipcchain`      | 毫秒级  | 冻结标识未被改名 / 数据目录两条分支 / IPC 链路无缺口                                       |
+| **纯函数单测**       | `test/*.test.js`（Node，`vm` 沙箱）            | 毫秒级  | `transform` 36 · `header` 26 · `frame` 505 · `a11y` 77 · `masonry` 87 · `desktop` 76 · `updatelib` 65 · `theme` 323 · `trash` 78 · `pathauth` 45（合计 1318） |
+| **源级不变量**       | `run_all.js` 里的 `frozen` / `ipcchain` / `secboot` / `buildsafe` | 毫秒级  | 冻结标识未被改名 / 数据目录两条分支 / IPC 链路无缺口 / 安全默认值 / 构建不删 `data/` |
 | **Electron 探针** | `deploy/electron-test/probes/probe_*.js`（**25 个**被套件调用，另有 3 个一次性审计工具：`probe_uiaudit` / `probe_audit2` / `probe_uifix`） | 秒级/个 | 真实渲染、几何、交互、无障碍、相框、拖拽、设置面板 |
 | **产物自检**        | `appself` / `icon` / `zip` 套件             | 慢    | 跑**装进包里的产物**，不是源码                                                      |
 
-> **断言数字的口径**：`run_all.js` 汇总的是**套件级条目数**（**484**），不等于单个 `assert` 总数
-> （纯函数套件内部展开更多细分断言，合计 **1195**，聚合器各按 1 项计入）。**别自己相加。**
+> **断言数字的口径**：`run_all.js` 汇总的是**套件级条目数**（**525**），不等于单个 `assert` 总数
+> （纯函数套件内部展开更多细分断言，合计 **1318**，聚合器各按 1 项计入）。**别自己相加。**
 > 另：`zip` 套件有 **2 条条件断言**只在**交付 ZIP 就位**时才跑 —— 源码态（没打包）会少这 2 项。
 
-### 5.2 39 个套件 id
+### 5.2 43 个套件 id
 
 ```
-a11y  a11yui  approt  appself  center  desktop  desktopui  drop  frame  frozen  fs  grid
-header  heic  icon  iconography  ipcchain  lbui  masonry  masonryunit  nowrap  perf  pinch
-rot  rotpersist  rounding  settings  sidebar  single  tf  themeunit  topbar  toplayout
-typescale  unit  update  uxaudit  zip  zoom
+a11y  a11yui  approt  appself  buildsafe  center  desktop  desktopui  drop  frame  frozen  fs
+grid  header  heic  icon  iconography  ipcchain  lbui  masonry  masonryunit  nowrap  packlist
+pathauth  perf  pinch  rot  rotpersist  rounding  secboot  settings  sidebar  single  tf
+themeunit  topbar  toplayout  trash  typescale  unit  update  uxaudit  zip  zoom
 ```
 
 > **id 不能重复**：纯函数套件 `masonry` 曾与探针套件撞名，已改名 `masonryunit`。
@@ -213,7 +215,9 @@ typescale  unit  update  uxaudit  zip  zoom
 1. **`zip` 套件**按"Electron 大包在不在"跑不同条数。版本号刚升、`pack.js` 还没跑时大包不存在 → 少 2 条。
 2. **`appself` 套件**一旦 `自检整体通过` 判负就**提前 `return`**，后面 **31 条**相框断言一条都不执行。
    最典型的触发条件是**沙箱不支持 `alwaysOnTop`**（`setAlwaysOnTop` 静默无效 → 包内自检 `pinSet:false` → `code=1`）。
-   所以同一个 commit 在两台机器上会报 **453** 与 **484** 两个数，**两个都"对"**。
+   所以同一个 commit 在两台机器上会报 **494** 与 **525** 两个数，**两个都"对"**。
+3. **某个探针超时**（机器被压着）→ 该套件只剩 2 项（"进程正常退出" + "返回数据"）通过其余全跳过，
+   总数会落到 **511** 这种数。先单跑那个探针确认，再怀疑代码 —— v1.20.1 收尾时 `zoom` 就这样红过两次，单跑全绿。
 
 > ⚠️ **方向相反要警惕**：断言数**无理由**变少 = 有 `if (sX)` 块被跳过（见 §6.2）。查账方法：看**哪一步没有输出**。
 > 本条是血泪教训：v1.19.0 收尾时发现总数从 470 掉到 449，先怀疑是自己改坏了 CSS，
@@ -226,6 +230,11 @@ typescale  unit  update  uxaudit  zip  zoom
 | --------- | ---------------------------------------------------------------------- | ----- |
 | `frozen`  | `vf://app` · 3 个 `viewfinder.*` LS 键 · `viewfinder-db` · `com.atrium.app` · `productName` · 根 `package.json` 的 `name` · **数据目录的两条分支**（`VF_USERDATA` 优先级 / `<base>/data`） | 改错任何一个 = **用户数据一次性清空**（见 §7.5）；删掉 `VF_USERDATA` 分支则全量回归会开始往**真实数据**里写 |
 | `ipcchain`| preload 暴露的每条通道都有 handler；`desktop.js` 的每条通道都有探针桩                        | 漏一条就是**静默降级**（`invoke` reject 被 `.catch` 吞掉） |
+| `buildsafe` | **真的跑一次 robocopy**：带 `/XD data` 时 `data/` 里的哨兵必须活着、目标里的旧垃圾必须被清掉；**故意去掉 `/XD` 时哨兵必须消失**（v1.20.1） | `/MIR` 会删掉目标里"源没有"的一切，而便携数据恰好只在目标里有 —— "用产物看一眼照片 → 再 `npm run build`"就会**无声清空全部设置与收藏**。只做正向断言不够：环境差异（robocopy 根本没删东西）会让门禁恒真，所以必须有反向那一条。同一套件还核对 `MAIN_FILES` 覆盖主进程的全部本地 `require` |
+| `packlist` | 打包允许清单：运行时文件必须收、`data/` 与日志必须拒、**拒收要能逐个点名**；真实产物里除 `data/` 外零误拒（v1.20.1） | 原先的收集函数递归整个目录，于是"跑过产物再打包"会把 `Local Storage`、`IndexedDB`、`trash-log.json`（你删过哪些文件）打进交付 ZIP。只断言"条数变少了"抓不到漏，必须点名 |
+| `trash`   | 回收站 `$I` 解析与「只认这一次删除」的判据；**6 条反向用例**先用 `\|0` 复现 32 位截断，再断言修复后处理对（v1.20.1） | `(rec.ts)\|0` 把 1.77e12 的毫秒时间戳截成负数 → 时间护栏静默失效，撤销会把用户**昨天手动删的**同名文件搬回来；`(rec.size)\|0` 把 ≥2GiB 截成负数 → 大文件永远还原不了。两条都**不报错** |
+| `pathauth` | `vf://pic` 的读盘授权：`..` 折叠、前缀无边界（`Pics2` vs `Pics`）、大小写/分隔符混用**一律拒**（v1.20.1） | 原先"解出什么路径就读什么路径"，等于给渲染层一台读任意文件的机器（`.ssh\id_rsa` 拼个 base64 就出来了）。放行判据写松了不会报错，只会安静地多读一个文件 |
+| `secboot` | 无 `bypassCSP` · CSP 严格且无 `unsafe-inline` · 文档里没有内联 style / script · 沙箱不静默降级（弹窗默认「取消」）· IPC 校验来源 · 无 `ACAO: *` · 删除日志原子写 · 只认 `ENOENT` 为"已删除"（v1.20.1） | 这一整套都是"被改回去也不会报错、只会安静变弱"的默认值 |
 | `drop`    | 拖拽通路的 13 项结果断言（索引 / 缩略图 / 灯箱 / 删除拒绝 / 多文件夹分组）                            | 这条通路**此前零覆盖**，而它与主通路的每一条下游路径都不同 |
 | `update`  | `openExternal` 的 URL 白名单（**21 条反向用例**）+ 版本号比较 + 接口响应解析（v1.14.0）            | 白名单放宽 = `shell.openExternal` 变成"打开任意 URL / 执行本地文件"，且**无任何界面迹象** |
 | `typescale` | 三份 CSS 里**没有写死的 `font-size`**；`--fs-*` 无未定义 / 无孤儿 / **无半像素档**（v1.18.0） | 半像素字号（12.5px）单看没问题，只在两段文字并排时露馅 —— 是**最难靠肉眼回归**的一类；就地微调一次就再也收不回来 |
@@ -317,6 +326,8 @@ typescale  unit  update  uxaudit  zip  zoom
 | **注入页面的正则没用 `String.raw`**（v1.19.0） | 普通模板串会把 `\s` 吃成 `s`、`\(` 吃成 `(` → `/rgba?\(([^)]+)\)/` 退化成 `/rgba?(([^)]+))/`，颜色解析全错**而探针不报错**。自检方法：普通模板串里写 `"\s"` 打出来是 `"s"`，`String.raw` 才是 `"\s"` |
 | **隐藏窗口里读样式**（v1.19.0） | `show:false` 的 `BrowserWindow` 会节流样式重算：切主题后 450ms 读到的仍是**上一套主题的值**（深色下读到 `#55555b`）。而且 `settle()` 若不加前置等待，会在重算还没启动时连续两次读到同一批旧值，**"稳定"在错误状态上**——比不等待更危险。解法：`data-anim="0"` 关过渡 + **先强制等 900ms 再轮询** + 输出 `diag.anim/ink2/paper` 自证"主题真的切了" |
 | **`finish()` 收不掉"还不存在"的过渡**（v1.20.0） | 改完样式若**还没发生过一次重算**，`transition` 此刻尚未创建 —— `getAnimations().finish()` 抓不到它，而紧接着的 `getComputedStyle` 正好触发重算、就地新建一条**从旧值起步**的过渡，读到的仍是旧颜色。表现是"单跑必过、整套跑偶尔红"（`uxaudit` 的 accent 场景间歇报「全部图片 1.51:1」）。解法：`flush → finish → flush → finish` 走两轮，先把过渡建出来再收掉 |
+| **Electron 升级后 `vf://` 跨源 fetch 被拒**（v1.20.1，Electron 33→45） | Chromium 140+ 只允许"在 CORS 允许列表里"的协议做跨源请求，报错是 `Cross origin requests are only supported for protocol schemes: chrome, chrome-extension, chrome-untrusted, data, http, https`。而缩略图正是靠 `fetch('vf://pic/…')` 拿 Blob 才能"解码即降采样"。**症状极具迷惑性**：页面不报错，只是所有缩略图都不出现 → 网格退化成空瓦片、`naturalWidth` 为 0、`fit` 统计为空、导出报 `no-source`。解法：`registerSchemesAsPrivileged` 的 privileges 加 **`corsEnabled: true`**，并让 `vf://pic` 的响应带匹配的 `Access-Control-Allow-Origin`。**探针必须跟着改**，否则探针与真实协议行为脱节（`secboot` 会逐个检查探针有没有 `corsEnabled`） |
+| **新抽出的主进程模块没进产物**（v1.20.1） | `assemble.js` 里有一份**手写**的 `MAIN_FILES` 清单。漏一个文件时构建照样打印 `OK`、exe 也照样起得来，直到运行时走到那条 `require` 才炸（`Cannot find module './trashlib.js'`），而且**只在用到那条路径时才炸**。解法：`assemble.js` 的 `[1c]` 从 staged 的 `main.js`/`desktop.js` 里把本地 `require` 全抠出来逐个核对，漏一个就**构建失败**；`buildsafe` 套件再核对一遍清单 |
 
 > 另外两条**读不到**而非读错的坑（v1.19.0）：
 > `:focus-visible` 在未聚焦时 `outlineStyle === 'none'`，直接读会得到 `clip: 0` 的**假绿**；
@@ -333,7 +344,10 @@ typescale  unit  update  uxaudit  zip  zoom
 
 1. `index.html` 加 `<script src="js/x.js">`，**位置必须在使用者之前**（如 `masonry.js` 在 `grid.js` 前）
 2. `deploy/electron/assemble.js` 的 `MAIN_FILES`（**只针对主进程侧**平铺到 `resources/app` 根的文件）
-3. 跑一次构建 —— `assemble.js` 会校验 `index.html` 引用的本地文件是否都存在，死链会被拦下
+3. 跑一次构建 —— `assemble.js` 会校验 `index.html` 引用的本地文件是否都存在，死链会被拦下；
+   同时 `[1c]` 会从 staged 的 `main.js`/`desktop.js` 里把本地 `require('./x.js')` 全抠出来逐个核对，
+   漏进 `MAIN_FILES` 的模块会让**构建直接失败**（v1.20.1 加的：`trashlib.js` 就是漏了它，
+   产物一启动 `Cannot find module`，而构建打印的是 OK）
 
 > `js/` 与 `css/` 目录**不需要加清单**：`assemble.js` 是 `fs.readdirSync` **扫目录全量复制**，
 > 结构上不会漏。起因是 v1.9.0 的白名单漏了 `css/frame.css`，产物留了一条**死链**，
@@ -348,10 +362,15 @@ typescale  unit  update  uxaudit  zip  zoom
 ### 7.3 新增一个 IPC 通道
 
 `preload.js` 白名单 + `native.js` 适配器 + `main.js` 的 `ipcMain.handle`（**主进程返回真实值**）。
-若是桌面集成类，还要加进 `desktop.js` 的 `wireIpc()` 并用 `guard()` 包一层（归属校验），
-以及 `probes/_desktop_stub.js` 的桩。
+若是桌面集成类，还要加进 `desktop.js` 的 `wireIpc()`，以及 `probes/_desktop_stub.js` 的桩。
 
-> `ipcchain` 套件会**源级**核对这三处是否对齐，漏一处直接变红。
+> **归属校验不用自己加**（v1.20.1 起）：`installIpcGuard()` 在 `wireIpc()` / `desktop.wireIpc()`
+> 之前一次性包住 `ipcMain.handle` 与 `ipcMain.on`，只接受**本进程创建的窗口**且文档在
+> `vf://app/` 之下的调用，未通过直接抛错。新通道自动受保护 —— 这正是把它做成"包一层"
+> 而不是"每条手写"的原因：漏写一条就是一道没锁的门，而漏写是必然会发生的。
+> ⚠️ 因此**任何 `ipcMain.handle/on` 都必须在 `installIpcGuard()` 之后注册**。
+
+> `ipcchain` 套件会**源级**核对这几处是否对齐，漏一处直接变红。
 
 > ⚠️ **"打开外部链接"这类通道必须自带白名单**。`shell.openExternal` 能开任意协议 ——
 > 不校验就等于给渲染层（以及任何被注入的脚本）一个"打开任意 URL / 执行本地文件"的能力，
@@ -513,11 +532,11 @@ EXIF 检索（按机型/日期区间/尺寸）· 视频支持 · 图片内编辑
 
 ```
 Atrium/
-├─ index.html              入口（373 行）
+├─ index.html              入口（444 行）
 ├─ package.json            版本唯一来源 + npm 脚本（name 刻意保留 viewfinder）
-├─ js/       15 模块       前端全部逻辑（9584 行）
-├─ css/      3 文件        主题用 CSS 变量（1805 行）
-├─ test/     8 文件        纯函数单测（Node，1195 条细分断言）
+├─ js/       16 模块       前端全部逻辑（10400 行）
+├─ css/      3 文件        主题用 CSS 变量（2414 行）
+├─ test/     10 文件       纯函数单测（Node，1318 条细分断言）
 ├─ brand/                  图标矢量 + .ico + 命名候选页（cand-*.png 不入库）
 ├─ deploy/
 │  ├─ pack.js              写 ZIP（自带强制校验）
