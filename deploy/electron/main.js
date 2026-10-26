@@ -11,13 +11,14 @@
    运行前提：Win10/11（目标机无需任何安装，直接跑本目录里的 exe）
    ============================================================ */
 'use strict';
-const { app, BrowserWindow, dialog, ipcMain, net, protocol, screen, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, net, protocol, screen, session, shell } = require('electron');
 const path = require('path');
 const fsx = require('fs');
 const exportLib = require('./exportlib.js');   // 导出落盘（与回归探针共用）
 const updateLib = require('./updatelib.js');   // 更新检测的纯逻辑（版本比较 / URL 白名单）
 const trashLib = require('./trashlib.js');     // 回收站 $I 解析与匹配判据（纯逻辑，可单测）
 const pathAuth = require('./pathauth.js');     // vf://pic 的读盘授权（纯逻辑，可单测）
+const crashLib = require('./crashlib.js');     // 崩溃兜底页的 HTML（纯逻辑，可单测）
 const { createDesktop } = require('./desktop.js');   // 桌面集成（菜单/托盘/任务栏）
 const fs = fsx.promises;
 
@@ -331,6 +332,14 @@ async function scanOne(it, items, files) {
    （见 vf:loadDir）。空清单 = 一个都不许读，默认拒绝。 */
 const picAuth = pathAuth.createAllowlist();
 
+/* 允许**写入**（导出落盘）的目录。只有用户通过原生「选择导出位置」对话框
+   真的选过的目录会进来（见 vf:pickExportDir）。
+   为什么写盘也要授权：`vf:exportFiles` 的 dir 是渲染层传上来的，不校验就等于
+   给了一个"往任意路径写文件"的能力 —— 比读更糟。而导出的目标本来就只有一个
+   来源：那个原生对话框。所以"只认对话框选过的目录"既不损失任何功能，
+   又把能力收窄到"用户亲手点过的地方"。 */
+const exportAuth = pathAuth.createAllowlist();
+
 function toResponse(resp, status) {
   return resp && resp.ok ? resp : new Response(null, { status: status || 404 });
 }
@@ -438,10 +447,39 @@ function wireIpc() {
       buttonLabel: '导出到此文件夹',
       properties: ['openDirectory', 'createDirectory'],
     });
-    return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+    if (r.canceled || !r.filePaths.length) return null;
+    /* 授权写盘 —— 这是 exportAuth 的**唯一**入口，与"用户真的选过这个目录"
+       严格对应。前端每次导出都会先弹这个对话框，所以不会误伤正常流程。 */
+    exportAuth.add(r.filePaths[0]);
+    return r.filePaths[0];
   });
 
-  ipcMain.handle('vf:exportFiles', async (e, dir, list) => exportLib.exportFiles(dir, list));
+  /* 导出落盘。两道闸门，方向不同：
+     ① dir  —— 必须是通过 pickExportDir 选过的目录（写）；
+     ② src  —— 必须是用户打开过的图库里的文件（读）。
+     被拒的条目**逐条**回传 reason:'denied'，而不是整批失败：
+     一批 100 张里混进一个不该给的路径，其余 99 张没有理由跟着失败，
+     但也不能悄悄跳过 —— 用户要能看出"这张没导出"以及为什么。 */
+  ipcMain.handle('vf:exportFiles', async (e, dir, list) => {
+    if (!exportAuth.has(dir)) {
+      trace('export-deny-dir ' + String(dir));
+      return { ok: false, reason: 'denied' };
+    }
+    const arr = Array.isArray(list) ? list : [];
+    const denied = [];
+    const clean = [];
+    for (const it of arr) {
+      if (it && it.src && !picAuth.has(it.src)) {
+        trace('export-deny-src ' + String(it.src));
+        denied.push({ ok: false, name: (it && it.name) || 'image', reason: 'denied' });
+        continue;
+      }
+      clean.push(it);
+    }
+    const r = await exportLib.exportFiles(dir, clean);
+    if (!denied.length) return r;
+    return Object.assign({}, r, { results: (r.results || []).concat(denied) });
+  });
 
   ipcMain.handle('vf:loadDir', async (e, dir) => {
     if (!dir || typeof dir !== 'string') return { ok: false };
@@ -518,8 +556,21 @@ function wireIpc() {
   }
 
   /* 删除单个文件：一律移入系统回收站（可恢复），绝不永久删除。
-     回收站不可用（如网络盘/非 NTFS）时返回失败，由渲染层提示用户，不做静默降级。 */
-  ipcMain.handle('vf:deleteFile', async (e, p, rec) => doTrashOne(p, rec));
+     回收站不可用（如网络盘/非 NTFS）时返回失败，由渲染层提示用户，不做静默降级。
+
+     **只删用户打开过的图库里的文件**（picAuth）。理由：这条通道能搬走用户的文件，
+     而路径是渲染层传上来的 —— 与读盘同一套授权，才能保证"能删的"不超过
+     "用户亲手打开过的"。
+     注意 restoreFile / trashPreview **不能**加这道闸：它们要还原/预览的是
+     上一次会话删掉的文件，那时 picAuth 是空的，加了就会把"跨启动撤销"
+     这个核心功能整个废掉 —— 授权范围要跟着"能力方向"走，不能一刀切。 */
+  ipcMain.handle('vf:deleteFile', async (e, p, rec) => {
+    if (!picAuth.has(p)) {
+      trace('delete-deny ' + String(p));
+      return { ok: false, reason: 'denied', path: p };
+    }
+    return doTrashOne(p, rec);
+  });
 
   /* 批量删除：一次 IPC 走完 N 张（避免 N 次往返），逐张独立成败，
      返回与入参等长的结果数组 —— {ok,mode,ts,size,logId,path,name} | {ok:false,reason,path} */
@@ -529,6 +580,11 @@ function wireIpc() {
     for (const it of list.slice(0, 2000)) {
       const p = it && it.path;
       if (!p) { out.push({ ok: false, reason: 'bad-path' }); continue; }
+      if (!picAuth.has(p)) {
+        trace('delete-deny ' + String(p));
+        out.push({ ok: false, reason: 'denied', path: p });
+        continue;
+      }
       out.push(await doTrashOne(p, it && it.rec));
     }
     return out;
@@ -1171,42 +1227,90 @@ function createWindow() {
   mainWin.loadURL('vf://app/index.html' + (SELFTEST ? '?selftest=1' : ''));
   if (SELFTEST) runSelfTest(mainWin);
 
-  /* 沙箱兼容模式：少数受限环境（安全策略不允许创建 Chromium 沙箱进程）首次启动时
-     渲染进程会在加载完成前被系统杀掉（render-process-gone reason=killed）。
+  /* ---------- 渲染进程崩溃：两种命运，别混成一种 ----------
+     ① 启动期被系统杀掉（reason=killed，且还没加载完、在 8 秒内）：
+        少数受限环境（安全策略不允许创建 Chromium 沙箱进程）会出现。
 
-     **不自动降级**：关掉沙箱是安全上的实质退让（渲染进程失去 OS 级隔离，
-     一旦渲染层被攻破就直接等同主进程权限），绝不能由程序自己悄悄决定。
-     所以这里只**询问**，用户明确点了「用兼容模式重启」才带 --no-sandbox 重启；
-     默认按钮是「取消」，关窗 / Esc 也算取消。
-     —— 改自 v1.20.0 及之前：那时是直接 relaunch，用户全程不知情。 */
+        **不自动降级**：关掉沙箱是安全上的实质退让（渲染进程失去 OS 级隔离，
+        一旦渲染层被攻破就直接等同主进程权限），绝不能由程序自己悄悄决定。
+        所以这里只**询问**，用户明确点了「用兼容模式重启」才带 --no-sandbox 重启；
+        默认按钮是「取消」，关窗 / Esc 也算取消。
+        —— 改自 v1.20.0 及之前：那时是直接 relaunch，用户全程不知情。
+
+     ② 其余一切（crashed / oom / killed 但已过启动期 / launch-failed / integrity-failure）：
+        以前是**什么都不做** —— 窗口留在那里白屏，没有提示、没有重载入口，
+        用户只能强杀进程。现在给一个兜底页。
+
+     两条共用一个监听器，是因为它们要按**同一个 reason 值**分流：
+     分成两个监听器的话，①弹完询问框（用户点了取消）之后 ②还会再弹一次兜底页，
+     顺序就变得依赖注册顺序 —— 那种"看起来能跑"的耦合最难维护。 */
   const born = Date.now();
-  let finished = false, asked = false;
+  let finished = false, asked = false, crashPages = 0;
   mainWin.webContents.on('did-finish-load', () => { finished = true; });
   mainWin.webContents.on('render-process-gone', (_e, det) => {
-    if (SELFTEST || asked || argv.includes('--no-sandbox') || finished) return;
-    if (!(det && det.reason === 'killed') || Date.now() - born >= 8000) return;
-    asked = true;
-    trace('sandbox-ask');
-    const r = dialog.showMessageBoxSync(mainWin, {
-      type: 'warning',
-      title: '启动失败',
-      message: '渲染进程被系统结束了',
-      detail: '这通常是本机的安全策略不允许创建 Chromium 沙箱进程（受限的企业环境、'
-        + '某些安全软件都可能这样）。\n\n'
-        + '可以选择「兼容模式」重新启动：界面和功能完全一样，但渲染进程不再有沙箱隔离，'
-        + '安全性会降低。\n\n'
-        + '取消则保持现状 —— 建议先检查系统安全策略。每次启动都会重新询问，'
-        + '不会记住这次的选择。',
-      buttons: ['取消', '用兼容模式重启'],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-    });
-    if (r !== 1) { trace('sandbox-decline'); return; }
-    trace('relaunch-with-no-sandbox (用户确认)');
-    app.relaunch({ args: process.argv.slice(1).concat(['--no-sandbox']) });
-    app.exit(0);
+    const reason = (det && det.reason) || 'unknown';
+    trace('render-gone reason=' + reason + ' exit=' + (det && det.exitCode));
+
+    /* ① 启动期被杀 → 沙箱询问（唯一会 relaunch 的分支） */
+    const atBoot = !finished && Date.now() - born < 8000;
+    if (reason === 'killed' && atBoot && !SELFTEST && !asked && !argv.includes('--no-sandbox')) {
+      asked = true;
+      trace('sandbox-ask');
+      const r = dialog.showMessageBoxSync(mainWin, {
+        type: 'warning',
+        title: '启动失败',
+        message: '渲染进程被系统结束了',
+        detail: '这通常是本机的安全策略不允许创建 Chromium 沙箱进程（受限的企业环境、'
+          + '某些安全软件都可能这样）。\n\n'
+          + '可以选择「兼容模式」重新启动：界面和功能完全一样，但渲染进程不再有沙箱隔离，'
+          + '安全性会降低。\n\n'
+          + '取消则保持现状 —— 建议先检查系统安全策略。每次启动都会重新询问，'
+          + '不会记住这次的选择。',
+        buttons: ['取消', '用兼容模式重启'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (r === 1) {
+        trace('relaunch-with-no-sandbox (用户确认)');
+        app.relaunch({ args: process.argv.slice(1).concat(['--no-sandbox']) });
+        app.exit(0);
+        return;
+      }
+      trace('sandbox-decline');
+      /* 用户拒绝 → 落到下面的兜底页。窗口已经死了，留个白框比留段说明更糟。 */
+    }
+
+    /* ② 其余崩溃 → 兜底页。上限 3 次：确定性崩溃（比如一进某个目录就 OOM）
+       不该变成"兜底页 ↔ 重载"的无限循环，那种循环比白屏更耗机器。 */
+    if (SELFTEST || reason === 'clean-exit' || crashPages >= 3) return;
+    crashPages++;
+    showCrashFallback(reason, det && det.exitCode);
   });
+}
+
+/* ---------- 崩溃兜底页 ----------
+   页面本身在 crashlib.js（纯函数，可单测：reason 映射 / 转义 / 退出码拼装）。
+   这里只负责"把它加载出来"。
+
+   为什么用 data: URL 而不是新增一个 crash.html：
+   新增产物文件要同时改 assemble.js 的文件清单与 pack.js 的允许清单，
+   漏一处就是"构建打印 OK、产物里却没有"—— 那正是 v1.20.1 踩过的坑。
+
+   回链是一次**用户发起**的 vf://app 导航，会重新加载整个应用（will-navigate
+   放行 vf://app，所以不必为它开例外）。页面本身没有脚本，也就拿不到
+   window.vfNative —— 即便拿到了，IPC 的 sender 校验也会因为文档不是 vf://app/
+   而全部拒绝。 */
+function showCrashFallback(reason, exitCode) {
+  if (!mainWin || mainWin.isDestroyed()) return;
+  trace('crash-fallback ' + reason);
+  try {
+    const url = 'data:text/html;charset=utf-8,' + encodeURIComponent(crashLib.crashPageHtml(reason, exitCode));
+    mainWin.webContents.loadURL(url).catch((e) => {
+      trace('crash-fallback-load-failed ' + ((e && e.message) || e));
+    });
+    if (mainWin.isMinimized()) mainWin.restore();
+  } catch (e) { trace('crash-fallback-failed ' + ((e && e.message) || e)); }
 }
 
 /* ---------- 自检（--selftest + 可选 --open-dir <dir>；结果写入 VF_RESULT_FILE） ---------- */
@@ -1911,8 +2015,59 @@ async function selftestFrame(snap, sink) {
 
 /* ---------- 生命周期 ---------- */
 trace('before-lock');
-process.on('uncaughtException', (e) => { trace('uncaught: ' + (e && e.stack || e)); });
-process.on('unhandledRejection', (r) => { trace('unhandledRejection: ' + (r && (r.stack || r.message || r))); });
+
+/* ============================================================
+   启动期异常兜底：**不能只留一行 trace**
+   ------------------------------------------------------------
+   trace() 只在设了 VF_TRACE 环境变量时才写文件。普通用户没设 —— 于是启动期
+   任何一个异常（模块缺失、data/ 不可写、userData 路径非法、rcedit 没写版本信息）
+   都会让进程静默退出：双击图标，什么都不发生，没有任何提示，也没有任何痕迹。
+
+   v1.20.1 自己就撞过这个症状：assemble.js 的 MAIN_FILES 漏了两个模块，
+   构建打印 OK、exe 也起得来，运行时才 `Cannot find module './trashlib.js'`，
+   进程当场没了。当时是靠 VF_TRACE + 单跑二进制才定位到的 ——
+   换成用户环境，这条根本查不出来。
+
+   所以这里做两件事，缺一不可：
+   ① 把栈写进 <userData>/logs/crash-<时间>.log —— 事后能查；
+   ② 弹一个系统级错误框 —— 当场能看见。
+   **两者都不能再抛**：写盘失败、dialog 不可用都要吞掉。兜底代码自己崩掉的话，
+   用户看到的还是"双击没反应"，而且这次连日志都不会有。
+
+   为什么不给 unhandledRejection 也弹框：Node 里 uncaughtException 之后进程状态
+   已无定义（继续跑等于赌），而 unhandledRejection 通常只是一个局部的、可以恢复的
+   失败（比如某个 IPC 里的 fs 操作没 catch）。前者要退出，后者只记日志 ——
+   否则一次无关紧要的 rejection 就会把用户正在看的图库弹窗打断。
+   ============================================================ */
+let fatalShown = false;
+function reportFatal(kind, err, fatal) {
+  const text = String((err && (err.stack || err.message)) || err || '');
+  let logPath = '';
+  try {
+    const dir = path.join(app.getPath('userData'), 'logs');
+    fsx.mkdirSync(dir, { recursive: true });
+    logPath = path.join(dir, 'crash-' + new Date().toISOString().replace(/[:.]/g, '-') + '.log');
+    fsx.writeFileSync(logPath, new Date().toISOString() + ' ' + kind + '\n' + text + '\n', 'utf8');
+  } catch (e) { logPath = ''; }
+  trace('fatal ' + kind + ': ' + text);
+  /* 自检 / 探针里绝不能弹模态框：那会把无人值守的回归挂死在"等用户点确定"上。
+     日志照写，行为与以前一致。 */
+  if (SELFTEST || !fatal || fatalShown) return;
+  /* 正在退出时抛的异常不弹框、不改退出码：否则一次正常的退出（比如某个
+     before-quit 处理器里 fs 已经不可用）会被记成 exit 1，排查时全是噪音。 */
+  if (quitting) return;
+  fatalShown = true;
+  try {
+    dialog.showErrorBox('Atrium 启动失败',
+      '程序遇到了一个无法继续的错误，只能退出。\n\n'
+      + text.split('\n').slice(0, 6).join('\n')
+      + (logPath ? '\n\n详细信息已写入：\n' + logPath : '\n\n（日志也没能写下来，可能是数据目录不可写）'));
+  } catch (e) { /* dialog 在极早期可能不可用，忽略 */ }
+  /* 显示完再退出：留一个"什么都没发生的死进程"比退出更糟 —— 用户会反复双击。 */
+  try { app.exit(1); } catch (e) { /* 已经在退出了 */ }
+}
+process.on('uncaughtException', (e) => reportFatal('uncaughtException', e, true));
+process.on('unhandledRejection', (r) => reportFatal('unhandledRejection', r, false));
 process.on('exit', (c) => { trace('main-exit code=' + c); });
 const gotLock = SELFTEST || app.requestSingleInstanceLock();
 
@@ -1957,6 +2112,29 @@ if (!gotLock) {
     desktop.wireIpc();
     trace('ready-wired');
 
+    /* ---------- 权限：一律拒绝，并留痕 ----------
+       这个应用不需要摄像头 / 麦克风 / 定位 / 通知 / 剪贴板读取 / 全屏锁定 / MIDI ——
+       它只读用户明确打开的目录。
+
+       为什么要写这两行：**没有 handler 不等于"全部拒绝"**。Electron 对每种权限
+       各有默认值，把边界交给默认值意味着某次大版本升级改了默认值，这边不会有人
+       发现。写成一条显式规则之后，"能不能要摄像头"这件事就有了确定的答案，
+       而且被拒时 trace 里有记录 —— 真出了意外行为能查到是哪个权限被拦了。
+
+       注意 setPermissionCheckHandler 也返回 false：只拒"请求"不拒"检查"的话，
+       某些 API 会绕过请求直接查状态（如 navigator.permissions.query），
+       两边口径不一致就会出现"看起来允许了但实际用不了"的怪状态。 */
+    const denyPerm = (wc, permission) => {
+      trace('permission-deny ' + permission);
+      return false;
+    };
+    session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
+      denyPerm(wc, permission);
+      cb(false);
+    });
+    session.defaultSession.setPermissionCheckHandler(denyPerm);
+    trace('permissions-denied-all');
+
     // 支持 --open-dir 预置“上次目录”（首次运行引导/自测用）
     const idx = argv.indexOf('--open-dir');
     if (idx >= 0 && argv[idx + 1]) await writeLast(argv[idx + 1]);
@@ -1980,7 +2158,11 @@ if (!gotLock) {
     app.on('before-quit', () => { quitting = true; trace('before-quit'); });
     app.on('will-quit', () => { desktop.disposeGlobalHotkey(); trace('will-quit'); });
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
-  }).catch((e) => { trace('ready-error: ' + (e && e.stack || e)); });
+  }).catch((e) => {
+    /* ready 阶段失败 = 窗口根本没建起来，是确定的致命错误。
+       以前这里只 trace 一行，用户看到的就是"双击没反应"。 */
+    reportFatal('whenReady', e, true);
+  });
 
   app.on('window-all-closed', () => {
     trace('window-all-closed');

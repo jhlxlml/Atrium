@@ -1027,7 +1027,13 @@
           this.toast(`正在导出 ${payload.length} 张…`);
           const r = await global.Native.exportFiles(dir, payload);
           if (!r || !r.ok) {
-            this.toast('导出失败：' + ((r && r.reason) || '未知原因'), { urgent: true });
+            /* `denied` 是主进程的授权闸门（目标目录不是用户亲手选的）。
+               这种情况**不该发生** —— 前端每次导出都会先弹对话框 ——
+               所以不写"请重试"，而是让它看起来就是个异常，便于被报上来。 */
+            const why = (r && r.reason) === 'denied'
+              ? '目标文件夹未获授权，请重新选择一次'
+              : ((r && r.reason) || '未知原因');
+            this.toast('导出失败：' + why, { urgent: true });
             return;
           }
           for (const it of r.results) { if (it.ok) ok++; else fail++; }

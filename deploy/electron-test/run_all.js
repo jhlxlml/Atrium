@@ -209,6 +209,22 @@ const SUITES = [
     },
   },
 
+  /* ---------- 1b3e. 纯函数：崩溃兜底页（Node） ----------
+     渲染进程崩掉之后，这一页是用户唯一还能看到的东西。它写坏了不会报错 ——
+     只会白屏或者一串乱码。所以 reason 映射、HTML 转义、退出码条件、
+     "不加载脚本 / 不引外部资源" 四条都要逐条断言。 */
+  {
+    id: 'crashlib',
+    title: '纯函数 · 崩溃兜底页：reason 映射 / HTML 转义 / 退出码 / 不加载脚本（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'crashlib.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('崩溃兜底页纯逻辑测试全部通过（31 断言）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
   /* ---------- 1b4. 纯函数：瀑布流的列分配 / 高度 / 二分代理不变量（Node） ----------
      核心不变量：positions[i].y 单调不减（可安全二分），而 y+h **不单调**
      （同列里后放的矮图底边可能更靠上）→ 网格的可见区裁剪 / 滚动锚定 / 框选
@@ -617,6 +633,105 @@ const SUITES = [
         /e2\.code === 'ENOENT'/.test(main));
       check('删除日志写失败会作为 warned 带回渲染层（不再吞异常）',
         /log-write-failed/.test(main));
+
+      /* ---- 启动异常不能静默（v1.20.2 / R10） ----
+         以前 uncaughtException 只调 trace()，而 trace 只在设了 VF_TRACE 时才写文件。
+         普通用户没设 —— 启动期任何一个异常都是"双击图标，什么都不发生"。
+         v1.20.1 的 `Cannot find module './trashlib.js'` 就是这个症状。 */
+      check('主进程异常有 reportFatal 兜底（不再是裸 trace）',
+        /function reportFatal\(kind, err, fatal\)/.test(main)
+          && /process\.on\('uncaughtException'[^\n]*reportFatal/.test(main)
+          && /process\.on\('unhandledRejection'[^\n]*reportFatal/.test(main));
+      check('崩溃栈会落盘到 <userData>/logs/crash-*.log（事后能查）',
+        /path\.join\(app\.getPath\('userData'\), 'logs'\)/.test(main)
+          && /crash-' \+ new Date\(\)/.test(main)
+          && /fsx\.writeFileSync\(logPath/.test(main));
+      check('致命错误会弹系统错误框（当场能看见，不用先开日志）',
+        /dialog\.showErrorBox\('Atrium 启动失败'/.test(main));
+      check('自检 / 探针里不弹模态框（否则无人值守的回归会挂死在等点确定上）',
+        /if \(SELFTEST \|\| !fatal \|\| fatalShown\) return;/.test(main));
+      check('whenReady 失败也走 reportFatal（窗口没建起来是确定的致命错误）',
+        /reportFatal\('whenReady', e, true\)/.test(main));
+      check('兜底代码自己不会再抛（写盘 / dialog 都包在 try 里）',
+        /catch \(e\) \{ logPath = ''; \}/.test(main)
+          && /catch \(e\) \{ \/\* dialog 在极早期可能不可用/.test(main));
+
+      /* ---- 渲染进程崩溃要有交代（v1.20.2 / R11） ----
+         以前只处理 reason=killed 且启动 8 秒内；crashed / oom 之后窗口白屏，
+         没有提示也没有重载入口。 */
+      check('非 killed 原因的崩溃会显示兜底页（不再留白窗口）',
+        /function showCrashFallback\(reason, exitCode\)/.test(main)
+          && /crashLib\.crashPageHtml\(reason, exitCode\)/.test(main)
+          && /showCrashFallback\(reason, det && det\.exitCode\)/.test(main));
+      check('兜底页有回链能重新加载整个应用（用户不必强杀进程）',
+        /href="vf:\/\/app\/index\.html">重新加载<\/a>/.test(read('deploy/electron/crashlib.js')));
+      /* 兜底页的**生成逻辑**在 crashlib.js，行为由 crashlib 套件逐条验；
+         这里只保证它确实不加载脚本（源码级，防的是"后来有人往里加一段脚本"）。
+         注意只剥**块注释**：crashlib.js 的说明里写着"没有 <script>"，
+         而文件里又确实有 `vf://app/index.html` 这种含 `//` 的字符串 ——
+         剥行注释会把那个字符串切断，所以不能像别处那样剥 `//`。 */
+      check('兜底页不加载脚本（拿不到 vfNative，也没有注入面）',
+        !/<script/i.test(read('deploy/electron/crashlib.js').replace(/\/\*[\s\S]*?\*\//g, '')));
+      check('兜底页有次数上限（确定性崩溃不该变成无限重载）',
+        /crashPages >= 3/.test(main));
+      check('正常退出（clean-exit）不触发兜底页',
+        /reason === 'clean-exit'/.test(main));
+
+      /* ---- 权限：显式全拒（v1.20.2 / R8） ----
+         "没有 handler" 不等于 "全部拒绝"：Electron 对每种权限各有默认值。
+         把边界交给默认值，意味着某次升级改了默认值这边不会有人发现。 */
+      check('权限请求显式拒绝（不再依赖 Electron 默认值）',
+        /setPermissionRequestHandler\(\(wc, permission, cb\) => \{[\s\S]{0,200}?cb\(false\)/.test(main));
+      check('权限"检查"也拒绝（只拒请求不拒检查会留下口径不一致的怪状态）',
+        /setPermissionCheckHandler\(denyPerm\)/.test(main));
+      check('被拒的权限会留痕（trace 里有 permission-deny）',
+        /trace\('permission-deny ' \+ permission\)/.test(main));
+
+      /* ---- 破坏性通道与读盘同一套授权（v1.20.2 / R7） ----
+         审计 #6 只要求校验"发送方是谁"。发送方可信之后，剩下的问题是
+         "它要动的那个路径，用户真的打开过吗" —— 能删的集合不该大于
+         用户亲手打开过的集合。 */
+      {
+        const seg = (from, to) => {
+          const a = main.indexOf(from);
+          const b = to ? main.indexOf(to, a + 1) : main.length;
+          return a < 0 ? '' : main.slice(a, b < 0 ? main.length : b);
+        };
+        check('vf:deleteFile 校验 picAuth（只能删打开过的图库里的文件）',
+          /picAuth\.has\(p\)/.test(seg("'vf:deleteFile'", "'vf:deleteFiles'")));
+        check('vf:deleteFiles 逐条校验 picAuth（批量路径不能绕过）',
+          /picAuth\.has\(p\)/.test(seg("'vf:deleteFiles'", "'vf:restoreFile'")));
+        check('vf:exportFiles 校验目标目录是用户选过的（exportAuth）',
+          /!exportAuth\.has\(dir\)/.test(seg("'vf:exportFiles'", "'vf:loadDir'")));
+        check('vf:exportFiles 校验每个 src 在 picAuth 内（不能把任意文件拷出去）',
+          /picAuth\.has\(it\.src\)/.test(seg("'vf:exportFiles'", "'vf:loadDir'")));
+        check('pickExportDir 是 exportAuth 的唯一授权入口',
+          /exportAuth\.add\(r\.filePaths\[0\]\)/.test(seg("'vf:pickExportDir'", "'vf:exportFiles'")));
+        /* 反向断言：还原 / 预览**不能**加这道闸。
+           它们要处理的是上一次会话删掉的文件，那时 picAuth 是空的；
+           加了闸"跨启动撤销"就整个废掉。这条断言是在保护一个刻意的例外，
+           免得后来者"顺手统一一下"把它改坏。 */
+        check('还原通道没有加 picAuth（跨启动撤销必须能用）',
+          seg("'vf:restoreFile'", "'vf:restoreFiles'").indexOf('picAuth') < 0
+            && seg("'vf:trashPreview'", "'vf:trashLog'").indexOf('picAuth') < 0);
+      }
+
+      /* ---- 清理脚本不能踩已弃用 API（v1.20.2 / R5） ---- */
+      {
+        let clean = '';
+        try { clean = read('deploy/clean.js'); } catch (e) { /* 下面会报 */ }
+        /* 先剥注释再扫。clean.js 的注释里**故意**写着 rmdirSync 当反面教材，
+           直接扫全文会把"解释为什么不用它"判成"还在用它"——
+           v1.20.1 的 trash 套件就踩过同一个坑（注释里写了 `(rec.ts) | 0`）。 */
+        const cleanCode = clean
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .split('\n').map((l) => l.replace(/\/\/[^\n]*$/, '')).join('\n');
+        check('clean.js 用 fs.rmSync（rmdirSync 的 recursive 已被 Node 弃用）',
+          /fs\.rmSync\(p, \{ recursive: true, force: true \}\)/.test(cleanCode)
+            && !/rmdirSync/.test(cleanCode));
+        check('clean.js 的删除范围仍是写死的两个目录（不接受参数）',
+          /RUNTIME_DIRS = \[\s*'deploy\/electron-test\/logs',\s*'deploy\/electron-test\/shots',\s*\]/.test(cleanCode));
+      }
     },
   },
 

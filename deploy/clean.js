@@ -59,7 +59,12 @@ for (const rel of RUNTIME_DIRS) {
     continue;
   }
   try {
-    fs.rmdirSync(p, { recursive: true });
+    /* 用 fs.rmSync 而不是 fs.rmdirSync({recursive:true})：
+       后者在 Node 22 / 24 上已经报 DEP0147「will be removed」，
+       现在还能跑，未来某个版本会直接抛 —— 那会让 `npm run clean` 在
+       一次无关的 Node 升级之后突然坏掉，而它坏掉的表现是"删不掉"，
+       很容易被当成"被占用"糊过去。 */
+    fs.rmSync(p, { recursive: true, force: true });
     console.log('✓ ' + rel + ' 已清空（回收 ' + s.files + ' 文件 / ' + mb(s.bytes) + '）');
   } catch (e) {
     failed.push(rel + ' :: ' + (e.code || e.message));

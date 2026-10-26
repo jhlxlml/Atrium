@@ -63,7 +63,7 @@ for (const f of fs.readdirSync(path.join(ROOT, 'css'))) {
    所以下面 [1b] 加了一道**反向校验**：从 main.js / desktop.js 里把
    `require('./x.js')` 全抠出来，逐个核对是否真的在 STAGE 里 —— 漏一个就构建失败。 */
 const MAIN_FILES = ['main.js', 'preload.js', 'exportlib.js', 'updatelib.js', 'trashlib.js',
-  'pathauth.js', 'desktop.js', 'desktop-spec.js', 'package.json'];
+  'pathauth.js', 'crashlib.js', 'desktop.js', 'desktop-spec.js', 'package.json'];
 for (const f of MAIN_FILES) {
   if (!fs.existsSync(path.join(HERE, f))) throw new Error('主进程文件缺失：' + f);
   copy(path.join(HERE, f), path.join(STAGE, 'app', f));

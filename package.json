@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node deploy/electron-test/run_all.js",
     "test:fast": "node deploy/electron-test/run_all.js --fast",
-    "test:unit": "node test/theme.test.js && node test/transform.test.js && node test/masonry.test.js && node test/frame.test.js && node test/a11y.test.js && node test/imageheader.test.js && node test/updatelib.test.js && node test/desktop.test.js && node test/trash.test.js && node test/pathauth.test.js",
+    "test:unit": "node test/theme.test.js && node test/transform.test.js && node test/masonry.test.js && node test/frame.test.js && node test/a11y.test.js && node test/imageheader.test.js && node test/updatelib.test.js && node test/desktop.test.js && node test/trash.test.js && node test/pathauth.test.js && node test/crashlib.test.js",
     "test:transform": "node test/transform.test.js",
     "probe": "node deploy/electron-test/run_probe.js",
     "shots": "node deploy/electron-test/run_probe.js make_screenshots.js",
