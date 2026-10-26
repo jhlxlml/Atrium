@@ -732,6 +732,32 @@ const SUITES = [
         check('clean.js 的删除范围仍是写死的两个目录（不接受参数）',
           /RUNTIME_DIRS = \[\s*'deploy\/electron-test\/logs',\s*'deploy\/electron-test\/shots',\s*\]/.test(cleanCode));
       }
+
+      /* ---- 版本号四处必须一致（v1.20.2） ----
+         exe 的**文件版本**（右键属性里那个）取自 deploy/electron/package.json；
+         界面上显示、以及「检查更新」用来做当前版本比较的，取自 js/app.js 的
+         App.VERSION。两处漂移的后果不是报错，而是**该提示更新时不提示**
+         （拿 1.20.1 去比 1.20.2，永远算出"已是最新"），或者反过来把用户吓一跳。
+         没人会手写两处之后自己发现，所以让门禁来说。 */
+      {
+        const readJson = (rel) => { try { return JSON.parse(read(rel)); } catch (e) { return null; } };
+        const rootPkg = readJson('package.json');
+        const appPkg = readJson('deploy/electron/package.json');
+        const lock = readJson('deploy/electron/package-lock.json');
+        const mv = read('js/app.js').match(/VERSION:\s*'([\d.]+)'/);
+        const appVer = mv ? mv[1] : '';
+        const pkgVer = (appPkg && appPkg.version) || '';
+        check('deploy/electron/package.json 的版本号形如 x.y.z',
+          /^\d+\.\d+\.\d+$/.test(pkgVer), pkgVer || '(空)');
+        check('App.VERSION 与 exe 版本一致（否则界面显示与"检查更新"会拿错版本）',
+          !!appVer && appVer === pkgVer, 'app=' + appVer + ' pkg=' + pkgVer);
+        check('根 package.json 与 exe 版本一致',
+          !!rootPkg && rootPkg.version === pkgVer,
+          'root=' + (rootPkg && rootPkg.version) + ' pkg=' + pkgVer);
+        check('package-lock 的版本跟上了（否则 npm ci 会报 lock 不同步）',
+          !!lock && lock.version === pkgVer,
+          'lock=' + (lock && lock.version) + ' pkg=' + pkgVer);
+      }
     },
   },
 

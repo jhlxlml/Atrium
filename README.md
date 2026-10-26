@@ -79,16 +79,16 @@ Atrium（中庭）是面向 Windows 的本地图片浏览器：选一个文件�
 
 ### 使用便携包
 
-1. 从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载 **`Atrium_Electron_v1.20.1_x64.zip`**（Windows x64）和同名的 **`.sha256`**；
+1. 从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载 **`Atrium_Electron_v1.20.2_x64.zip`**（Windows x64）和同名的 **`.sha256`**；
 2. 解压后双击 **`Atrium.cmd`**（**不是** `Atrium.exe`）；
 3. 点「添加文件夹」，或者直接把文件夹 / 图片拖进窗口。
 
 > **建议核对校验和**（v1.20.1 起发布脚本会一并上传 `.sha256`）：
-> `sha256sum -c Atrium_Electron_v1.20.1_x64.zip.sha256`（PowerShell：`Get-FileHash`）。
+> `sha256sum -c Atrium_Electron_v1.20.2_x64.zip.sha256`（PowerShell：`Get-FileHash`）。
 
 > **为什么是 `.cmd` 而不是 exe**：WorkBuddy 及部分 Node 环境会注入 `NODE_OPTIONS`，Electron 打包版遇到它会**启动即退出**。启动器负责先清掉这个变量，再拉起主程序。它优先按名找 `Atrium.exe`，找不到才退回「目录里第一个 exe」。
 
-> 下载到的资产名是 ASCII 的 `Atrium_Electron_v1.20.1_x64.zip`（后缀标架构，将来出 arm64 包可在同一 release 里共存）
+> 下载到的资产名是 ASCII 的 `Atrium_Electron_v1.20.2_x64.zip`（后缀标架构，将来出 arm64 包可在同一 release 里共存）
 > —— GitHub 的 release 资产名**不支持非 ASCII 字符**（会被替换成 `.`），所以发布时用这个名字；
 > 本地 `npm run pack` 生成的 ZIP 仍按构建链的命名带「版」字，两者**内容完全一致**。
 
@@ -261,7 +261,8 @@ Atrium/
 | 文件 | 内容 |
 |---|---|
 | [`Atrium_开发上手手册.md`](Atrium_开发上手手册.md) | **操作手册**：命令、五层架构、雷区清单、改设置 / 加 IPC 的标准动作、冻结点 |
-| [`Atrium_v1.20.1_更新说明.md`](Atrium_v1.20.1_更新说明.md) | 本版：安全性与数据可靠性修复（构建不再删 `data/`、打包允许清单、撤销删除的 32 位截断、CSP、沙箱不静默降级、`vf://pic` 读盘授权、Electron 33→45） |
+| [`Atrium_v1.20.2_更新说明.md`](Atrium_v1.20.2_更新说明.md) | 本版：出错时用户能知道（启动异常写日志并弹框、崩溃有兜底页可重载、权限显式全拒、删除与导出补路径授权、版本号一致性门禁） |
+| [`Atrium_v1.20.1_更新说明.md`](Atrium_v1.20.1_更新说明.md) | 上一版：安全性与数据可靠性修复（构建不再删 `data/`、打包允许清单、撤销删除的 32 位截断、CSP、沙箱不静默降级、`vf://pic` 读盘授权、Electron 33→45） |
 | [`Atrium_v1.20.0_更新说明.md`](Atrium_v1.20.0_更新说明.md) | 上一版：强调色可自定义（一支色推导成整套令牌）/ 灯箱跟随主题 |
 | [`Atrium_v1.19.0_更新说明.md`](Atrium_v1.19.0_更新说明.md) | 上一版：全站对比度实测 / 焦点环被裁 / 命中框 24px / 窄窗「设置」被挤出屏幕 |
 | [`Atrium_v1.18.0_更新说明.md`](Atrium_v1.18.0_更新说明.md) | 更早：图标统一 Lucide / 字号收成 8 档 / 颜色语义分工 / 修选择条折行 |
