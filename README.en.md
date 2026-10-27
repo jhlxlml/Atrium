@@ -115,7 +115,7 @@ npm test
 
 | Command | Purpose |
 |---|---|
-| `npm test` | Full regression: **46 suites / 591 assertions**, roughly 300 s |
+| `npm test` | Full regression: **46 suites / 598 assertions**, roughly 300 s |
 | `npm run test:unit` | Pure Node unit tests only: **12 files**, zero dependencies, ~3 s (what CI should run) |
 | `npm run test:fast` | Quick pass: 13 suites / 61 assertions, ~8 s (**includes `tf`, which needs electron**) |
 | `npm run build` | Build the portable Electron package |
@@ -171,7 +171,7 @@ platform      native.js (renderer-side adapter) ──IPC──▶ preload.js (a
 
 A few deliberate decisions:
 
-- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation), the update-check rules (version comparison, URL allow-list), the recycle-bin `$I` matching rules, the `vf://pic` read authorisation and the crash-fallback page builder are factored into pure functions that depend on neither the DOM nor Electron, so **1349** fine-grained assertions run in milliseconds under Node without opening a window.
+- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation), the update-check rules (version comparison, URL allow-list), the recycle-bin `$I` matching rules, the `vf://pic` read authorisation and the crash-fallback page builder are factored into pure functions that depend on neither the DOM nor Electron, so **1385** fine-grained assertions run in milliseconds under Node without opening a window.
 - **`desktop-spec.js` is pure data** (menu template, accelerators, command vocabulary) and is **not allowed to `require('electron')`** — which is why 76 assertions can test it directly under Node.
 - **Security baseline**: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, a strict CSP (no `bypassCSP`, no `unsafe-inline`), a custom privileged `vf://` protocol, a preload allow-list, and new windows / external navigation refused. Every IPC channel **verifies the sender** in one place, and untrusted calls throw; **permission requests are denied explicitly** rather than left to Electron's defaults. **Opening external links also goes through an allow-list** — only the official repository is let through, locked down by 21 reverse cases.
 
@@ -181,7 +181,7 @@ The project tries hard to turn "potholes we fell into" into **mechanisms**. Curr
 
 | Metric | Value |
 |---|---|
-| Regression | **46 suites / 591 assertions**, non-zero exit on any failure |
+| Regression | **46 suites / 598 assertions**, non-zero exit on any failure |
 | Source size | `js/` 10,400 lines across 16 modules · `css/` 2,414 lines across 3 files · `index.html` 444 lines · main-process side 3,393 lines across 8 files · `test/` 2,759 lines across 12 files |
 | IPC | 37 invoke + 1 renderer→main + 3 main→renderer = **41 unique channel names** |
 | Runtime dependencies | **0** (`electron` and `rcedit` are build-time only) |
@@ -195,12 +195,12 @@ Several layers of the regression are **mutually independent lines of defence**:
 - **Security criteria go into the regression too**: the `update` suite locks the `openExternal` URL allow-list with **21 reverse cases** (subdomain spoofing, userinfo spoofing, non-default port, path traversal, `file://`, `javascript:` …) — testing only that "the official link passes" would be an always-true gate.
 - **Failures explain themselves**: assertion messages carry field evidence such as "how many announcements fired, and what the last one said", instead of just `false`.
 
-> **On the number**: `591` counts **suite-level entries**, and it is *not* a stable coverage metric — it moves for three reasons:
+> **On the number**: `598` counts **suite-level entries**, and it is *not* a stable coverage metric — it moves for three reasons:
 > ① Twelve pure-function suites expand into far more fine-grained assertions internally (1385 in total) but are counted as one entry each — so **do not add them up**;
 > ② the `zip` suite has **2 conditional assertions** that only run when the **delivery ZIP is present** (fewer in a source-only checkout);
 > ③ once the `appself` suite fails "the self-check as a whole passed" it **returns early**, and the 31 frame assertions after it never execute;
 > likewise a probe that times out makes its suite count only 2 entries ("process exited normally" + "returned data") and skip the rest —
-> which is why a load-starved run reports noticeably fewer entries, while a healthy environment reports `591`.
+> which is why a load-starved run reports noticeably fewer entries, while a healthy environment reports `598`.
 > **A smaller number does not mean fewer tests** — first find which step produced no output.
 >
 > One more thing: every Electron probe creates its own `ud_*` user-data directory under

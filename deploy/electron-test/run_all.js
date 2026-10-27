@@ -1863,7 +1863,7 @@ const SUITES = [
     title: '顶栏控件区外观 · 没有外框 / 32px 一条基线 / 间距成组 / 图标同尺寸',
     kind: 'probe',
     script: 'probe_toplayout.js',
-    keys: ['TOPLAYOUT ', 'TOPLAYOUT_NARROW '],
+    keys: ['TOPLAYOUT ', 'TOPLAYOUT_NARROW ', 'TOPLAYOUT_WIDE '],
     tags: ['slow'],
     run: function (ctx) {
       const check = ctx.check, d = ctx.keys['TOPLAYOUT '];
@@ -1939,9 +1939,67 @@ const SUITES = [
 
       /* 窄窗：文字收起后仍放得下（放不下就该横滚，而不是换行压扁） */
       const nr = ctx.keys['TOPLAYOUT_NARROW '];
-      if (nr) {
+      if (!nr) {
+        /* 缺步即通过：探针少打一行、或者窄窗那段抛错跳过，整条断言会静默消失，
+           输出照样是 ✓。这一条把它变成红。 */
+        check('窄窗探针返回数据', false, '未解析到 TOPLAYOUT_NARROW 输出');
+      } else {
         check('窄窗下工具栏不横向溢出（分段文字收起后仍放得下）',
           nr.scrolls === false, JSON.stringify(nr));
+      }
+
+      /* 多档宽度：内容列必须**跟着视口长**。
+         v1.20.3 之前是 --page-max: 1760px（Apple HIG 的"居中阅读列"），
+         在 2K/32" 上（逻辑宽 2560）左右各空 394px 纯色带 —— 照片浏览器没有
+         "一行字数"问题，空着就是浪费。改成 100% 之后，这里按**几何**判而不是按
+         变量值判：谁把它改回固定值、或换成另一个更大的固定值，都会立刻红。
+         四档的意义见 probe_toplayout.js 里的注释（1366/1920/2560/3440）。 */
+      const wd = ctx.keys['TOPLAYOUT_WIDE '];
+      if (!wd) {
+        check('超宽屏探针返回数据', false, '未解析到 TOPLAYOUT_WIDE 输出');
+      } else {
+        const ss = wd.samples || [];
+        const failAt = (ok) => ss.filter((s) => !ok(s)).map((s) => s.req);
+        const R = (x) => JSON.stringify(x);
+
+        check('多档宽度都采到样（1366/1920/2560/3440）',
+          ss.length === 4 && ss.every((s) => s.topbarIn && s.stageWrap && s.stage),
+          'n=' + ss.length + ' widths=' + R(wd.widths || []));
+
+        /* 左缘贴视口：限宽生效时这里会是 74 / 394 / 834（居中留白的一半）。 */
+        check('各档宽度下顶栏内层左缘贴视口（不再居中留白）',
+          ss.length > 0 && ss.every((s) => s.topbarIn.l <= 1),
+          '不达标档=' + R(failAt((s) => s.topbarIn.l <= 1)));
+
+        /* 右缘抵达内容右缘。容 2px：1366 那档实测差 1px（亚像素取整）。 */
+        check('各档宽度下顶栏内层右缘抵达视口内容右缘',
+          ss.length > 0 && ss.every((s) => s.topbarIn.r >= s.clientW - 2),
+          '不达标档=' + R(failAt((s) => s.topbarIn.r >= s.clientW - 2)));
+
+        /* 顶栏与图库舞台必须共用同一左右缘 —— 否则"铺满"只是顶栏自己铺满，
+           内容区还是窄的，那正是旧版 2K 留白的另一半症状。 */
+        check('各档宽度下图库舞台与顶栏同左右缘',
+          ss.length > 0 && ss.every((s) => s.stageWrap.l === s.gallery.l
+            && s.stageWrap.r === s.gallery.r),
+          '不达标档=' + R(failAt((s) => s.stageWrap.l === s.gallery.l
+            && s.stageWrap.r === s.gallery.r)));
+
+        /* 瓦片不能越过舞台右缘（越过就是溢出了，与"列数多"无关） */
+        check('各档宽度下瓦片不越过舞台右缘',
+          ss.length > 0 && ss.every((s) => s.maxTileRight == null || s.maxTileRight <= s.stage.r),
+          '不达标档=' + R(failAt((s) => s.maxTileRight == null || s.maxTileRight <= s.stage.r)));
+
+        /* 无横向溢出。注意分母：scrollW 与 clientW 都是**去掉滚动条之后**的量，
+           与 innerW 差的那 11px 是竖向滚动条（见下一条），不是溢出 ——
+           这两条必须成对存在，否则"2550 ≠ 2561"会一直被误读。 */
+        check('各档宽度下无横向溢出（scrollW 不超过 clientW）',
+          ss.length > 0 && ss.every((s) => s.scrollW <= s.clientW),
+          '不达标档=' + R(failAt((s) => s.scrollW <= s.clientW)));
+
+        check('视口宽与内容宽之差只来自竖向滚动条（≤12px）',
+          ss.length > 0 && ss.every((s) => s.sbW >= 0 && s.sbW <= 12),
+          '不达标档=' + R(failAt((s) => s.sbW >= 0 && s.sbW <= 12))
+          + ' 实测 sbW=' + R(ss.map((s) => s.sbW)));
       }
     },
   },

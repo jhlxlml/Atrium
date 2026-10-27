@@ -235,6 +235,65 @@ app.whenReady().then(async () => {
     nrRaw.resize({ width: Math.round(nrShot.width * 2.4), quality: 'best' }).toPNG());
   console.log('TOPLAYOUT_NARROW ' + JSON.stringify(nr));
 
+  /* 多档宽度：内容列必须**跟着视口长**。
+     历史上 --page-max 是 1760px，2560 宽下左右各空出 394px 纯色带 ——
+     照片浏览器没有"一行字数"问题，空着就是浪费。这里量的是几何，不是变量值：
+     即便有人把 --page-max 改回去（或改成另一个固定值），这几条也会立刻红。
+
+     为什么是这四档：
+       1366 —— 老笔记本/小窗，历史上本来就没触顶，用来看"没改坏"；
+       1920 —— 最常见的 1080p，1760 限宽在这里就已经左右各空 74px；
+       2560 —— 2K/32"，用户实际踩到的那一档；
+       3440 —— 带鱼屏，用来证明"跟随视口"是真的跟随，而不是把数字调大到某个更大常数。
+     height 固定 1000：只关心横向，纵向不给它机会去触发别的布局。 */
+  const WIDE_WIDTHS = [1366, 1920, 2560, 3440];
+  const wideSamples = [];
+  for (const W of WIDE_WIDTHS) {
+    win.setContentSize(W, 1000);
+    await sleep(650);
+    const s = await js(`(() => {
+      const r = (sel) => { const e = document.querySelector(sel); if (!e) return null;
+        const b = e.getBoundingClientRect(); return { l: Math.round(b.left), w: Math.round(b.width), r: Math.round(b.right) }; };
+      const cs = getComputedStyle(document.documentElement);
+      const de = document.documentElement;
+      const tiles = [...document.querySelectorAll('.tile')].map((e) => e.getBoundingClientRect());
+      /* 列数从几何推：左缘去重。瓦片宽度由缩放滑块决定，
+         所以"放开限宽"应当只增加列数、不放大瓦片 —— 这两点分开量才判得出。 */
+      const lefts = [...new Set(tiles.map((b) => Math.round(b.left)))];
+      return {
+        innerW: window.innerWidth,
+        clientW: de.clientWidth, clientH: de.clientHeight,
+        scrollW: de.scrollWidth, scrollH: de.scrollHeight,
+        /* 视口宽 - 内容宽 的差就是竖向滚动条占位（全局自定义滚动条 11px）。
+           单独报出来，是为了让"无横向溢出"这条断言的分母可查：
+           否则 2550 和 2561 的差会一直被误读成溢出。 */
+        sbW: window.innerWidth - de.clientWidth,
+        vScroll: de.scrollHeight > de.clientHeight,
+        pageMax: cs.getPropertyValue('--page-max').trim(),
+        gutter: parseFloat(cs.getPropertyValue('--gutter')) || 0,
+        topbarIn: r('.topbar-in'), gallery: r('#galleryView'), stageWrap: r('.stage-wrap'),
+        stage: r('#stage'), ctrls: r('#ctrls'),
+        tileCount: tiles.length,
+        cols: lefts.length,
+        tileW: tiles.length ? Math.round(tiles[0].width) : null,
+        maxTileRight: tiles.length ? Math.round(Math.max(...tiles.map((b) => b.right))) : null,
+      };
+    })()`);
+    wideSamples.push(Object.assign({ req: W }, s));
+
+    /* 留两张图给"好看不好看"用 —— 几何全对也可能排得难看（控件散到两头、
+       瓦片挤成一条）。只截最宽两档，1366/1920 与既有的 toplayout 截图重叠。 */
+    if (W === 2560 || W === 3440) {
+      const full = await win.webContents.capturePage();
+      fs.writeFileSync(path.join(OUT, 'toplayout-wide-' + W + '.png'),
+        full.resize({ width: 1500, quality: 'best' }).toPNG());
+      const strip = await win.webContents.capturePage({ x: 0, y: 0, width: s.clientW, height: 116 });
+      fs.writeFileSync(path.join(OUT, 'toplayout-wide-' + W + '-top.png'),
+        strip.resize({ width: 2000, quality: 'best' }).toPNG());
+    }
+  }
+  console.log('TOPLAYOUT_WIDE ' + JSON.stringify({ widths: WIDE_WIDTHS, samples: wideSamples }));
+
   console.log('TOPLAYOUT ' + JSON.stringify(data));
   console.log('DONE');
   app.quit();
