@@ -174,6 +174,10 @@ const MEASURE = (opts) => String.raw`(() => {
   };
 
   /* ---------- ① 对比度 ---------- */
+  /* scanned 是**分母**：断言只看得见"违规 0 条"，看不见"到底量了几条"。
+     探针某天选不中元素（类名改了、窗口没渲染完），违规自然是 0 —— 全绿。
+     所以每个场景都必须把"检查了多少处"一起报出来，run_all 再压一个下限。 */
+  let textScanned = 0;
   const contrast = [];
   const seen = new Set();
   {
@@ -193,6 +197,7 @@ const MEASURE = (opts) => String.raw`(() => {
       const eff = fg[3] * (parseFloat(cs.opacity) || 1);
       const fgSolid = eff >= 0.999 ? [fg[0], fg[1], fg[2], 1] : over([fg[0], fg[1], fg[2], eff], bg.rgb);
       const r = ratio(fgSolid, bg.rgb);
+      textScanned++;
       const fs = parseFloat(cs.fontSize);
       const fw = +cs.fontWeight || 400;
       const large = fs >= 24 || (fs >= 18.66 && fw >= 700);
@@ -283,10 +288,12 @@ const MEASURE = (opts) => String.raw`(() => {
   };
 
   const clip = [];
+  let focusScanned = 0, focusChecked = 0;
   {
     const focusables = [...document.querySelectorAll(
       'button, a[href], input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"]), [role="button"], [role="switch"], [role="checkbox"]'
     )].filter(visible);
+    focusScanned = focusables.length;
     for (const el of focusables) {
       /* 浮层容器被程序化聚焦时刻意不画环，跳过 */
       if (el.matches('.set-panel, .trash-panel, .vf-modal')) continue;
@@ -295,6 +302,7 @@ const MEASURE = (opts) => String.raw`(() => {
       if (s.none) continue;
       const expand = s.ow + s.oo;
       if (expand <= 0) continue;
+      focusChecked++;                       // 真的算了"聚焦时会画多大一圈"的元素数
       const r = el.getBoundingClientRect();
       const out = { l: r.left - expand, t: r.top - expand, r: r.right + expand, b: r.bottom + expand };
       let hit = null, scrollX = false, scrollY = false;
@@ -357,10 +365,12 @@ const MEASURE = (opts) => String.raw`(() => {
 
   /* ---------- ③ 点击目标 ---------- */
   const target = [];
+  let clickScanned = 0, clickChecked = 0;
   {
     const clickables = [...document.querySelectorAll(
       'button, a[href], select, [role="button"], [role="switch"], [role="checkbox"], [onclick]'
     )].filter(visible);
+    clickScanned = clickables.length;
     for (const el of clickables) {
       if (el.tagName === 'A' && getComputedStyle(el).display === 'inline') continue;
       const r = el.getBoundingClientRect();
@@ -368,6 +378,7 @@ const MEASURE = (opts) => String.raw`(() => {
       /* 被裁到几乎看不见的不算：侧栏收起时 width 过渡到 0，内部 chip 会被压成
          17×34 —— 那不是「点击目标太小」，是它正在消失。 */
       if (w < 8 || h < 8) continue;
+      clickChecked++;                       // 真的量了尺寸的可交互元素数
       if (Math.min(w, h) < 24) {
         target.push({ el: sel(el), w, h, text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 18) });
       }
@@ -377,11 +388,13 @@ const MEASURE = (opts) => String.raw`(() => {
 
   /* ---------- ④ 静默截断 ---------- */
   const trunc = [];
+  let overflowScanned = 0;
   {
     for (const el of document.body.querySelectorAll('*')) {
       if (!visible(el)) continue;
       const cs = getComputedStyle(el);
       if (!(cs.overflowX === 'hidden' || cs.textOverflow === 'ellipsis')) continue;
+      overflowScanned++;                    // 可能被截断的元素（检查的样本量）
       if (el.scrollWidth <= el.clientWidth + 1) continue;
       const hasTitle = el.hasAttribute('title') || el.hasAttribute('aria-label') || el.hasAttribute('aria-describedby');
       if (hasTitle || el.dataset.tip || el.dataset.title) continue;
@@ -430,6 +443,15 @@ const MEASURE = (opts) => String.raw`(() => {
       };
     })(),
     counts: { contrast: contrast.length, clip: clip.length, target: target.length, trunc: trunc.length },
+    /* 分母（v1.20.3）：每条断言都要能回答"到底查了几处"。
+       counts 是**分子**（违规数），只有 scanned 能揭穿"一处都没查所以一条都没违"。 */
+    scanned: {
+      text: textScanned,
+      focusables: focusScanned, focusChecked: focusChecked,
+      clickables: clickScanned, clickChecked: clickChecked,
+      overflowEls: overflowScanned,
+      domNodes: document.body.querySelectorAll('*').length,
+    },
     contrast: contrast.slice(0, MAX),
     clip: clip.slice(0, MAX),
     target: target.slice(0, MAX),

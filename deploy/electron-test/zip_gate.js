@@ -127,6 +127,24 @@ out.controlAccepted = verifyZip(ctlPath).ok === true;   // 对照组必须判通
 // 两个样本只有 CRC 一个变量不同 —— 证明失败归因于 CRC
 out.pairDiffersOnlyInCrc = badRep.entries === 1 && verifyZip(ctlPath).entries === 1;
 
+/* ---------- 2b. 本地头被改坏、中央目录与数据都正确 → 也必须被拒 ----------
+   这条是 v1.20.3 补的：verify_zip 原来把「本地头 vs 中央目录」的差异只写进
+   why、不碰 ok，于是这种包会被判**通过**（解压后的 CRC 跟中央目录确实对得上，
+   它没法从内容上看出问题）。7-Zip 遇到它直接报错，用户那边就是"下载完解不开"。
+   样本只改本地头里的 4 个字节 CRC 字段，其余一切不变。 */
+function buildLocalHeaderCrcMismatch() {
+  const b = Buffer.from(buildMiniZip(false));
+  const lcrc = b.readUInt32LE(14);
+  b.writeUInt32LE((lcrc ^ 0x5a5a5a5a) >>> 0, 14);
+  return b;
+}
+const lhPath = path.join(LOGS, 'gate-local-header.zip');
+fs.writeFileSync(lhPath, buildLocalHeaderCrcMismatch());
+const lhRep = verifyZip(lhPath);
+out.localHeaderRejected = lhRep.ok === false;
+out.localHeaderCrcBad = lhRep.crcBad;
+out.localHeaderWhy = lhRep.details.length ? lhRep.details[0].why.join('；') : '';
+
 /* ---------- 3. 仓库里已有的 Electron 大包（快测时跳过） ---------- */
 let VER = '';
 try { VER = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch (e) { /* 交给断言 */ }

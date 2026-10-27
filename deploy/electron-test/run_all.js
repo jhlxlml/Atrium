@@ -172,6 +172,23 @@ const SUITES = [
     },
   },
 
+  /* ---------- 1b3a2. 纯函数：发布判定「远端那份到底是不是本地这份」（Node） ----------
+     v1.20.3 修的自证循环：原来拿**自己上传的 .sha256 文件**跟本地摘要比 ——
+     恒等，永远为真，上传被截断/串包照样"通过"。现在以 GitHub 服务器侧算的
+     `asset.digest` 为准，.sha256 只在拿不到 digest 时降级使用，并如实标注。
+     重点同样是反向用例：digest 与 .sha256 冲突时必须判重传。 */
+  {
+    id: 'release',
+    title: '纯函数 · 发布判定：服务器侧 digest 优先 / 自证循环必须判重传（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'release.test.js'),
+    run: function (ctx) {
+      const check = ctx.check;
+      check('发布判定纯逻辑测试全部通过（24 断言，含 10 条反向用例）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
   /* ---------- 1b3c. 纯函数：回收站 $I 解析与「只认这一次删除」的判据（Node） ----------
      撤销删除的语义是"撤销**这一次**"。判据靠三样东西：原路径、大小、删除时刻。
      历史实现把后两样写成 `(rec.size)|0` / `(rec.ts)|0` —— 位或截成有符号 32 位：
@@ -347,6 +364,7 @@ const SUITES = [
       mk('locales/zh-CN.pak');
       mk('resources/default_app.asar');
       mk('resources/app/index.html'); mk('resources/app/main.js'); mk('resources/app/icon.ico');
+      mk('resources/app/preload.js'); mk('resources/app/package.json', '{"name":"x"}');
       mk('resources/app/js/app.js'); mk('resources/app/css/main.css');
       /* 不该出现的 */
       mk('data/last-dir.json', '{"dir":"C:\\\\Users\\\\me\\\\Photos"}');
@@ -384,6 +402,26 @@ const SUITES = [
         check('真实产物条目数 ≥ 100（没有把该带的漏掉）', rr.entries.length >= 100, 'n=' + rr.entries.length);
       } else {
         check('真实产物存在（先跑 npm run build）', false, real);
+      }
+
+      /* ---- 必需条目（v1.20.3 / M1）----
+         允许清单回答"能不能进包"，回答不了"该有的在不在"。一棵没有
+         resources/app 的树照样能通过清单校验：ZIP 里还有 60 多个运行时条目、
+         CRC 全对、打印 OK，而 exe 会回落到 default_app.asar。 */
+      {
+        check('missingRequired 是纯函数且被导出', typeof P.missingRequired === 'function'
+          && Array.isArray(P.REQUIRED_ENTRIES) && P.REQUIRED_ENTRIES.length >= 5);
+        check('完整清单不报缺（正向）', P.missingRequired(r.entries).length === 0,
+          P.missingRequired(r.entries).join(', '));
+        /* 反向：拿掉一个必需文件必须被点名。这条是门禁的"能变红"证明 ——
+           没有它，"必需条目检查"本身也可能是个恒真判断。 */
+        const noMain = r.entries.filter((e) => e.name !== 'resources/app/main.js');
+        const miss1 = P.missingRequired(noMain);
+        check('反向：缺 resources/app/main.js 会被点名', miss1.indexOf('resources/app/main.js') >= 0, miss1.join(', '));
+        check('反向：空清单把全部必需条目都报出来',
+          P.missingRequired([]).length === P.REQUIRED_ENTRIES.length);
+        check('packElectron 里真的用了这道检查（不是只写了个函数）',
+          /const miss = missingRequired\(entries\);\s*\n\s*if \(miss\.length\)/.test(fs.readFileSync(path.join(ROOT, 'deploy', 'pack.js'), 'utf8')));
       }
 
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -660,8 +698,12 @@ const SUITES = [
          以前只处理 reason=killed 且启动 8 秒内；crashed / oom 之后窗口白屏，
          没有提示也没有重载入口。 */
       check('非 killed 原因的崩溃会显示兜底页（不再留白窗口）',
-        /function showCrashFallback\(reason, exitCode\)/.test(main)
-          && /crashLib\.crashPageHtml\(reason, exitCode\)/.test(main)
+        /* 签名只锚到前两个参数：v1.20.3 给 showCrashFallback 加了第三个
+           可选参数（detail，给"加载失败"带错误码用），把整条签名写死会让
+           一次正常的功能扩展被误判成回归。这里要保证的是"reason 与 exitCode
+           确实被透传下去了"。 */
+        /function showCrashFallback\(reason, exitCode/.test(main)
+          && /crashLib\.crashPageHtml\(reason, exitCode/.test(main)
           && /showCrashFallback\(reason, det && det\.exitCode\)/.test(main));
       check('兜底页有回链能重新加载整个应用（用户不必强杀进程）',
         /href="vf:\/\/app\/index\.html">重新加载<\/a>/.test(read('deploy/electron/crashlib.js')));
@@ -884,6 +926,13 @@ const SUITES = [
       check('坏包失分点正是 CRC（实算值与声明值不符）', d.badCrcBad === 1, 'crcBad=' + d.badCrcBad);
       // 与坏包只差 CRC 一个变量的对照组必须通过 → 失败归因于 CRC，而非别的结构问题
       check('仅差 CRC 一个变量的对照组被判通过', d.controlAccepted === true);
+
+      // v1.20.3：本地头被改坏、中央目录与数据都正确的包，以前会被判「通过」
+      check('本地头 CRC 与中央目录不符的包被判失败（以前是假通过）',
+        d.localHeaderRejected === true, d.localHeaderWhy || '（没有任何失分点被记录）');
+      check('失分点被点名为「本地头 vs 中央目录」，不是笼统失败',
+        /CRC 本地=0x[0-9a-f]+ 中央=0x[0-9a-f]+/i.test(d.localHeaderWhy || ''), d.localHeaderWhy || '');
+      check('该样本只坏一条（不连坐）', d.localHeaderCrcBad === 1, 'crcBad=' + d.localHeaderCrcBad);
 
       if (d.electronZipExists && !d.electronSkipped) {
         check('Electron 大包全部条目 CRC 正确、内容与源一致',
@@ -1110,6 +1159,16 @@ const SUITES = [
     run: function (ctx) {
       const check = ctx.check, d = ctx.data;
       if (!d || !d.s1_initial) { check('探针返回数据', false, '未解析到 RESULT 输出'); return; }
+      /* 下面 7 段都被 `if (d.sX)` 包着：探针某一步抛错时 d.sX 是 undefined，
+         那一整段断言就**静默消失**，套件照样全绿。先显式断言"每一步都有输出"。
+         （同一形状的坑在 settings 套件上真的发生过，见那里的注释。） */
+      {
+        const steps = { S2: d.s2_wheel_center, S3: d.s3_zoom_out_center, S4: d.s4_fit_recenter,
+          S5: d.s5_small_pan, S6: d.s6_big_pan, S7: d.s7_4dir, S7b: d.s7b_bounds, S9: d.s9_rot_center };
+        const miss = Object.keys(steps).filter(function (k) { return !steps[k]; });
+        check('探针每一步都有输出（缺步 = 那一段断言被静默跳过）',
+          miss.length === 0, '缺失: ' + (miss.join(',') || '无'));
+      }
       near(check, 'S1 初始打开居中（横）', d.s1_initial.dev.dx, 0);
       near(check, 'S1 初始打开居中（纵）', d.s1_initial.dev.dy, 0);
       if (d.s2_wheel_center) {
@@ -1199,7 +1258,7 @@ const SUITES = [
       } else check('nav 模式下捏合仍缩放', false, '缺少 pinchVsNavMode');
       if (d.navWheelStillWorks) {
         check('nav 模式下普通滚轮仍切图（回归）', d.navWheelStillWorks.navigated === true);
-      }
+      } else check('nav 模式下普通滚轮仍切图（回归）', false, '缺少 navWheelStillWorks');
 
       // 手势互斥与拖动回归
       const pc = d.pinchCancelsDrag;
@@ -1218,7 +1277,7 @@ const SUITES = [
       if (d.clamped) {
         near(check, '连续捏合放大被上限夹住', d.clamped.max, d.clamped.maxAllowed, 0.01, '×');
         near(check, '连续捏合缩小被下限夹住', d.clamped.min, d.clamped.minAllowed, 0.01, '×');
-      }
+      } else check('缩放上下限夹住', false, '缺少 clamped');
     },
   },
 
@@ -1298,8 +1357,9 @@ const SUITES = [
       const wheelBtn = btns.filter(function (b) { return b.id === 'lbWheel'; })[0] || {};
       check('滚轮按钮默认用「鼠标」图标而非放大镜', wheelBtn.icon === '#i-wheel', wheelBtn.icon);
       check('滚轮切到切图模式后换成左右箭头', wv.icon === '#i-arrows-h', wv.icon);
-      check('滚轮两种模式的图标确实不同', !!wheelBtn.icon && wheelBtn.icon !== wv.icon,
-        wheelBtn.icon + ' vs ' + wv.icon);
+      /* 这里原先还有一条"滚轮两种模式的图标确实不同" —— 它由上面两条直接推出
+         （'#i-wheel' !== '#i-arrows-h'），永远不会独立变红，只是给总数加 1。
+         删掉：断言数要能代表"检查了几个东西"，不是"写了几行 check"。 */
 
       // 激活态语义：面板类=蓝，收藏=黄
       const infoBtn = (w0.buttons || []).filter(function (b) { return b.id === 'lbInfo'; })[0] || {};
@@ -1309,6 +1369,16 @@ const SUITES = [
       check('滚轮切图模式也是蓝色（与收藏区分）', !!cw && cw.b > cw.r + 40, wv.color);
       check('收藏激活态是黄色（R/G 明显高于 B）', !!cf && cf.r > cf.b + 40 && cf.g > cf.b + 40,
         (d.fav || {}).color);
+
+      /* 删除按钮与 Delete 键（v1.20.3）。以前 #lbDel 从没绑过事件：
+         上面那条"11 颗按钮都有 aria-label"照样通过，因为它只数存在与标签。 */
+      const db = d.delBtn || {};
+      check('删除按钮存在', db.exists === true);
+      check('点删除按钮会真的调用 onDelete（不是死键）', db.afterClick === 1,
+        'calls=' + db.afterClick + ' meta=' + db.last);
+      const dk = d.delKey || {};
+      check('灯箱里按 Delete 也会调用 onDelete（title 承诺的快捷键）', dk.calls === 1,
+        'calls=' + dk.calls + ' open=' + dk.stillOpen);
     },
   },
 
@@ -1318,20 +1388,20 @@ const SUITES = [
     title: '设置面板 · 开合 / 逐项生效 / 持久化 / 双向同步 / 清除缓存 / 关于 / 恢复默认',
     kind: 'probe',
     script: 'probe_settings.js',
-    keys: ['S1 ', 'S2 ', 'S3 ', 'S4 ', 'S5 ', 'S6 ', 'S7 ', 'S8 '],
+    keys: ['S1 ', 'S2 ', 'S3 ', 'S4 ', 'S5 ', 'S6 ', 'S7 ', 'S8 ', 'S9 ', 'S10 ', 'S11 '],
     tags: ['slow'],
     run: function (ctx) {
       const check = ctx.check;
       const s1 = ctx.keys['S1 '], s2 = ctx.keys['S2 '], s3 = ctx.keys['S3 '],
         s4 = ctx.keys['S4 '], s5 = ctx.keys['S5 '], s6 = ctx.keys['S6 '], s7 = ctx.keys['S7 '],
-        s8 = ctx.keys['S8 '];
+        s8 = ctx.keys['S8 '], s9 = ctx.keys['S9 '], s10 = ctx.keys['S10 '], s11 = ctx.keys['S11 '];
       if (!s1) { check('探针返回数据', false, '未解析到 S1 输出'); return; }
       /* s2…s8 每一块都被 `if (sX)` 包着 —— 探针某一步抛错时 sX 为 undefined，
          那一整段断言就**静默不跑**，套件照样全绿。所以先显式断言"每一步都有输出"。
          这正是 v1.11.0 查到的假绿：`window.State.defaults()`（它其实是 getter，
          不是函数）让 S8 整段消失，于是"相框转正"的断言**一条都没执行过**。 */
       const stepMiss = [['S2', s2], ['S3', s3], ['S4', s4], ['S5', s5],
-        ['S6', s6], ['S7', s7], ['S8', s8]]
+        ['S6', s6], ['S7', s7], ['S8', s8], ['S9', s9], ['S10', s10], ['S11', s11]]
         .filter(function (p) { return !p[1]; }).map(function (p) { return p[0]; });
       check('探针每一步都有输出（缺步 = 那一段断言被静默跳过）',
         stepMiss.length === 0, '缺失: ' + (stepMiss.join(',') || '无'));
@@ -1549,6 +1619,39 @@ const SUITES = [
           JSON.stringify({ row: s6.pinRowExists, setting: s6.pinSetting, btnOn: s6.pinBtnOn }));
         check('再次切换可取消置顶', s6.pinRestored === false, 'setting=' + s6.pinRestored);
       }
+
+      /* v1.20.3：上面那两条只证明了"设置值与按钮外观一致" ——
+         而**窗口有没有真的置顶**从来没被验过，这正是"假开关"能活下来的原因。
+         S9 直接问主进程要实际状态。 */
+      if (s9) {
+        check('置顶接口可用（preload 暴露 alwaysOnTop）', s9.skipped !== true, JSON.stringify(s9));
+        check('设置里拨开「窗口置顶」→ 窗口真的置顶了（问主进程，不看 UI）',
+          s9.before === false && s9.on === true, JSON.stringify(s9));
+        check('再拨回去 → 真的取消置顶', s9.off === false && s9.setting === false, JSON.stringify(s9));
+      }
+
+      /* v1.20.3：目录读取失败必须说出来（以前与"空目录"同形，且已有图库时完全静默） */
+      if (s10) {
+        check('打开不存在的目录：没有破坏当前图库', s10.after === s10.before,
+          'before=' + s10.before + ' after=' + s10.after);
+        check('打开不存在的目录：给出可读的失败提示（不再静默）',
+          /打开文件夹失败/.test(s10.toast || ''), JSON.stringify(s10.toast));
+      }
+
+      /* v1.20.3：拍摄时间采集不能"盖章即丢"。
+         以前先给全部候选盖 _shotTried 再只送前 2000 条，第 2001 条往后永远沉底。
+         这里量的是**真的被送去解析的条数**，不是盖了多少章。 */
+      if (s11) {
+        check('拍摄时间采集：单轮不超过 2000 条上限（不一次性排队）',
+          Array.isArray(s11.batches) && s11.batches.length > 0
+            && s11.batches[0] > 0 && s11.batches[0] <= 2000,
+          'batches=' + JSON.stringify(s11.batches));
+        check('拍摄时间采集：超过上限的条目会在后续轮次补上（没有一条被永久跳过）',
+          s11.parsedTotal === s11.n,
+          'parsedTotal=' + s11.parsedTotal + ' / n=' + s11.n + ' batches=' + JSON.stringify(s11.batches));
+        check('拍摄时间采集：收尾收敛（不卡在 busy / pending）',
+          s11.busy === false && s11.pending === 0, 'busy=' + s11.busy + ' pending=' + s11.pending);
+      }
     },
   },
 
@@ -1626,6 +1729,13 @@ const SUITES = [
       const inj = ctx.keys['INJECT '], eye = ctx.keys['EYE '], pin = ctx.keys['PIN '],
         pin2 = ctx.keys['PIN2 '], cap = ctx.keys['CAP '], narrow = ctx.keys['NARROW '], geo = ctx.keys['GEO '];
       if (!geo) { check('探针返回数据', false, '未解析到 GEO 输出'); return; }
+      /* 其余 6 段同样被 `if (x)` 包着，缺一段就少一批断言却照样全绿 */
+      {
+        const steps = { INJECT: inj, EYE: eye, PIN: pin, PIN2: pin2, CAP: cap, NARROW: narrow };
+        const miss = Object.keys(steps).filter(function (k) { return !steps[k]; });
+        check('探针每一步都有输出（缺步 = 那一段断言被静默跳过）',
+          miss.length === 0, '缺失: ' + (miss.join(',') || '无'));
+      }
       check('顶栏已移除品牌文案', geo.brandTextPresent === false);
       check('眼睛按钮位于右侧控件簇内', geo.eyeInCtrls === true);
       check('眼睛按钮位于最近删除之后', geo.eyeAfterTrash === true && geo.eyeIdx > geo.trashIdx,
@@ -1869,6 +1979,29 @@ const SUITES = [
         d['gallery-dark'] && d['gallery-dark'].theme === 'dark' && d['gallery-dark'].diag.paper === '#141416',
         JSON.stringify(d['gallery-dark'] && d['gallery-dark'].diag));
 
+      /* ---- 采样量下限（v1.20.3）----
+         下面四条断言都是"违规清单为空即通过"。可清单为空有两种原因：
+         真的没问题，或者**根本没查到东西**（类名改了、窗口没渲染完、选择器
+         写错了）。后者会让这四条永远绿 —— 恒真的门禁比没有门禁更糟。
+         所以每条都先问一句"你到底查了几处"，再压一个下限。 */
+      const noScan = SCENES.filter((s) => !d[s] || !d[s].scanned);
+      check('每个场景都报告了采样量（缺了就分不清"0 违规"和"0 采样"）',
+        noScan.length === 0, noScan.join(', '));
+      const sample = (f) => SCENES.reduce((a, s) => a + (((d[s] || {}).scanned || {})[f] || 0), 0);
+      const thin = SCENES.filter((s) => (((d[s] || {}).scanned || {}).text || 0) < 1
+        || (((d[s] || {}).scanned || {}).clickChecked || 0) < 5);
+      check('每个场景至少量到 1 处文字 / 5 个可点元素（空场景也不该是 0）',
+        thin.length === 0, '偏少的场景: ' + (thin.join(', ') || '无'));
+
+      check('对比度采样量达标（11 个场景合计 ≥120 处文字）', sample('text') >= 120,
+        '实测 ' + sample('text') + ' 处');
+      check('焦点环采样量达标（合计 ≥250 个可聚焦元素真的算了外框）',
+        sample('focusChecked') >= 250, '实测 ' + sample('focusChecked') + ' 个');
+      check('命中框采样量达标（合计 ≥250 个可交互元素真的量了尺寸）',
+        sample('clickChecked') >= 250, '实测 ' + sample('clickChecked') + ' 个');
+      check('截断采样量达标（合计 ≥350 个 overflow:hidden / ellipsis 元素）',
+        sample('overflowEls') >= 350, '实测 ' + sample('overflowEls') + ' 个');
+
       /* ① 对比度：正文 4.5 / 大字 3.0。disabled 控件 WCAG 豁免，但探针仍会
          列出来 —— 这里只统计"非 disabled"的，避免把灰掉的按钮算成缺陷。 */
       const badContrast = [];
@@ -1952,6 +2085,15 @@ const SUITES = [
       if (!d || !d.open || !d.closed) { check('探针返回数据', false, '未解析到 SIDE 输出'); return; }
       const o = d.open, c = d.closed, k = d.keys || {}, ov = d.overlayOpen || {},
         ov2 = d.overlayClosed || {}, em = d.empty || {}, dk = d.dark || {}, nw = d.narrow || {};
+      /* 这几段缺失时下面读到的是 undefined，报出来是"undefined !== 212"这种
+         莫名其妙的失败，看不出真因（探针中途抛错）。先把"哪一段没跑"点出来。 */
+      {
+        const steps = { keys: d.keys, overlayOpen: d.overlayOpen, overlayClosed: d.overlayClosed,
+          empty: d.empty, dark: d.dark, narrow: d.narrow };
+        const miss = Object.keys(steps).filter(function (x) { return !steps[x]; });
+        check('探针每一步都有输出（缺步 = 那一段断言读到 undefined）',
+          miss.length === 0, '缺失: ' + (miss.join(',') || '无'));
+      }
 
       // 侧栏底色亮度：深色主题下必须真的变暗（材质/发丝线在深色里最容易糊成一片）
       const lumOf = (col) => {
@@ -2413,6 +2555,14 @@ const SUITES = [
       const check = ctx.check, d = ctx.data;
       if (!d || !d.A || !d.G) { check('探针返回数据', false, '未解析到 RP 输出'); return; }
       const A = d.A, B0 = d.B0, B1 = d.B1, C = d.C, D = d.D, E = d.E, F1 = d.F1, F2 = d.F2, G = d.G;
+      /* 各段同样是 `if (x)` 形状：缺一段就少一批断言，套件仍然全绿 */
+      {
+        const steps = { B0: B0, B1: B1, C: C, D: D, E: E, E2: d.E2, E3: d.E3,
+          BAKE: d.BAKE, F1: F1, F2: F2 };
+        const miss = Object.keys(steps).filter(function (k) { return !steps[k]; });
+        check('探针每一步都有输出（缺步 = 那一段断言被静默跳过）',
+          miss.length === 0, '缺失: ' + (miss.join(',') || '无'));
+      }
 
       // 90° 顺时针旋转在 CSS 里表现为 matrix(0, s, -s, 0, …)
       const isRot90 = (tf) => {
@@ -2501,6 +2651,22 @@ const SUITES = [
           plainSame === true, 'plain=' + e2.plainName);
       }
 
+      // ---- 烘焙导出的「文件名 vs 实际编码」（S4）----
+      const E3 = d.E3, BK = d.BAKE || {};
+      check('烘焙导出：源格式 canvas 编不出来（BMP）时，落盘的是真 PNG',
+        !BK.skipped && BK.magic === 'png', 'hit=' + JSON.stringify(BK.hit) + ' magic=' + BK.magic);
+      check('烘焙导出：文件名扩展名跟着实际编码走（x.bmp → x.png）',
+        !BK.skipped && !!BK.out && /\.png$/i.test(BK.out),
+        'out=' + BK.out + ' hit=' + JSON.stringify(BK.hit));
+      check('烘焙导出：没有留下「名字是 .bmp、内容是 PNG」的文件',
+        !BK.skipped && (BK.stray || []).length === 0, 'stray=' + JSON.stringify(BK.stray));
+      check('烘焙导出：改完名之后像素仍然是转置后的尺寸（40×60 → 60×40）',
+        !BK.skipped && !!BK.dim && BK.dim.w === 60 && BK.dim.h === 40,
+        BK.dim ? BK.dim.w + '×' + BK.dim.h : '未能读取');
+      check('烘焙导出：收尾把那张图的旋转记录清掉了（没污染后面的持久化断言）',
+        !!E3 && !E3.skipped && E3.bmpRotAfter === 0 && E3.lsKeys === E3.lsBefore && E3.leaked === false,
+        'bmpRot=' + (E3 && E3.bmpRotAfter) + ' ls ' + (E3 && E3.lsBefore) + '→' + (E3 && E3.lsKeys) + ' leaked=' + (E3 && E3.leaked));
+
       check('转满一圈回到 0° 后记录被清除',
         F1 && F1.lbRot === 0 && F1.stateRot === 0 && F1.lsKeys === 0,
         'rot=' + (F1 && F1.stateRot) + ' lsKeys=' + (F1 && F1.lsKeys));
@@ -2573,14 +2739,26 @@ const SUITES = [
     title: '无障碍 · 播报真的发生 / 焦点真的被圈住 / 关闭真的还原 / 相框控制条键盘可达',
     kind: 'probe',
     script: 'probe_a11y.js',
-    keys: ['A11YSEM ', 'A11YLIVE ', 'A11YMODAL ', 'A11YSP ', 'A11YLBOX ', 'A11YFRAME '],
+    keys: ['A11YSEM ', 'A11YLIVE ', 'A11YMODAL ', 'A11YSP ', 'A11YLBOX ', 'A11YFRAME ', 'A11YENTER '],
     tags: ['slow'],
     run: function (ctx) {
       const check = ctx.check;
       const sem = ctx.keys['A11YSEM '], live = ctx.keys['A11YLIVE '],
         modal = ctx.keys['A11YMODAL '], sp = ctx.keys['A11YSP '],
-        lb = ctx.keys['A11YLBOX '], fr = ctx.keys['A11YFRAME '];
-      if (!sem) { check('探针返回数据', false, '未解析到 A11YSEM 输出'); return; }
+        lb = ctx.keys['A11YLBOX '], fr = ctx.keys['A11YFRAME '],
+        enter = ctx.keys['A11YENTER '];
+      /* 缺步即失败（v1.20.3 / M8）。
+         以前只要求第一段 A11YSEM 存在，后面五段都是 `if (x) {…}` 无 else ——
+         探针在中途抛异常时 app.quit() 仍是正常退出（退出码 0），
+         于是"打印了 SEM、没打印 MODAL"这种情况会安静地少掉约 24 条断言，
+         输出还是 ✓ 通过。一条断言换掉一整片静默。 */
+      {
+        const steps = { A11YSEM: sem, A11YLIVE: live, A11YMODAL: modal, A11YSP: sp, A11YLBOX: lb, A11YFRAME: fr, A11YENTER: enter };
+        const miss = Object.keys(steps).filter(function (k) { return !steps[k]; });
+        check('探针每一段都有输出（缺步 = 后面的断言被静默跳过）',
+          miss.length === 0, '缺失: ' + (miss.join(', ') || '无'));
+      }
+      if (!sem) return;
 
       /* 一段 Tab 序列是否"真的被圈住"。两个条件缺一不可：
          ① 每一步焦点都还在容器内；② **至少真的移动过一次**。
@@ -2661,6 +2839,15 @@ const SUITES = [
         check('点「取消」真的关掉弹层，且焦点还原到出发控件',
           mc.stillOpen === false && mc.restored === true,
           'stillOpen=' + mc.stillOpen + ' active=' + mc.activeId + ' from=' + mc.fromId);
+      }
+
+      /* --- 3b) 回车语义（v1.20.3）：焦点在「取消」上按回车必须是取消 ---
+         上面那条"默认焦点落在取消"只证明了焦点位置，证明不了按下去会发生什么。
+         这条断言的是**结果**：Enter 之后弹层关闭、且返回值是 false（取消）。 */
+      if (enter) {
+        check('焦点在「取消」上按回车 → 取消（不是执行）',
+          enter.value === false, 'value=' + enter.value + ' focused=' + enter.focusedAct);
+        check('回车之后弹层确实关闭（不是赖着不走）', enter.stillOpen === false);
       }
 
       /* --- 4) 设置面板 --- */
@@ -3097,6 +3284,18 @@ function main() {
      措辞一律按此为准，别写成"跳过 Electron"（早先文档就是那么写的，与实际不符）。 */
   if (fast) suites = suites.filter(function (s) { return s.kind === 'node' || (s.tags || []).indexOf('joint') >= 0; });
   if (filters.length) suites = suites.filter(function (s) { return filters.indexOf(s.id) >= 0; });
+
+  /* 套件一个都没选中 → 拒绝判绿。
+     以前这里会安静地跑 0 条、打印"失败 0"、退出码 0：`--only` 打错一个字母、
+     或某个套件 id 被改名，得到的是一次和"全绿"长得完全一样的输出。
+     门禁的可信度建立在"断言真的被执行了"之上，这一条就是那道底线。 */
+  if (suites.length === 0) {
+    console.log('');
+    console.log('✗ 没有匹配任何套件' + (filters.length ? '：' + filters.join(', ') : ''));
+    console.log('  已忽略这次结果（退出码 2）—— 一条断言都没跑不等于全绿。');
+    process.exit(2);
+  }
+
   // 快测模式：让支持 quickFlag 的 node 套件走精简路径（zip 套件会跳过 268MB 大包）
   if (fast) suites = suites.map(function (s) {
     return (s.quickFlag && !(s.args || []).length) ? Object.assign({}, s, { args: ['--quick'] }) : s;
@@ -3140,6 +3339,23 @@ function main() {
     console.log('');
   });
 
+  /* 每个被选中的套件都必须至少产出一条断言。
+     产出 0 条只有两种可能：它内部走了"提前 return"，或者探针什么都没解析到 ——
+     两种都不该算通过，因为它们在输出上和"全部达标"没有区别。 */
+  {
+    const seen = new Set(results.map(function (r) { return r.suite; }));
+    suites.forEach(function (s) {
+      if (!seen.has(s.title)) {
+        results.push({
+          suite: s.title,
+          name: '该套件没有产生任何断言',
+          ok: false,
+          detail: '提前返回或探针无输出（这不等于通过）',
+        });
+      }
+    });
+  }
+
   const total = results.length;
   const bad = results.filter(function (r) { return !r.ok; });
   console.log('='.repeat(78));
@@ -3151,7 +3367,17 @@ function main() {
     bad.forEach(function (f) { console.log('  ✗ [' + f.suite + '] ' + f.name + (f.detail ? '  → ' + f.detail : '')); });
   }
   console.log('='.repeat(78));
-  process.exit(bad.length ? 1 : 0);
+  /* 全量跑的执行下限。定向跑（--only）不做总数检查 —— 那本来就只有几条。
+     --fast 也不做：它按设计只跑纯函数套件与 joint 冒烟。
+     阈值取 450 而不是 554：文档里记着两种合法偏少的情形（没有 alwaysOnTop 的
+     沙箱 494、机器负载导致探针缺步 511），450 能同时容下它们，
+     又能挡住"只跑了三十条"这种塌方。 */
+  const tooFew = !fast && !filters.length && total < 450;
+  if (tooFew) {
+    console.log('✗ 断言数异常偏少（' + total + ' < 450），拒绝判绿（退出码 2）');
+    console.log('  先看上面有没有套件"没有产生任何断言"，再怀疑探针没起来。');
+  }
+  process.exit(bad.length ? 1 : (tooFew ? 2 : 0));
 }
 
 if (require.main === module) main();

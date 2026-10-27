@@ -121,6 +121,12 @@ app.whenReady().then(async () => {
     const modifiers = shift ? ['shift'] : [];
     const before = await exec(SIG);
     w.webContents.sendInputEvent({ type: 'keyDown', keyCode: code, modifiers });
+    /* Return 必须补一个 char 事件：真实键盘按下回车会同时产生 keydown 与
+       文本输入，而 `sendInputEvent` 只发 keyDown 时，Chromium **不会**执行
+       "回车激活当前聚焦按钮"这个默认动作 —— 于是"按回车没反应"会被误判成
+       应用的问题。v1.20.3 实测确认：补上 char 之后按钮才真的被点击。
+       Tab / Escape 这类不产生字符的键不需要。 */
+    if (code === 'Return') w.webContents.sendInputEvent({ type: 'char', keyCode: code, modifiers });
     w.webContents.sendInputEvent({ type: 'keyUp', keyCode: code, modifiers });
     await wait(120);
     const after = await exec(SIG);
@@ -269,6 +275,31 @@ app.whenReady().then(async () => {
     };
   })()`);
   console.log('A11YMODAL ' + JSON.stringify({ focusFrom, open: modalOpen, tabs: modalTabs, backs: modalBacks, closed: modalClosed }));
+
+  /* =================== 2b) 回车语义（v1.20.3） ===================
+     焦点在「取消」上按回车，必须是**取消**。
+     以前 onKey 在捕获阶段无条件 done(true)，默认焦点却在「取消」上 ——
+     用户按回车想取消，结果执行了删除。而当时的门禁只断言了
+     "默认焦点落在取消上"，所以这条一直是绿的。 */
+  await exec(`(() => {
+    window.__probe.modalP2 = window.App.modal({
+      title: '回车语义测试', body: '探针', confirmText: '确定', cancelText: '取消',
+    });
+    return true;
+  })()`);
+  await wait(300);
+  await exec(`(() => { const b = document.querySelector('.vf-modal [data-act="cancel"]'); if (b) b.focus(); return true; })()`);
+  await pressKey('Return', false);
+  await wait(400);
+  const enterStep = await exec(`(async () => ({
+    stillOpen: !!document.querySelector('.vf-modal'),
+    focusedAct: (document.activeElement && document.activeElement.getAttribute('data-act')) || '',
+    value: await Promise.race([
+      window.__probe.modalP2,
+      new Promise((r) => setTimeout(() => r('timeout'), 1500)),
+    ]),
+  }))()`);
+  console.log('A11YENTER ' + JSON.stringify(enterStep));
 
   /* =================== 3) 设置面板 =================== */
   await exec(`(() => { const b = document.getElementById('setBtn'); b.focus(); b.click(); return true; })()`);

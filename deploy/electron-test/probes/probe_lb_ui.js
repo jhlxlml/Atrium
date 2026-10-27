@@ -173,6 +173,43 @@ app.whenReady().then(async () => {
     return { icon: u && u.getAttribute('href'), fav: b.classList.contains('is-fav'), on: b.classList.contains('is-on'), color: getComputedStyle(b).color };
   })()`);
 
+  // ---- 删除按钮与 Delete 键（v1.20.3）：必须真的调到 onDelete ----
+  // 以前 init() 里漏了 this.delBtn 赋值，#lbDel 从没绑过事件 ——
+  // 按钮可点可聚焦、title 还写着「删除（Delete）」，按下去什么都不发生。
+  // 这里把 onDelete 换成计数器（绑定是调用时读 this.onDelete，所以换得动），
+  // 只验"有没有真的调到"，不真的删文件。
+  R.delBtn = await w.webContents.executeJavaScript(`(async () => {
+    const L = window.Lightbox;
+    const orig = L.onDelete;
+    let calls = 0, last = null;
+    L.onDelete = (m) => { calls++; last = m && m.name; };
+    const btn = document.getElementById('lbDel');
+    const exists = !!btn;
+    if (btn) btn.click();
+    await new Promise((r) => setTimeout(r, 150));
+    const afterClick = calls;
+    L.onDelete = orig;
+    return { exists, afterClick, last };
+  })()`);
+
+  R.delKey = await w.webContents.executeJavaScript(`(() => {
+    const L = window.Lightbox;
+    window.__probe = window.__probe || {};
+    window.__probe.origDel = L.onDelete;
+    window.__probe.delCalls = 0;
+    L.onDelete = () => { window.__probe.delCalls++; };
+    return { isOpen: L.isOpen() };
+  })()`);
+  w.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Delete' });
+  w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Delete' });
+  await new Promise((r) => setTimeout(r, 250));
+  R.delKey = await w.webContents.executeJavaScript(`(() => {
+    const L = window.Lightbox;
+    const n = window.__probe.delCalls;
+    L.onDelete = window.__probe.origDel;
+    return { calls: n, stillOpen: L.isOpen() };
+  })()`);
+
   console.log('LBUI ' + JSON.stringify(R, null, 1));
   app.quit();
 });

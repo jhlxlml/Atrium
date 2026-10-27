@@ -23,7 +23,7 @@
 | 语言/风格 | vanilla JS + IIFE 挂 `window` + `'use strict'`；中文注释、英文标识符；**注释写"为什么"不写"做什么"**      |
 | 数据存储  | localStorage（设置/收藏/旋转）+ IndexedDB（图片尺寸/缩略图落盘）+ 主进程 JSON（删除日志）；**统一落在应用本体目录的 `data/`**（便携，见 §3.1） |
 | 加载入口  | **2 个**：原生目录选择框（`Ctrl+O`）、拖拽（唯一"条目没有磁盘路径"的通路）                                     |
-| 回归防线  | **45 套件 / 554 项断言**（`run_all.js`，约 300 秒，视机器负载）；含产物自检、校验器的反向门禁、**源级不变量** |
+| 回归防线  | **46 套件 / 591 项断言**（`run_all.js`，约 300 秒，视机器负载）；含产物自检、校验器的反向门禁、**源级不变量** |
 | 当前状态  | 功能完成度高、无障碍四层补齐、相框已转正、四种浏览排布；**没有模块还停在 ★★☆☆☆**                                     |
 
 **一句话**：这是一个"工程纪律极好、防御性断言很密"的小工具项目。它的**风险不在代码质量，而在"改动的接线是否完整"** —— 历史上栽过 6 次的都是同一类病：**功能写好了，但没接到调用链上**（见 §6.1）。
@@ -36,8 +36,8 @@
 
 | 目的         | 命令                                                    | 说明                                                            |
 | ---------- | ----------------------------------------------------- | ------------------------------------------------------------- |
-| 跑全量回归      | `node deploy/electron-test/run_all.js`                | 45 套件 / 554 项 / 约 300 秒。任一失败**非零码退出**。可后台跑               |
-| 只跑纯函数单测    | `npm run test:unit`                                   | 11 个文件 / 1349 条细分断言 / 约 3 秒，**零依赖**（CI 用这个）                |
+| 跑全量回归      | `node deploy/electron-test/run_all.js`                | 46 套件 / 591 项 / 约 300 秒。任一失败**非零码退出**。可后台跑               |
+| 只跑纯函数单测    | `npm run test:unit`                                   | 12 个文件 / 1385 条细分断言 / 约 3 秒，**零依赖**（CI 用这个）                |
 | 快跑（改小东西时）  | `node deploy/electron-test/run_all.js --fast`         | 13 套件 / 61 项 / 约 8.4 秒。**跳过大部分 Electron 探针，但仍含 `tf`（要 electron）** |
 | 只跑一个套件     | `node deploy/electron-test/run_all.js masonry`        | 套件 id 见 §5.2                                                  |
 | 纯函数单测（毫秒级） | `node test/transform.test.js` 等                       | `transform` / `imageheader` / `frame` / `a11y` / `masonry` / `desktop` / `updatelib` 七个 |
@@ -187,13 +187,13 @@ main → render :  3 条  （vf:frameClosed / vf:frameMoved / vf:cmd）
 
 | 层               | 位置                                        | 反馈速度 | 覆盖                                                                    |
 | -------------- | ----------------------------------------- | ---- | --------------------------------------------------------------------- |
-| **纯函数单测**       | `test/*.test.js`（Node，`vm` 沙箱）            | 毫秒级  | `transform` 36 · `header` 26 · `frame` 505 · `a11y` 77 · `masonry` 87 · `desktop` 76 · `updatelib` 65 · `theme` 323 · `trash` 78 · `pathauth` 45 · `crashlib` 31（合计 1349） |
+| **纯函数单测**       | `test/*.test.js`（Node，`vm` 沙箱）            | 毫秒级  | `transform` 36 · `header` 26 · `frame` 505 · `a11y` 77 · `masonry` 87 · `desktop` 76 · `updatelib` 65 · `theme` 323 · `trash` 78 · `pathauth` 45 · `crashlib` 43 · `release` 24（合计 1385） |
 | **源级不变量**       | `run_all.js` 里的 `frozen` / `ipcchain` / `secboot` / `buildsafe` | 毫秒级  | 冻结标识未被改名 / 数据目录两条分支 / IPC 链路无缺口 / 安全默认值 / 构建不删 `data/` |
 | **Electron 探针** | `deploy/electron-test/probes/probe_*.js`（**25 个**被套件调用，另有 3 个一次性审计工具：`probe_uiaudit` / `probe_audit2` / `probe_uifix`） | 秒级/个 | 真实渲染、几何、交互、无障碍、相框、拖拽、设置面板 |
 | **产物自检**        | `appself` / `icon` / `zip` 套件             | 慢    | 跑**装进包里的产物**，不是源码                                                      |
 
-> **断言数字的口径**：`run_all.js` 汇总的是**套件级条目数**（**554**），不等于单个 `assert` 总数
-> （纯函数套件内部展开更多细分断言，合计 **1349**，聚合器各按 1 项计入）。**别自己相加。**
+> **断言数字的口径**：`run_all.js` 汇总的是**套件级条目数**（**591**），不等于单个 `assert` 总数
+> （纯函数套件内部展开更多细分断言，合计 **1385**，聚合器各按 1 项计入）。**别自己相加。**
 > 另：`zip` 套件有 **2 条条件断言**只在**交付 ZIP 就位**时才跑 —— 源码态（没打包）会少这 2 项。
 
 ### 5.2 45 个套件 id
@@ -215,7 +215,7 @@ themeunit  topbar  toplayout  trash  typescale  unit  update  uxaudit  zip  zoom
 1. **`zip` 套件**按"Electron 大包在不在"跑不同条数。版本号刚升、`pack.js` 还没跑时大包不存在 → 少 2 条。
 2. **`appself` 套件**一旦 `自检整体通过` 判负就**提前 `return`**，后面 **31 条**相框断言一条都不执行。
    最典型的触发条件是**沙箱不支持 `alwaysOnTop`**（`setAlwaysOnTop` 静默无效 → 包内自检 `pinSet:false` → `code=1`）。
-   所以同一个 commit 在两台机器上会报 **523** 与 **554** 两个数，**两个都"对"**。
+   所以同一个 commit 在两台机器上会报 **560** 与 **591** 两个数，**两个都"对"**。
 3. **某个探针超时**（机器被压着）→ 该套件只剩 2 项（"进程正常退出" + "返回数据"）通过其余全跳过，
    总数会落到 **536** 这种数。先单跑那个探针确认，再怀疑代码 —— v1.20.1 收尾时 `zoom` 就这样红过两次，单跑全绿。
 
@@ -330,9 +330,12 @@ themeunit  topbar  toplayout  trash  typescale  unit  update  uxaudit  zip  zoom
 | **Electron 升级后 `vf://` 跨源 fetch 被拒**（v1.20.1，Electron 33→45） | Chromium 140+ 只允许"在 CORS 允许列表里"的协议做跨源请求，报错是 `Cross origin requests are only supported for protocol schemes: chrome, chrome-extension, chrome-untrusted, data, http, https`。而缩略图正是靠 `fetch('vf://pic/…')` 拿 Blob 才能"解码即降采样"。**症状极具迷惑性**：页面不报错，只是所有缩略图都不出现 → 网格退化成空瓦片、`naturalWidth` 为 0、`fit` 统计为空、导出报 `no-source`。解法：`registerSchemesAsPrivileged` 的 privileges 加 **`corsEnabled: true`**，并让 `vf://pic` 的响应带匹配的 `Access-Control-Allow-Origin`。**探针必须跟着改**，否则探针与真实协议行为脱节（`secboot` 会逐个检查探针有没有 `corsEnabled`） |
 | **新抽出的主进程模块没进产物**（v1.20.1） | `assemble.js` 里有一份**手写**的 `MAIN_FILES` 清单。漏一个文件时构建照样打印 `OK`、exe 也照样起得来，直到运行时走到那条 `require` 才炸（`Cannot find module './trashlib.js'`），而且**只在用到那条路径时才炸**。解法：`assemble.js` 的 `[1c]` 从 staged 的 `main.js`/`desktop.js` 里把本地 `require` 全抠出来逐个核对，漏一个就**构建失败**；`buildsafe` 套件再核对一遍清单 |
 | **注释里的"反面教材"被当成还在用**（v1.20.1 / v1.20.2，栽过 3 次） | 源级断言直接扫全文时，注释里写着"**绝不能写 `(rec.ts) \| 0`**"、"用 `fs.rmSync` 而不是 `fs.rmdirSync`"、"不加载 `<script>`"，会被判成"还在用旧写法"。三次都是**门禁误红**（不是漏网），但误红一样会让门禁失去信任。解法：扫之前先剥注释 —— 只剥 `/* */` 就够时别顺手剥 `//`：`crashlib.js` 里有 `vf://app/index.html` 这种含 `//` 的字符串，剥行注释会把字符串切断 |
-| **`logs/` 攒到 900MB 后全量回归开始假红**（v1.20.2） | 每个 Electron 探针会新建一个 `ud_*` 用户数据目录（完整 Chromium Cache，单个上百 MB）。攒到 **124 个 / 936MB** 之后再跑全量：耗时从 5 分钟涨到 **30 分钟以上**，并出现成片的"探针无输出"（`未解析到 GRID 输出`）与 `appself` 的 `frameOnTop: false`。**这些全是假红** —— 逐个单跑全绿。判断依据就是**总耗时**：正常 300 秒上下，一旦逼近 10 分钟先别怀疑代码。解法：跑之前 `npm run clean`（930MB 一次清完，全量回到 300 秒 / 554 项全绿） |
+| **`logs/` 攒到 900MB 后全量回归开始假红**（v1.20.2） | 每个 Electron 探针会新建一个 `ud_*` 用户数据目录（完整 Chromium Cache，单个上百 MB）。攒到 **124 个 / 936MB** 之后再跑全量：耗时从 5 分钟涨到 **30 分钟以上**，并出现成片的"探针无输出"（`未解析到 GRID 输出`）与 `appself` 的 `frameOnTop: false`。**这些全是假红** —— 逐个单跑全绿。判断依据就是**总耗时**：正常 300 秒上下，一旦逼近 10 分钟先别怀疑代码。解法：跑之前 `npm run clean`（930MB 一次清完，全量回到 300 秒 / 591 项全绿） |
 | **版本号有两个来源，漂移不报错**（v1.20.2） | exe 的**文件版本**取自 `deploy/electron/package.json`（`assemble.js` 交给 `rcedit`），界面显示与「检查更新」的**当前版本**取自 `js/app.js` 的 `App.VERSION`。改一处忘另一处不会报任何错，后果是**该提示更新时不提示**（拿 1.20.1 去比线上的 1.20.2，永远算出"已是最新"）。解法：`secboot` 四条断言把 `App.VERSION` / 根 `package.json` / `deploy/electron/package.json` / `package-lock.json` 钉成同一个值；反向实验验证过 —— 改回旧版本号会**精确报红一项**，报错信息直接写出 `app=1.20.1 pkg=1.20.2` |
 | **`isAlwaysOnTop()` 偶发返回 false**（v1.20.2，环境差异，**别改代码**） | `appself` 报 `frameOnTop: false`，同一份构建**连跑两次一次红一次绿**。相框窗口用 `alwaysOnTop: true` 硬编码创建，渲染层启动时只**读**（`getAlwaysOnTop`）不写，所以不是代码把钉子拔了 —— 就是 §5.3 第 2 条说的"某些环境里 `setAlwaysOnTop` 静默无效"，只是它**不是每跑必现**。判断方法：看 `snap.pinSet`（false = 命中已知环境差异）而不是看 `frameOnTop`。**没有放宽断言** —— 把门禁改松比偶发红更糟；遇到时单跑确认即可 |
+| **`sendInputEvent` 只发 keyDown，回车不会激活按钮**（v1.20.3） | 探针里"焦点在「取消」上按回车"一直读到 `value=timeout`。查下来 keydown 确实送达（`e.key === 'Enter'`、`defaultPrevented=false`），但按钮没被点击 —— Chromium 的"回车激活当前聚焦按钮"这个默认动作需要**文本输入事件**，`sendInputEvent({type:'keyDown'})` 不带它。**更坑的是它会把后续断言一起带偏**：弹层关不掉 → 焦点陷阱没释放 → 后面灯箱的 Tab/Esc 全乱（表现为 `moved:false`、`escMoved:false`），看着像三个不相干的 bug。解法：`pressKey` 对 `Return` 补一个 `{type:'char'}` 事件（Tab/Escape 不需要）。**改完要重做反向实验** —— 原来那条"绿"是探针没真的按回车 |
+| **校验器用"自己写上去的文件"当证据 = 自证循环**（v1.20.3） | 发布脚本判断"远端那个包是不是本地这一份"，原来是把远端 `.sha256` 资产读回来跟本地摘要比 —— 可那个文件是**我们自己传的**，只能证明那几十字节的文本一致，证明不了 112MB 的 ZIP 传对了（截断、串包、传错构建产物全都照样"通过"）。解法：以 GitHub 自己算的 `asset.digest`（服务器侧字节摘要）为准，`.sha256` 只在拿不到 digest 时降级使用并**如实标注 `via`**。`decide()` 抽成纯函数放进 `test/release.test.js`，重点用例是"digest 说 A、.sha256 说 B → 必须判重传" |
+| **"0 条违规"可能只是"0 个采样"**（v1.20.3） | `uxaudit` 四条断言（对比度/焦点环/命中框/截断）都是"违规清单为空即通过"。探针的选择器一改坏、窗口没渲染完，清单当然是空的 —— 四条全绿，一条也没查。反向实验证实：把 TreeWalker 的过滤器改成恒 `REJECT`，四条断言**依然全绿**。解法：探针每个场景额外报 `scanned`（检查了多少处文字 / 算了多少个焦点环 / 量了多少个命中框 / 扫了多少个可能截断的元素），套件再压总量下限（120 / 250 / 250 / 350）。同一形状的坑还有"探针某一步抛错 → 那段断言静默消失"，用"缺步守卫"统一堵（`zoom` / `pinch` / `topbar` / `sidebar` / `rotpersist` 五处已补） |
 
 > 另外两条**读不到**而非读错的坑（v1.19.0）：
 > `:focus-visible` 在未聚焦时 `outlineStyle === 'none'`，直接读会得到 `clip: 0` 的**假绿**；

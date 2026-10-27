@@ -576,6 +576,80 @@ async function run() {
   })()`);
   console.log('S8 ' + JSON.stringify(step8));
 
+  /* ---- S9 置顶开关（v1.20.3）：必须真的调 IPC ----
+     以前 case 'alwaysOnTop' 只调 applyPinUI()：开关变亮、菜单勾也打上，
+     但窗口没动，要等下次启动才生效。这里断言的是**窗口真的置顶了**。 */
+  const step9 = await win.webContents.executeJavaScript(`(async () => {
+    const A = window.App, S = window.State, N = window.Native;
+    if (!N || !N.canPin) return { skipped: true };
+    const before = await N.getAlwaysOnTop();
+    A.applySetting('alwaysOnTop', true);
+    await new Promise((r) => setTimeout(r, 500));
+    const on = await N.getAlwaysOnTop();
+    A.applySetting('alwaysOnTop', false);
+    await new Promise((r) => setTimeout(r, 500));
+    const off = await N.getAlwaysOnTop();
+    return { skipped: false, before, on, off, setting: S.settings.alwaysOnTop };
+  })()`);
+  console.log('S9 ' + JSON.stringify(step9));
+
+  /* ---- S10 目录读取失败要说出来（v1.20.3）----
+     以前"读不了"和"里面没图"压成同一分支，且提示要求 sources 为空 ——
+     已经打开过一个文件夹之后再打开一个坏路径，界面完全静默。 */
+  const step10 = await win.webContents.executeJavaScript(`(async () => {
+    const before = window.State.sources.length;
+    const n = await window.Loader.fromNative('C:\\\\__atrium_probe_no_such_dir__');
+    await new Promise((r) => setTimeout(r, 250));
+    const live = document.getElementById('a11yLive');
+    return { n, before, after: window.State.sources.length, toast: live ? live.textContent : '' };
+  })()`);
+  console.log('S10 ' + JSON.stringify(step10));
+
+  /* ---- S11 拍摄时间采集不丢条目（v1.20.3）----
+     以前 maybeHarvestShot() 先把**全部**候选标成 _shotTried，再只取前 2000 条
+     送去解析 —— 第 2001 条往后就被永久判了"试过了"，在「拍摄时间」排序里
+     永远沉底且不再重试，界面上看不出任何异常。
+     这里量的是"到底有多少条真的被送去解析过"，不是"有没有盖章"。 */
+  const step11 = await win.webContents.executeJavaScript(`(async () => {
+    const A = window.App, S = window.State, Exif = window.Exif;
+    const N = 2500;
+    const saved = { items: S.items, sortKey: S.settings.sortKey };
+    const fake = [];
+    for (let i = 0; i < N; i++) {
+      fake.push({ id: 'h' + i, name: 'h' + i + '.png', src: 'all', sid: 's0', size: 1,
+        path: 'C:/__atrium_probe_nope__/h' + i + '.png', rel: 'h' + i + '.png', ext: 'png', state: 'idle' });
+    }
+    const batches = [];
+    const orig = Exif.harvestTimes;
+    Exif.harvestTimes = (list) => { batches.push(list.length); return orig.call(Exif, list); };
+    try {
+      S.items = fake;
+      S.touch();                       // viewList 有记忆化，不 touch 拿到的是旧列表
+      S.settings.sortKey = 'shot';
+      A._harvestBusy = false; A._harvestPending = 0;
+      A._view = S.viewList();
+      A.maybeHarvestShot();
+      const firstBatch = fake.filter((m) => m._shotTried).length;
+      for (let i = 0; i < 80 && (A._harvestBusy || A._harvestPending); i++) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return {
+        n: N, batches: batches,
+        firstBatch: firstBatch,
+        untouched: fake.filter((m) => !m._shotTried).length,
+        parsedTotal: batches.reduce((a, b) => a + b, 0),
+        busy: !!A._harvestBusy, pending: A._harvestPending || 0,
+      };
+    } finally {
+      Exif.harvestTimes = orig;
+      S.items = saved.items;
+      S.settings.sortKey = saved.sortKey;
+      S.touch();
+      A._harvestBusy = false; A._harvestPending = 0;
+    }
+  })()`);
+  console.log('S11 ' + JSON.stringify(step11));
+
   app.quit();
 }
 

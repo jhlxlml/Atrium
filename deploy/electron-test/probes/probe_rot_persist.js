@@ -23,7 +23,7 @@ const PICDIR = path.join(__dirname, '..', 'fixtures', '照片夹');
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
 protocol.registerSchemesAsPrivileged([{ scheme: 'vf', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } }]);
-const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.png':'image/png', '.jpg':'image/jpeg', '.gif':'image/gif' };
+const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.png':'image/png', '.jpg':'image/jpeg', '.gif':'image/gif', '.webp':'image/webp', '.bmp':'image/bmp' };
 
 // —— 静音原生通道（本探针只用到 pickExportDir / exportFiles / openPath） ——
 for (const ch of ['vf:trashLog','vf:autoDir','vf:pickDirs','vf:restoreFile','vf:restoreFiles','vf:trashForget','vf:trashClear','vf:pickFolder']) {
@@ -47,6 +47,40 @@ function collect(dir, base) {
 }
 
 const EXPORT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vf-export-'));
+
+/* 造一张 BMP（24 位不压缩）。
+   为什么要专门造：素材夹里全是 PNG，而「烘焙导出的扩展名要跟实际编码一致」
+   这条只有在**源格式 canvas 编不出来**时才看得出来 —— BMP 正是这种，
+   烘焙必须落回 PNG，于是文件名也得从 .bmp 改成 .png。
+   字节布局按 BMP 规范手写，不引外部依赖。 */
+function makeBmp(w, h) {
+  const pad = (4 - ((w * 3) % 4)) % 4;
+  const dataSize = (w * 3 + pad) * h;
+  const buf = Buffer.alloc(54 + dataSize);
+  buf.write('BM', 0, 'ascii');
+  buf.writeUInt32LE(54 + dataSize, 2);
+  buf.writeUInt32LE(54, 10);
+  buf.writeUInt32LE(40, 14);
+  buf.writeInt32LE(w, 18);
+  buf.writeInt32LE(h, 22);          // 正数 = 自下而上
+  buf.writeUInt16LE(1, 26);
+  buf.writeUInt16LE(24, 28);
+  buf.writeUInt32LE(dataSize, 34);
+  buf.writeInt32LE(2835, 38);
+  buf.writeInt32LE(2835, 42);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = 54 + y * (w * 3 + pad) + x * 3;
+      buf[o] = (x * 255 / Math.max(1, w - 1)) | 0;       // B
+      buf[o + 1] = (y * 255 / Math.max(1, h - 1)) | 0;   // G
+      buf[o + 2] = 200;                                   // R
+    }
+  }
+  return buf;
+}
+const BMP_NAME = '竖幅-06.bmp';
+const BMP_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'vf-bake-')), BMP_NAME);
+fs.writeFileSync(BMP_PATH, makeBmp(40, 60));    // 40×60 竖图 → 转 90° 后应成 60×40
 
 app.whenReady().then(async () => {
   // 内存分区：每次运行 localStorage 都是空的，断言可重复。
@@ -111,11 +145,14 @@ app.whenReady().then(async () => {
     A.showGallery(); A.renderSources();
     document.getElementById('topbar').hidden = false;
     const m = S.items.find((x) => x.path === ${JSON.stringify(portrait.abs)}) || S.items[0];
-    window.__probe = { target: m };
-    return { items: S.items.length, target: m && m.name };
+    const bmp = S.items.find((x) => x.path === ${JSON.stringify(BMP_PATH)}) || null;
+    window.__probe = { target: m, bmp: bmp };
+    return { items: S.items.length, target: m && m.name, bmp: bmp && bmp.name };
   })()`;
 
   const recs = files.map((f) => ({ p: f.abs, n: path.basename(f.abs), rel: f.rel, size: f.size, mtime: f.mtime }));
+  // 多挂一张 BMP：它不参与旋转持久化的断言，只用来测「烘焙落盘的文件名」
+  recs.push({ p: BMP_PATH, n: BMP_NAME, rel: BMP_NAME, size: fs.statSync(BMP_PATH).size, mtime: Date.now() });
 
   /* =================== 第一次载入 =================== */
   await w.loadURL('vf://app/index.html');
@@ -177,15 +214,16 @@ app.whenReady().then(async () => {
 
   /* --- 烘焙：竖图转 90° 后应是横图（宽高对调） --- */
   const D = await exec(`(async () => {
-    const L = window.Lightbox, A = window.App, S = window.State;
+    const A = window.App, S = window.State;
     const meta = window.__probe.target;
-    const b64 = await A._bakeRotation(meta, 90);
-    if (!b64) return { ok: false };
-    const url = 'data:image/png;base64,' + b64;
+    const bake = await A._bakeRotation(meta, 90);
+    if (!bake || !bake.b64) return { ok: false };
+    const mime = bake.ext === 'jpg' ? 'image/jpeg' : bake.ext === 'webp' ? 'image/webp' : 'image/png';
+    const url = 'data:' + mime + ';base64,' + bake.b64;
     const dim = await new Promise((res) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = () => res({ w: 0, h: 0 }); im.src = url; });
-    window.__probe.baked = b64;
-    return { ok: true, b64len: b64.length, bakedW: dim.w, bakedH: dim.h,
-             srcW: meta.ratio ? 0 : 0, rot: S.rotationOf(meta) };
+    window.__probe.baked = bake.b64;
+    return { ok: true, ext: bake.ext, b64len: bake.b64.length, bakedW: dim.w, bakedH: dim.h,
+             rot: S.rotationOf(meta) };
   })()`);
 
   /* --- 真实 IPC 导出：原样复制 + 落盘烘焙图 --- */
@@ -217,6 +255,27 @@ app.whenReady().then(async () => {
       exporting: !!A._exporting,            // 结束后必须复位，否则后续导出会被自己挡住
       ms: Date.now() - t0,
     };
+  })()`);
+
+  /* --- E3. 源格式 canvas 编不出来（BMP）→ 烘焙落回 PNG，文件名必须跟着改 ---
+     只看「文件能不能打开」不够：名字叫 .bmp、内容是 PNG 的文件，读字节也是能读的，
+     可用户双击时系统按扩展名挑解码器，直接报「不支持」。所以这里量的是
+     **文件名后缀** 与 **文件头魔数** 是否一致。 */
+  const E3 = await exec(`(async () => {
+    const A = window.App, S = window.State;
+    const m = window.__probe.bmp;
+    if (!m) return { skipped: true };
+    const readLs = () => { try { return JSON.parse(localStorage.getItem('viewfinder.rot.v1') || '{}'); } catch (e) { return {}; } };
+    const lsBefore = Object.keys(readLs()).length;      // 此刻目标图那条 90° 还在，所以不是 0
+    S.setRotation(m, 90);
+    await A.exportSelected([m]);
+    const rot = S.rotationOf(m);
+    S.setRotation(m, 0);                       // 收尾：别把记录留到后面的「转满一圈」断言里
+    S.flushRotations();
+    const ls = readLs();
+    return { skipped: false, name: m.name, ext: m.ext, rot: rot,
+             bmpRotAfter: S.rotationOf(m), lsBefore: lsBefore, lsKeys: Object.keys(ls).length,
+             leaked: Object.keys(ls).some((k) => k.indexOf('竖幅-06') >= 0) };
   })()`);
 
   /* --- 转满一圈回到 0° → 记录应被删除 --- */
@@ -267,10 +326,24 @@ app.whenReady().then(async () => {
   const shot = await w.webContents.capturePage({ x: 0, y: 0, width: 1400, height: 700 });
   fs.writeFileSync(path.join(OUT, 'rot-persist.png'), shot.toPNG());
 
+  /* --- 落盘结果：文件名后缀 vs 文件头魔数 --- */
+  const BAKE = { skipped: !E3 || !!E3.skipped, hit: [], out: null, magic: null, stray: [], dim: null };
+  if (!BAKE.skipped) {
+    BAKE.hit = fs.readdirSync(EXPORT_DIR).filter((n) => n.indexOf('竖幅-06') === 0);
+    BAKE.stray = BAKE.hit.filter((n) => /\.bmp$/i.test(n));         // 沿用原名 = 错
+    BAKE.out = BAKE.hit.filter((n) => /\.png$/i.test(n))[0] || null;
+    if (BAKE.out) {
+      const b = fs.readFileSync(path.join(EXPORT_DIR, BAKE.out));
+      BAKE.magic = b.slice(1, 4).toString('ascii') === 'PNG' ? 'png'
+        : (b[0] === 0xFF && b[1] === 0xD8 ? 'jpeg' : 'other');
+      if (BAKE.magic === 'png' && b.length > 24) BAKE.dim = { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+    }
+  }
+
   console.log('RP ' + JSON.stringify({
     exportDir: EXPORT_DIR,
     portrait: { name: path.basename(portrait.abs), path: portrait.abs, size: portrait.size },
-    A: A, B0: B0, gotNw: gotNw, B1: B1, C: C, D: D, E: E, E2: E2,
+    A: A, B0: B0, gotNw: gotNw, B1: B1, C: C, D: D, E: E, E2: E2, E3: E3, BAKE: BAKE,
     F1: F1, F2: F2, beforeReload: beforeReload,
     G: { G0: G0, G1: G1, G2: G2, G3: G3 },
   }));

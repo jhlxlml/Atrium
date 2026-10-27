@@ -16,7 +16,10 @@
    幂等：若该 tag 已有 release，直接复用它。**但"已有同名资产"不等于"可以跳过"**：
    v1.20.0 之前只比对文件大小，于是"上传被截断但长度恰好一样"、"上次传的是另一份
    构建产物"这两种情况都会被安静地当成"已经传好了"。
-   现在比对 **SHA-256**，并且把校验和作为 `.sha256` 资产一起发布（下载者能自己验）。
+   现在比对 **SHA-256**，依据是 GitHub 自己算的资产 `digest` 字段（服务器侧字节），
+   而不是我们自己传上去的 `.sha256` 文件 —— 后者是自证循环，只能证明那份文本与本地
+   一致，证明不了 ZIP 传对了（v1.20.3 修）。`.sha256` 仍然作为资产一起发布，
+   下载者可以自己验；只是它不再充当完整性证据。
    已公开的 release 若内容不一致，**直接报错退出**而不是悄悄替换 ——
    换掉一个已经有人下载过的发布包属于必须由人决定的事。
 
@@ -34,6 +37,8 @@ const DRY = process.argv.includes('--dry');
 const REPO = 'jhlxlml/Atrium';
 const TOKEN = process.env.GH_TOKEN || '';
 const API = 'https://api.github.com';
+/* 判定逻辑（纯函数）单独放在 releaselib.js，好让它能被 test/release.test.js 直接测 */
+const { parseDigest, decide } = require('./releaselib.js');
 
 const VER = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const TAG = 'v' + VER;
@@ -169,7 +174,11 @@ async function downloadAssetText(id) {
      不能只看"同名资产存在"或"大小一样"：
        · 传输被截断但长度恰好相同 → 旧的跳过逻辑会当成传好了；
        · 上次传的是另一份构建产物 → 同样被跳过，且对外已经能下载。
-     判定依据是 .sha256 资产里的十六进制摘要（回读一次，几十字节）。 */
+     **证据必须是服务器侧算的**：GitHub 会给每个上传的资产一个 `digest`
+     （sha256:…），那是它收到字节后自己算的，不经过我们任何一行代码。
+     早期版本拿"自己传上去的 .sha256 文件"跟本地摘要比 —— 那是自证循环：
+     只能证明那份文本与本地一致，证明不了那个 112 MB 的 ZIP 传对了。
+     .sha256 资产仍然照发（给下载者用），但不再充当完整性证据。 */
   const assetsUrl = API + '/repos/' + REPO + '/releases/' + rel.id + '/assets';
   const existing = await api('GET', assetsUrl);
   const byName = (n) => existing.filter((a) => a.name === n)[0] || null;
@@ -178,17 +187,24 @@ async function downloadAssetText(id) {
 
   let needUpload = true;
   let reason = '资产还不存在';
-  if (oldZip && oldSha) {
-    const remoteHex = (String(await downloadAssetText(oldSha.id)).split(/\s+/)[0] || '').toLowerCase();
-    if (remoteHex === zipSha && oldZip.size === zipSize) {
-      needUpload = false;
-      console.log('· 资产已存在且 SHA-256 一致（' + zipSha.slice(0, 16) + '…），跳过上传');
-    } else {
-      reason = '内容不一致（远端 ' + (remoteHex.slice(0, 16) || '无法解析') + '… / 本地 '
-        + zipSha.slice(0, 16) + '…）';
+  let via = 'none';
+  if (!oldZip) {
+    needUpload = true;
+    reason = '资产还不存在';
+  } else if (!oldSha) {
+    needUpload = true;
+    reason = '资产不完整（缺 ' + ASSET_SHA_NAME + '）';
+  } else {
+    /* 只有 digest 拿不到时才去读 .sha256 —— 那次读回是几十字节，很便宜 */
+    const shaText = parseDigest(oldZip) ? '' : await downloadAssetText(oldSha.id);
+    const v = decide({ localHex: zipSha, localSize: zipSize, asset: oldZip, shaText: shaText });
+    needUpload = v.needUpload;
+    reason = v.reason;
+    via = v.via;
+    if (!needUpload) {
+      console.log('· 资产已存在且 SHA-256 一致（' + zipSha.slice(0, 16) + '…），跳过上传'
+        + (via === 'digest' ? '  [依据：GitHub 侧 digest]' : '  [降级：无 digest，依据 .sha256 文件]'));
     }
-  } else if (oldZip || oldSha) {
-    reason = '资产不完整（缺 ' + (oldZip ? ASSET_SHA_NAME : ASSET_NAME) + '）';
   }
 
   if (needUpload) {
@@ -220,7 +236,16 @@ async function downloadAssetText(id) {
       throw new Error('上传后大小不一致！本地 ' + zipSize + ' / 远端 ' + asset.size
         + '（release 仍为草稿，请重试）');
     }
-    console.log('  → 大小校验通过：' + mb(asset.size));
+    /* 服务器侧摘要：GitHub 收到字节后自己算的，这是"传对了"的**唯一**独立证据。
+       拿不到就明说降级 —— 只凭大小相同放行是自欺（截断 + 补零能凑出同样长度）。 */
+    const upDigest = parseDigest(asset);
+    if (upDigest && upDigest !== zipSha) {
+      fs.rmSync(shaTmp, { force: true });
+      throw new Error('上传后摘要不一致！本地 ' + zipSha + ' / GitHub 侧 ' + upDigest
+        + '（release 仍为草稿，请重试）');
+    }
+    if (upDigest) console.log('  → 大小与 SHA-256 均校验通过：' + mb(asset.size) + ' / ' + upDigest.slice(0, 16) + '…');
+    else console.log('  → 大小校验通过：' + mb(asset.size) + '（注意：GitHub 未返回 digest，摘要未获独立复核）');
 
     const shaAsset = await uploadAsset(upUrl, shaTmp, ASSET_SHA_NAME, 'text/plain');
     fs.rmSync(shaTmp, { force: true });

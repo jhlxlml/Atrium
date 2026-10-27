@@ -116,6 +116,29 @@ const H = (reason, code) => L.crashPageHtml(reason, code);
   ok('有标题 <h1>（读屏与视觉都需要一个落点）', /<h1>[^<]+<\/h1>/.test(html));
 }
 
+/* ---------- 5b. 加载失败（v1.20.3）：与"崩溃"要分开说 ----------
+   did-fail-load 以前只写日志，用户看到的是纯白窗口。现在也走兜底页，
+   但标题必须换 —— "界面已停止响应"用在"文件没加载出来"上是错的诊断。 */
+{
+  const html = L.crashPageHtml('load-failed', undefined, { detail: 'ERR_FILE_NOT_FOUND (-6)' });
+  ok('加载失败有专属标题（不是"停止响应"）',
+    /<h1>界面没能加载出来<\/h1>/.test(html), html.slice(0, 0));
+  ok('加载失败的原因可读', html.indexOf('界面文件没能加载出来') >= 0);
+  ok('把 Electron 的错误码与描述带出来（排查靠它）',
+    html.indexOf('ERR_FILE_NOT_FOUND (-6)') >= 0);
+  ok('加载失败时不该出现"退出码"字样（那是崩溃才有的）', html.indexOf('退出码') < 0);
+  ok('未知 reason 走"界面进程已退出"兜底，不冒充加载失败',
+    /界面进程已退出（weird）/.test(L.crashPageHtml('weird', undefined, { detail: 'x' })));
+
+  /* 反向：detail 来自外部（Electron 的错误描述），必须转义。
+     不转义的话一个带 <script> 的错误描述就能在兜底页里执行。 */
+  const evil = L.crashPageHtml('load-failed', undefined, { detail: '<script>alert(1)</script>' });
+  ok('detail 里的尖括号被转义（不生成 script 标签）',
+    evil.indexOf('<script>') < 0 && evil.indexOf('&lt;script&gt;') >= 0);
+  ok('detail 转义后整页仍不加载任何脚本', !/<script/i.test(evil));
+  ok('给了 detail 就不该再出现空括号', evil.indexOf('（）') < 0);
+}
+
 /* ---------- 6. 源码级：main.js 真的用上了这个模块 ---------- */
 {
   const main = fs.readFileSync(path.join(ROOT, 'deploy', 'electron', 'main.js'), 'utf8');
@@ -125,6 +148,15 @@ const H = (reason, code) => L.crashPageHtml(reason, code);
     !/function crashPageHtml\(/.test(main));
   ok('assemble.js 的 MAIN_FILES 收录了 crashlib.js（否则产物里没有它）',
     /'crashlib\.js'/.test(asm));
+  /* v1.20.3：did-fail-load 必须接兜底页，且三种情况要放行 */
+  ok('did-fail-load 接上了兜底页（不再是"只写日志"）',
+    /did-fail-load[\s\S]{0,900}?showCrashFallback\('load-failed'/.test(main));
+  ok('did-fail-load 放行 ERR_ABORTED(-3)（正常导航打断不是故障）',
+    /did-fail-load[\s\S]{0,400}?code === -3/.test(main));
+  ok('did-fail-load 只处理主框架（子框架失败与主界面无关）',
+    /did-fail-load[\s\S]{0,400}?isMainFrame === false/.test(main));
+  ok('did-fail-load 不套娃（已经在兜底页上时不再导航）',
+    /did-fail-load[\s\S]{0,600}?data:text\/html/.test(main));
 }
 
 console.log('崩溃兜底页：' + pass + ' 项通过，' + fail + ' 项失败');

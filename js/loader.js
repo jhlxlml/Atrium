@@ -445,7 +445,25 @@
       try {
         State.bus.emit('index-start', { via: 'native' });
         const r = await N.loadDir(dirPath);
-        if (!r || !r.ok || !r.files || !r.files.length) {
+        /* 「读失败」与「里面没有图片」是两件事，必须分开。
+           以前两者压成同一分支、提示还额外要求 `State.sources.length === 0`，
+           于是"已经打开过一个文件夹之后，再打开一个没权限 / 已被删除 / 网络盘掉线
+           的目录"是**完全静默**的：不报错、不提示，图库继续显示上一个文件夹的内容。
+           用户只会觉得"点错了"或"按钮坏了"，而那是一次被吞掉的失败。 */
+        if (!r || r.ok !== true) {
+          State.bus.emit('index-done', { via: 'native', folderName: null, count: 0 });
+          if (!silent && global.App && global.App.toast) {
+            const code = (r && r.reason) || 'ipc';
+            const why = {
+              ENOENT: '目录不存在', EACCES: '没有访问权限', EPERM: '没有访问权限',
+              ENOTDIR: '这不是一个文件夹', 'bad-path': '路径无效',
+              'not-dir': '这不是一个文件夹', ipc: '与主进程通信失败',
+            }[code] || ('读取失败：' + code);
+            global.App.toast('打开文件夹失败 —— ' + why, { urgent: true });
+          }
+          return 0;
+        }
+        if (!r.files || !r.files.length) {
           State.bus.emit('index-done', { via: 'native', folderName: null, count: 0 });
           if (!silent && global.App && State.sources.length === 0) {
             if (global.App.toast) global.App.toast('该文件夹里没有可显示的图片');

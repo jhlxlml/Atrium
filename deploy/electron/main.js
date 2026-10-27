@@ -482,17 +482,20 @@ function wireIpc() {
   });
 
   ipcMain.handle('vf:loadDir', async (e, dir) => {
-    if (!dir || typeof dir !== 'string') return { ok: false };
+    /* 失败要带 reason：渲染层必须能区分"读不了"与"里面没图"。
+       以前这里一律 `{ok:false}`，渲染层又把它和空目录压成同一分支 ——
+       于是打开一个没权限 / 已删除的目录时界面毫无反应。 */
+    if (!dir || typeof dir !== 'string') return { ok: false, reason: 'bad-path' };
     try {
       const st = await fs.stat(dir);
-      if (!st.isDirectory()) return { ok: false };
+      if (!st.isDirectory()) return { ok: false, reason: 'not-dir' };
       const files = await listImages(dir);
       /* 授权 vf://pic 读这个目录 —— 这是**唯一**的授权入口，
          与"用户真的打开过这个目录"严格对应。 */
       picAuth.add(dir);
       return { ok: true, name: path.basename(dir), files };
     } catch (err) {
-      return { ok: false };
+      return { ok: false, reason: (err && err.code) || 'read-failed' };
     }
   });
 
@@ -1301,11 +1304,12 @@ function createWindow() {
    放行 vf://app，所以不必为它开例外）。页面本身没有脚本，也就拿不到
    window.vfNative —— 即便拿到了，IPC 的 sender 校验也会因为文档不是 vf://app/
    而全部拒绝。 */
-function showCrashFallback(reason, exitCode) {
+function showCrashFallback(reason, exitCode, detail) {
   if (!mainWin || mainWin.isDestroyed()) return;
-  trace('crash-fallback ' + reason);
+  trace('crash-fallback ' + reason + (detail ? ' ' + detail : ''));
   try {
-    const url = 'data:text/html;charset=utf-8,' + encodeURIComponent(crashLib.crashPageHtml(reason, exitCode));
+    const url = 'data:text/html;charset=utf-8,'
+      + encodeURIComponent(crashLib.crashPageHtml(reason, exitCode, detail ? { detail: detail } : null));
     mainWin.webContents.loadURL(url).catch((e) => {
       trace('crash-fallback-load-failed ' + ((e && e.message) || e));
     });
@@ -2143,7 +2147,20 @@ if (!gotLock) {
     createWindow();
     trace('window-created');
     mainWin.webContents.on('render-process-gone', (e, d) => trace('render-gone reason=' + d.reason + ' exit=' + d.exitCode));
-    mainWin.webContents.on('did-fail-load', (e, code, desc) => trace('did-fail-load code=' + code + ' ' + desc));
+    /* 主框架没加载出来 = 用户看到一块**纯白窗口**，没有任何提示与入口。
+       以前这里只往日志写一行，用户那边就是"打开就白屏，也不知道是不是还在加载"。
+       现在接兜底页：至少告诉他发生了什么、以及点哪里能重来。
+       三种情况要放行（接了反而更糟）：
+         · code -3 (ERR_ABORTED)：正常导航被新导航打断，页面本身没坏；
+         · 子框架失败：内嵌页/图片请求挂了跟主界面无关；
+         · 已经在兜底页上：再套一层就成了递归。 */
+    mainWin.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
+      trace('did-fail-load code=' + code + ' ' + desc + ' url=' + url + ' main=' + isMainFrame);
+      if (isMainFrame === false) return;
+      if (code === -3) return;
+      if (String(url || '').indexOf('data:text/html') === 0) return;
+      showCrashFallback('load-failed', undefined, desc + ' (' + code + ')');
+    });
     // 页面就绪 → 把排队的命令（JumpList 任务）放出去
     mainWin.webContents.on('did-finish-load', () => { trace('did-finish-load'); flushCommands(); });
     mainWin.on('closed', () => trace('window-closed'));

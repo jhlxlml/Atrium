@@ -61,6 +61,12 @@
       this.infoBody = Util.$('#lbInfoBody');
       this.rotRBtn = Util.$('#lbRotR');
       this.wheelBtn = Util.$('#lbWheel');
+      /* v1.20.3：这一行以前**漏了**。`#lbDel` 在 index.html 里存在、可点、可聚焦、
+         标题还写着「删除（Delete）」，但 `this.delBtn` 从未被赋值，于是下面
+         `if (this.delBtn)` 的绑定永远不执行 —— 按钮和 Delete 键都是死的，
+         按下去没有任何反应也没有提示。门禁只断言了"按钮存在且可聚焦"，
+         所以一直没红。 */
+      this.delBtn = Util.$('#lbDel');
       this.fsSupported = !!(document.fullscreenEnabled);
 
       Util.$('#lbClose').addEventListener('click', () => this.close());
@@ -851,6 +857,12 @@
         case 'h': case 'H': this.toggleStrip(); break;
         case 'p': case 'P': this.togglePlay(); break;
         case 'r': case 'R': this.rotate(e.shiftKey ? -1 : 1); break;
+        /* Delete / Backspace：删除当前这张。按钮的 title 一直写着「删除（Delete）」，
+           但这里从来没有这个分支 —— 承诺的快捷键其实不存在。 */
+        case 'Delete': case 'Backspace':
+          e.preventDefault();
+          if (this.onDelete && this.meta) this.onDelete(this.meta);
+          break;
         case 'z': case 'Z': this.resetRot(); break;   // 清除这张图的旋转记录（P1-4）
         case 'w': case 'W': this.toggleWheel(); break;
         case '+': case '=': e.preventDefault(); { const c = this._center(); this.zoomAt(1.4, c.x, c.y); } break;

@@ -160,6 +160,13 @@ function verifyZip(zipPath, opts) {
     const lName = z.slice(lho + 30, lho + 30 + lNameLen).toString('utf8');
     if (lName !== rec.name) d.why.push(`条目名不一致 本地="${lName}" 中央="${rec.name}"`);
 
+    /* 本地头与中央目录是同一份元数据的两处副本，任何一处对不上都说明包被动过手脚
+       或写入器有 bug。**这里必须显式判负**：原来只往 why 里记一句、不碰 d.ok，
+       于是"本地头被改坏、中央目录与数据都正确"的包会一路走到最后被判通过
+       （解压后的 CRC 与中央目录是相符的，它确实能查出来内容没问题）。
+       7-Zip 遇到这种包会直接报错，用户那边就是"下载完解不开"。 */
+    if (d.why.length) d.ok = false;
+
     const dataStart = lho + 30 + lNameLen + lExtraLen;
     const dataEnd = dataStart + rec.csize;
     if (dataEnd > cdOff) { d.ok = false; d.why.push('数据区越界，压到中央目录上'); rep.crcBad++; rep.details.push(d); continue; }

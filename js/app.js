@@ -25,9 +25,22 @@
      是给「内容区 ≥ 680px 还能排三列」留的余量。 */
   const NARROW_SIDE_MQ = '(max-width: 940px)';
 
+  /* 烘焙导出用哪种编码。canvas 只能编这三种，其余源格式（gif / bmp / avif /
+     heic / tif / svg / ico…）一律落回 PNG —— 关键是**返回的扩展名要跟着走**，
+     否则会写出「名字叫 x.bmp、内容其实是 PNG」的文件，看图软件按扩展名选
+     解码器，双击直接打不开。 */
+  const BAKE_FORMATS = {
+    jpg: { mime: 'image/jpeg', ext: 'jpg', q: 0.92 },
+    jpeg: { mime: 'image/jpeg', ext: 'jpg', q: 0.92 },
+    jfif: { mime: 'image/jpeg', ext: 'jpg', q: 0.92 },
+    png: { mime: 'image/png', ext: 'png' },
+    webp: { mime: 'image/webp', ext: 'webp', q: 0.92 },
+    __png: { mime: 'image/png', ext: 'png' },
+  };
+
   const App = {
     /* 版本号唯一来源：界面（设置面板底部）与构建脚本共用，报障时可一眼确认版本 */
-    VERSION: '1.20.2',
+    VERSION: '1.20.3',
     el: {},
     resizeToken: null,
     /** 弹层标题 id 的自增序号（可及名称用，见 modal()） */
@@ -297,7 +310,22 @@
 
       /* --- 窗口（仅桌面版；浏览器模式按钮不出现，这里空转） --- */
       case 'alwaysOnTop':
-        this.applyPinUI();
+        /* 这里曾经只有 `this.applyPinUI()` —— 一个**假开关**：用户拨开后
+           开关变亮、原生菜单的勾也一起打上，但窗口根本没动，要等下次启动
+           由 init() 推给主进程才真的生效。菜单勾选跟着一起撒谎，用户更难自查。
+           现在和顶栏按钮走同一条 IPC，并以主进程回传的**实际生效值**校正
+           （某些环境会拒绝置顶，那时要如实退回，不能显示成"已置顶"）。 */
+        if (global.Native && global.Native.canPin && global.Native.setAlwaysOnTop) {
+          global.Native.setAlwaysOnTop(!!val).then((real) => {
+            if (typeof real === 'boolean' && real !== !!val) {
+              State.setSetting('alwaysOnTop', real);
+              this.toast(real ? '已置顶窗口' : '未能置顶：系统未接受该请求', { urgent: !real });
+            }
+            this.applyPinUI();
+          }).catch(() => this.applyPinUI());
+        } else {
+          this.applyPinUI();
+        }
         break;
 
       /* --- 相框（v1.11.0 起为正式功能；浏览器模式退化为页内浮层） --- */
@@ -978,7 +1006,8 @@
     /**
      * 把所选图片导出到用户指定目录。
      * - 未旋转过：桌面版逐字节复制原文件（无损、极快）；浏览器版直接另存原文件。
-     * - 旋转过：用 Canvas 把朝向“烘焙”进像素后另存（浏览器版按原扩展名，JPEG 质量 0.92）。
+     * - 旋转过：用 Canvas 把朝向“烘焙”进像素后另存（编码格式见 BAKE_FORMATS，
+     *   文件名跟着**实际编码**改，不沿用原扩展名）。
      * 大图烘焙有内存上限保护，超限则跳过并提示。
      */
     async exportSelected(list) {
@@ -1001,11 +1030,15 @@
           const rot = State.rotationOf(m);
           // ---- 需要烘焙旋转 ----
           if (rot) {
-            const data = await this._bakeRotation(m, rot);
-            if (!data) { heavy++; fail++; continue; }
+            const bake = await this._bakeRotation(m, rot);
+            if (!bake) { heavy++; fail++; continue; }
             baked++;
-            if (desktop) payload.push({ src: null, name: m.name || 'image', dataB64: data });
-            else { this._saveDataURL(data, m); ok++; }
+            /* 名字必须跟着**实际编码**走：gif/bmp/avif/heic 这些 canvas 编不出来的
+               源格式会落回 PNG，此时若还沿用原扩展名，就会写出「文件叫 x.bmp、
+               内容是 PNG」——双击打不开，而且用户会以为是我们把图弄坏了。 */
+            const outName = this._bakedName(m.name, bake.ext);
+            if (desktop) payload.push({ src: null, name: outName, dataB64: bake.b64 });
+            else { this._saveDataURL(bake.b64, outName, bake.ext); ok++; }
             continue;
           }
           // ---- 原样导出 ----
@@ -1059,8 +1092,9 @@
     },
 
     /**
-     * 把 meta 的像素按 rot（顺时针 0/90/180/270）烘焙，返回不带前缀的 base64；
-     * 失败或超出内存上限返回 null。JPEG 源按 0.92 质量重编码，其余保持 PNG。
+     * 把 meta 的像素按 rot（顺时针 0/90/180/270）烘焙。
+     * 返回 { b64, ext } —— ext 是**实际编码出来的**格式，调用方必须拿它去定文件名；
+     * 失败或超出内存上限返回 null。
      */
     async _bakeRotation(meta, rot) {
       const MAX_PX = 50e6;          // 5000 万像素上限（约 8K×6K），再大不做烘焙
@@ -1079,12 +1113,23 @@
         ctx.rotate((rot * Math.PI) / 180);
         ctx.drawImage(bmp, -iw / 2, -ih / 2);
         if (bmp.close) bmp.close();
-        const ext = (meta.ext || '').toLowerCase();
-        const jpeg = ext === 'jpg' || ext === 'jpeg' || ext === 'jfif' || ext === '';
-        const url = cv.toDataURL(jpeg ? 'image/jpeg' : 'image/png', jpeg ? 0.92 : undefined);
+        const fmt = BAKE_FORMATS[(meta.ext || '').toLowerCase()] || BAKE_FORMATS.__png;
+        const url = cv.toDataURL(fmt.mime, fmt.q);
+        /* 内核可能不支持某种编码（老版本 / 裁剪版），toDataURL 会**静默回落成 PNG**
+           而不报错 —— 所以以返回的 MIME 为准，不信我们请求的那个。 */
+        const real = (/^data:([^;,]+)/.exec(url) || [])[1] || '';
+        const ext = real === 'image/jpeg' ? 'jpg' : real === 'image/webp' ? 'webp' : 'png';
         const i = url.indexOf(',');
-        return i > 0 ? url.slice(i + 1) : null;
+        return i > 0 ? { b64: url.slice(i + 1), ext: ext } : null;
       } catch (e) { return null; }
+    },
+
+    /** 把 name 的扩展名换成实际编码格式（`日落.webp` + png → `日落.png`） */
+    _bakedName(name, ext) {
+      const base = String(name || 'image');
+      const dot = base.lastIndexOf('.');
+      const stem = dot > 0 ? base.slice(0, dot) : base;
+      return stem + '.' + (ext || 'png');
     },
 
     /** 取「原图」URL：优先磁盘流（桌面版），否则用 File 对象的临时 URL */
@@ -1121,11 +1166,10 @@
       this._anchorSave(url, name || file.name || 'image');
       setTimeout(() => global.URL.revokeObjectURL(url), 30000);
     },
-    /** 浏览器版：另存 dataURL（base64 无前缀） */
-    _saveDataURL(b64, meta) {
-      const ext = (meta.ext || 'png').toLowerCase();
-      const mime = (ext === 'jpg' || ext === 'jpeg' || ext === 'jfif') ? 'image/jpeg' : 'image/' + ext;
-      this._anchorSave('data:' + mime + ';base64,' + b64, meta.name || 'image');
+    /** 浏览器版：另存 dataURL（base64 无前缀）。ext 是**实际编码**，不是原扩展名 */
+    _saveDataURL(b64, name, ext) {
+      const mime = ext === 'jpg' ? 'image/jpeg' : (ext === 'webp' ? 'image/webp' : 'image/png');
+      this._anchorSave('data:' + mime + ';base64,' + b64, name || 'image');
     },
     _anchorSave(href, name) {
       const a = document.createElement('a');
@@ -2051,8 +2095,13 @@
         };
         // 捕获阶段拦截：避免 Esc 同时触发灯箱关闭等其它快捷键
         const onKey = (e) => {
-          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
-          else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); done(true); }
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); return; }
+          /* Enter **不在这里拦**，交给焦点所在按钮的原生激活行为。
+             这里曾经是无条件 `done(true)` —— 而默认焦点在「取消」上，于是
+             "按回车想取消"变成了"按回车执行删除"。原生行为天生就是
+             "回车 = 激活当前聚焦的那个按钮"，正是我们要的语义，
+             也不必再判焦点（判错了反而会再错一次）。
+             Esc 仍然单独处理：它是"取消"的快捷键，与焦点无关。 */
         };
         wrap.querySelector('.vf-modal-bg').addEventListener('click', () => done(false));
         /* 这里必须用 single 判断，**不能**用 noBtn.isConnected ——
@@ -2202,16 +2251,21 @@
       if (State.settings.sortKey !== 'shot') return;
       const metas = this._view.filter((m) => !m.bad && m.shotTs === undefined && !m._shotTried);
       if (!metas.length) return;
-      for (const m of metas) m._shotTried = true;
-      if (this._harvestBusy) { this._harvestPending = (this._harvestPending || 0) + metas.length; return; }
-      this._harvestBusy = true;
       const list = metas.slice(0, 2000); // 单轮最多 2000，防止超大目录一次性排队
+      /* 只有**真正提交出去**的这一批才盖章。
+         原来的写法先把全部候选都标成"已尝试"、再只取前 2000 条去解析 ——
+         第 2001 条往后就被永久判了"试过了"，在「拍摄时间」排序里永远沉在
+         "无时间"那一段，而且再也不会被重试（页面上看不出任何异常）。 */
+      if (this._harvestBusy) { this._harvestPending = (this._harvestPending || 0) + list.length; return; }
+      for (const m of list) m._shotTried = true;
+      this._harvestBusy = true;
       global.Exif.harvestTimes(list).then(() => {
         this._harvestBusy = false;
         if (this._harvestPending) {
-          const n = this._harvestPending; this._harvestPending = 0;
+          this._harvestPending = 0;
+          /* 还有没送出去的 —— 重新走一遍 applyView，它会再调一次本函数，
+             把下一批 2000 条接上。每轮都盖一批章，所以一定会收敛。 */
           if (State.settings.sortKey === 'shot') this.applyView(true);
-          void n;
           return;
         }
         if (State.settings.sortKey === 'shot') this.applyView(false);

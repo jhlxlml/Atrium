@@ -301,6 +301,27 @@ function reportFailure(name, r) {
 let failed = 0;
 
 /* ---------- Electron 便携版 ---------- */
+/**
+ * 交付包里必须存在的条目。允许清单只回答"能不能进包"，回答不了"该有的在不在" ——
+ * 一棵没有 resources/app 的树照样能通过清单校验（ZIP 里还有 60 多个运行时条目、
+ * CRC 全对），而 Electron 会回落到 default_app.asar，用户双击看到的是默认应用。
+ * 抽成纯函数是为了让 packlist 套件能直接验（含反向：删掉 main.js 必须被点名）。
+ */
+const REQUIRED_ENTRIES = [
+  'Atrium.exe',
+  'resources/app/main.js',
+  'resources/app/preload.js',
+  'resources/app/index.html',
+  'resources/app/package.json',
+  'resources/app/js/app.js',
+  'resources/app/css/main.css',
+];
+
+function missingRequired(entries) {
+  const have = new Set((entries || []).map((e) => String(e && e.name).replace(/\\/g, '/')));
+  return REQUIRED_ENTRIES.filter((n) => !have.has(n));
+}
+
 function packElectron() {
   const appDir = path.join(ROOT, 'deploy', 'dist-electron', 'Atrium_Electron版');
   if (!fs.existsSync(appDir)) {
@@ -333,6 +354,21 @@ function packElectron() {
     process.exit(1);
   }
 
+  /* 必需条目：允许清单只回答"这个文件能不能进包"，回答不了"该有的东西在不在"。
+     一棵没有 resources/app 的树照样能通过清单校验：ZIP 里还有 60 多个运行时条目、
+     CRC 全对、打印 OK —— 而 Electron 会回落到 resources/default_app.asar，
+     用户双击看到的是 Electron 默认应用。构建被中途打断（assemble 的 /MIR 会先
+     清掉旧 app 再镜像新的）正好会留下这种树，所以这道闸必须单独加。 */
+  const miss = missingRequired(entries);
+  if (miss.length) {
+    console.error('× 产物缺必需条目，拒绝打包：');
+    for (const n of miss) console.error('   · ' + n);
+    console.error('  这棵树不完整（多半是构建被中途打断）。先跑一次 npm run build，');
+    console.error('  别对半截产物打包 —— exe 会回落到 default_app.asar，用户看到的是');
+    console.error('  Electron 默认应用，而 ZIP 本身 CRC 全对。');
+    process.exit(1);
+  }
+
   const zip = path.join(ROOT, 'Atrium_Electron版_v' + VER + '.zip');
   const r = writeZip(zip, entries);
   if (!r.ok) { reportFailure('便携版', r); failed++; }
@@ -349,4 +385,4 @@ if (require.main === module) {
   if (failed) process.exit(1);
 }
 
-module.exports = { collectEntries, isSensitive, TOP_FILE, TOP_DIR, RES_ENTRY, APP_FILE, APP_DIR };
+module.exports = { collectEntries, isSensitive, missingRequired, REQUIRED_ENTRIES, TOP_FILE, TOP_DIR, RES_ENTRY, APP_FILE, APP_DIR };
