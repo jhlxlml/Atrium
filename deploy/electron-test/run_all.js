@@ -1379,6 +1379,23 @@ const SUITES = [
       const dk = d.delKey || {};
       check('灯箱里按 Delete 也会调用 onDelete（title 承诺的快捷键）', dk.calls === 1,
         'calls=' + dk.calls + ' open=' + dk.stillOpen);
+
+      /* 切图瞬间的画面（v1.20.3）。以前切上一张/下一张，新图会先以"自然尺寸、
+         贴在舞台左上角"的样子出现一帧，再跳到居中 —— 用户看到的是"位置不对，
+         过一会才自己居中"。
+         成因有两半：① .lb-img 的 opacity 过渡写在基类上，移除 .ld 是 180ms 的
+         淡出，而新图往往几十毫秒就解码完，于是它在这段淡出窗口里被看见；
+         ② 此时 transform 已被清空，图片处于"自然尺寸 + 原点"的布局态。
+         修法是让"隐藏"这一侧没有过渡（CSS），JS 不需要动。
+         这里断的是同步读到的 opacity：有过渡时是 1（正在淡出），没有则是 0。 */
+      const sw = d.swap || {};
+      check('切图瞬间旧图立即隐藏（不是 180ms 淡出）', sw.opAfterNav === 0,
+        'opacity=' + sw.opAfterNav);
+      check('淡入只给打开灯箱（切图不再淡入）',
+        sw.fadeOnOpen === true && sw.fadeAfterNav === false,
+        'open=' + sw.fadeOnOpen + ' afterNav=' + sw.fadeAfterNav);
+      check('切图确实换了张（断言没空跑）', sw.moved === true && sw.n > 1,
+        'moved=' + sw.moved + ' n=' + sw.n);
     },
   },
 
@@ -3200,10 +3217,20 @@ const SUITES = [
         JSON.stringify(s.framePinFlip));
 
       /* v1.9.0 —— 控制条感应区 / 相册下拉 / 拖动吸附，都在**真实无边框窗口**里跑一遍 */
-      check('相框窗口里：控制条默认隐藏、是感应区子元素、带常驻抓手',
-        !!(s.frameUi && s.frameUi.barHiddenByDefault === true
+      /* 这里断的是「显隐与指针位置一致」，不是「默认隐藏」。
+         控制条由 pointerenter 驱动，而相框窗口弹出的位置是固定的 —— 物理光标要是正好
+         停在下缘感应区上，Windows 会在窗口出现时补一个 pointerenter，控制条立刻显示。
+         这不是缺陷（指针真的在里面），但会让「默认隐藏」这条门禁取决于鼠标停在哪：
+         v1.20.4 实测光标停在 (1443,406) 时它恒红，挪到 (5,5) 立刻转绿。
+         所以判据换成 barMatchesPointer —— 不在感应区就必须隐藏、在就必须显示。 */
+      check('相框窗口里：控制条显隐与指针位置一致、是感应区子元素、带常驻抓手',
+        !!(s.frameUi && s.frameUi.barMatchesPointer === true
           && s.frameUi.barInsideHot === true && s.frameUi.hasGrip === true),
-        JSON.stringify(s.frameUi));
+        'pointerInside=' + (s.frameUi && s.frameUi.pointerInsideHot)
+        + ' hidden=' + (s.frameUi && s.frameUi.barHiddenByDefault)
+        + ' match=' + (s.frameUi && s.frameUi.barMatchesPointer)
+        + ' inHot=' + (s.frameUi && s.frameUi.barInsideHot)
+        + ' grip=' + (s.frameUi && s.frameUi.hasGrip));
       check('相框窗口里：指针移入下缘 → 控制条出现；移开 → 立刻收起',
         !!(s.frameUi && s.frameUi.shownOnHotIn === true && s.frameUi.hiddenOnHotOut === true),
         'in=' + (s.frameUi && s.frameUi.shownOnHotIn) + ' out=' + (s.frameUi && s.frameUi.hiddenOnHotOut));

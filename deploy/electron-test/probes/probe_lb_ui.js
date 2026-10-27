@@ -113,6 +113,10 @@ app.whenReady().then(async () => {
     return true;
   })()`);
   await new Promise((r) => setTimeout(r, 1800));
+  /* 「打开灯箱」这一下要淡入（.fadein 由 open() 打上，render 后保留到下次切换）。
+     趁现在还没切过图先记下来 —— 后面的 swap 量的是"切图不该淡入"。 */
+  const fadeOnOpen = await w.webContents.executeJavaScript(
+    `document.getElementById('lbImg').classList.contains('fadein')`);
   // 让 HUD 显形：沉浸态下控件靠鼠标热区显现，顶部热区=关闭键、底部热区=操作栏，
   // 所以两个热区各触发一次，再分别截图（合成的 mousemove 必须打在 #lightbox 上，
   // 监听挂在 this.el，打在 document 上不会冒泡到这里）。
@@ -210,6 +214,25 @@ app.whenReady().then(async () => {
     return { calls: n, stillOpen: L.isOpen() };
   })()`);
 
-  console.log('LBUI ' + JSON.stringify(R, null, 1));
+  /* ---- 切图瞬间：旧图必须"立即"消失（v1.20.3 修） ----
+     以前 .lb-img 的 transition 写在基类上，移除 .ld 是 180ms 的**淡出**；而下一张图
+     往往几十毫秒内就解码完并挂上 src，于是它在这段淡出窗口里以"还没摆正"的 transform
+     被看见 —— 24MP 的图按 6000×4000 铺在舞台左上角，过一会才跳到居中（实测首帧
+     dx=+2278 dy=+1630 w=6000，修好后首帧即 dx=0 dy=0 w=885）。
+
+     这里量的是**同步读到的 opacity**：过渡存在时它是 1（刚开始淡出），把过渡挪到
+     "显示侧"之后是 0。不依赖图片大小，所以 2KB 的夹具也能测出真问题。
+     放在最后：nav 会改变状态，别让前面的断言读到。 */
+  const swap = await w.webContents.executeJavaScript(`(() => {
+    const L = window.Lightbox, img = document.getElementById('lbImg');
+    const i0 = L.i;
+    L.nav(1);
+    return { opAfterNav: +getComputedStyle(img).opacity,
+             fadeAfterNav: img.classList.contains('fadein'),
+             moved: L.i !== i0, n: L.list.length };
+  })()`);
+  swap.fadeOnOpen = fadeOnOpen;
+
+  console.log('LBUI ' + JSON.stringify(Object.assign(R, { swap: swap }), null, 1));
   app.quit();
 });

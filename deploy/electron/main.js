@@ -1812,14 +1812,26 @@ async function selftestFrame(snap, sink) {
     } catch (e) { F.framePinWhy = String((e && e.message) || e); }
 
     /* v1.9.0 —— 控制了条改为「下缘感应区驱动」：默认隐藏，移入才出现，移开立刻收起。
-       在**真的无边框窗口**里复核一遍（离线探针那侧验的是页内浮层形态）。 */
+       在**真的无边框窗口**里复核一遍（离线探针那侧验的是页内浮层形态）。
+
+       注意 `barMatchesPointer` 这条：控制条由 `pointerenter` 驱动，而相框窗口弹出的位置
+       是固定的 —— 如果**物理光标**恰好停在下缘感应区上，Windows 会在窗口出现时补一个
+       pointerenter，控制条立刻显示。这不是缺陷，是"指针真的在里面"。
+       所以不能只断言"默认隐藏"（那会让门禁取决于鼠标停在哪），要断言
+       **控制条的显隐与指针是否在感应区内一致**：不在就隐藏、在就显示。
+       v1.20.4 实测：光标停在 (1443,406) 时 `barHiddenByDefault` 恒为 false，
+       把它挪到 (5,5) 就变 true —— 断言依赖物理指针位置的典型例子。 */
     try {
       F.frameUi = await frameWin.webContents.executeJavaScript(`(() => {
         const F = window.Frame, el = F.el;
         const hot = el.querySelector('.fr-hot'), bar = el.querySelector('.fr-bar');
         const sel = el.querySelector('.fr-src');
+        const pointerInside = !!(hot && hot.matches(':hover'));
+        const hidden = !el.classList.contains('fr-bar-on');
         const out = {
-          barHiddenByDefault: !el.classList.contains('fr-bar-on'),
+          pointerInsideHot: pointerInside,
+          barHiddenByDefault: hidden,
+          barMatchesPointer: hidden === !pointerInside,
           barInsideHot: !!(bar && hot && bar.parentElement === hot),
           hasGrip: !!(hot && hot.querySelector('.fr-grip')),
           hasSrcSel: !!sel,

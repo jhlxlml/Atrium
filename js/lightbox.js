@@ -159,6 +159,9 @@
       if (this.infoBtn) { this.infoBtn.classList.toggle('is-on', this.infoOn); this.infoBtn.setAttribute('aria-pressed', String(this.infoOn)); }
       this._setFsIcon();
       this._buildStrip();
+      /* 只有"打开灯箱"这一下淡入；切上一张/下一张不淡（见 render 里的 toggle）。
+         180ms 的淡入叠在解码后面，每次切图都要多等小半秒。 */
+      this._fadeIn = true;
       this.render();
       if (this.infoOn) this._renderInfo();
       // 进入沉浸式：默认隐藏所有控件，仅底部 HUD 短暂提示后自动隐藏
@@ -299,6 +302,8 @@
 
       // 清空旧图
       this.img.classList.remove('ld');
+      this.img.classList.toggle('fadein', !!this._fadeIn);
+      this._fadeIn = false;
       this.img.removeAttribute('src');
       this.errBox.hidden = true;
       this.spin.classList.remove('hide');

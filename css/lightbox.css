@@ -113,12 +113,22 @@ body.lb-open .lightbox { animation: lb-fade .22s var(--ease, cubic-bezier(.25,.1
   transform-origin: 0 0;
   max-width: none; max-height: none;
   opacity: 0;
-  transition: opacity .18s ease;
+  /* 过渡只定义在"显示"这一侧（见下两行）：移除 .ld 时新样式里没有过渡，
+     于是**立即**隐藏。以前过渡写在基类上，切图时是 180ms 的淡出 —— 而下一张图
+     往往在几十毫秒内就解码完并挂上 src，于是它在这段淡出窗口里以"还没摆正"的
+     transform 被看见（24MP 的图按 6000×4000 铺在舞台左上角，然后跳到居中）。
+     实测：原写法首帧 dx=+2278 dy=+1630 w=6000，改后首帧即 dx=0 dy=0 w=885。 */
   image-orientation: from-image;
   will-change: transform;
 }
 .lb-img.ld { opacity: 1; }
+/* 淡入只给"打开灯箱"这一下。切上一张/下一张时再淡 180ms 就是纯等待 ——
+   解码本身已经要几十毫秒，叠上去每次切图要 250ms 才看得见东西。 */
+.lb-img.ld.fadein { transition: opacity .18s ease; }
 .lb-img.anim { transition: opacity .18s ease, transform .2s cubic-bezier(.2,.6,.2,1); }
+/* 必须在 .anim 之后：两者特异性相同（0,2,0），靠源序分胜负。
+   目的是让"不可见"这一侧永远没有过渡 —— 淡出会被下一张图的加载抢跑。 */
+.lb-img:not(.ld) { transition: none; }
 
 /* 镜像图标：逆时针旋转按钮 */
 svg.flip-x { transform: scaleX(-1); }
