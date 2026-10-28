@@ -1399,6 +1399,77 @@ const SUITES = [
     },
   },
 
+  /* ---------- 8. 灯箱"屏幕尺寸代"：切图快慢的根子 ----------
+     灯箱按「自然尺寸 + transform 缩放」显示，6000×4000 的照片在窗口里实际只占 938px，
+     可浏览器必须先把整张 24MP 解出来才画得出第一帧。实测真实 exe（软件渲染）：
+     解 24MP 要 130ms、48MP 要 265ms，而且**冷热一样慢**（这么大的位图留不住缓存），
+     于是每切一张都转圈 150–300ms —— 用户报的"切换图片加载还是很慢"就是这个。
+     修法：用 createImageBitmap 的 resizeWidth/Height 让解码器直接吐屏幕尺寸的位图
+     （与网格缩略图同一条路），真要 1:1 看细节时再换回原图。
+
+     断言只压"路径对不对 / 尺寸有没有被污染 / 换图跳不跳"，不压绝对毫秒数
+     （机器负载一波动就假红）。原图由探针运行时生成（2600×1800 起），
+     现有夹具都是几 KB 的小图，在它们身上只会走 full=true 的直通分支，等于没测。 */
+  {
+    id: 'lbscreen',
+    title: '灯箱屏幕尺寸代 · 切图不解原图 / 尺寸不被污染 / 换原图零跳变',
+    kind: 'probe',
+    script: 'probe_lb_screen.js',
+    key: 'LBSCREEN ',
+    tags: ['slow'],
+    run: function (ctx) {
+      const check = ctx.check, d = ctx.data;
+      if (!d || !d.make) { check('探针返回数据', false, '未解析到 LBSCREEN 输出'); return; }
+      const b = d.before || {}, m = d.make, s = d.swap || {}, z = d.zoom || {}, u = d.unknown || {};
+
+      check('夹具确实是"远大于屏幕"的原图（否则这条路根本没被测到）',
+        (d.fixtures || []).length >= 2 && d.fixtures[0].w >= 2600,
+        JSON.stringify((d.fixtures || []).map((f) => f.w + 'x' + f.h)));
+
+      /* 这两条钉住"预取是空的"那个旧 bug：以前 preloadBig 只把 URL 塞进 Map，
+         根本没加载，所以切过去永远要现场解。这里**不手动造代**，就看灯箱自己有没有备。 */
+      check('没备好时确实没有代可用（说明下面那条不是白捡的）',
+        b.peekBeforePrefetch === null, 'peek=' + b.peekBeforePrefetch);
+      check('灯箱自己把相邻图的代预取好了（不靠手动造）',
+        !!b.peekAfterPrefetch && b.peekAfterPrefetch.full === false && b.peekAfterPrefetch.w < 3200,
+        JSON.stringify(b.peekAfterPrefetch));
+
+      check('原图远大于屏幕时生成的是"代"，不是原图本身',
+        m.full === false && m.recW < 3200,
+        'full=' + m.full + ' rec=' + m.recW + 'x' + m.recH);
+      check('代里带着原图的真实尺寸（后面算 1:1 与百分比全靠它）',
+        m.tw === 3200 && m.th === 2000, 'tw=' + m.tw + ' th=' + m.th);
+
+      check('切过去用的就是预取好的那一代（没退回原图现场解）',
+        s.natW === (b.peekAfterPrefetch && b.peekAfterPrefetch.w) && s.natW < 3200,
+        'nat=' + s.natW + ' prefetched=' + (b.peekAfterPrefetch && b.peekAfterPrefetch.w));
+      check('原图尺寸记对了（没被代的尺寸顶掉）',
+        s.origW === 3200 && s.origH === 2000, 'orig=' + s.origW + 'x' + s.origH);
+      /* 这条是防污染的核心：把代的尺寸写进 meta.w，网格的尺寸显示与尺寸库会永久错，
+         而且下次算缩放比时会按错的尺寸来。 */
+      check('代的尺寸没有污染条目（meta.w/h 仍是原图尺寸）',
+        s.metaW === 3200 && s.metaH === 2000, 'meta=' + s.metaW + 'x' + s.metaH);
+      check('百分比按原图算（适应窗口约 28%，不是 47%）',
+        Math.abs(parseInt(s.pct, 10) - Math.round(s.base * s.natW / 3200 * 100)) <= 1,
+        'pct=' + s.pct + ' base=' + s.base);
+
+      check('放大越过代的 1:1 → 自动换回原图',
+        z.upgraded === true && z.full === true && z.natW === 3200 && z.origW === 3200,
+        'upgraded=' + z.upgraded + ' full=' + z.full + ' nat=' + z.natW);
+      /* 换源时按 oldNat/newNat 等比补偿 scale，屏幕上尺寸必须分毫不动。
+         这条要是红了，用户放大一下图就会"跳"一下。 */
+      check('换原图时屏幕尺寸零跳变（±2px）',
+        Math.abs(z.midW - z.afterW) <= 2 && Math.abs(z.midH - z.afterH) <= 2,
+        'w ' + z.midW + '→' + z.afterW + ' h ' + z.midH + '→' + z.afterH);
+
+      /* 条目本身没有 w/h（真实应用里"还没探到尺寸"就是这种状态）：
+         这时**宁可留空**，也不能把屏幕上那张代的宽度当成原图尺寸写进条目。 */
+      check('原图尺寸未知时不许拿代的尺寸充数（宁可留空）',
+        u.usedRendition === true && u.origW !== u.natW && u.metaW !== u.natW,
+        'nat=' + u.natW + ' origW=' + u.origW + ' metaW=' + u.metaW);
+    },
+  },
+
   /* ---------- 8. 设置面板 ---------- */
   {
     id: 'settings',
@@ -3150,7 +3221,15 @@ const SUITES = [
 
       const s = r.result && r.result.snap;
       if (!r.result || r.result.pass !== true || !s) {
-        check('自检整体通过', false, JSON.stringify(r.result && r.result.err || '无结果'));
+        /* 失败原因优先用自检自己报的：`err`（抛异常）→ `passFailed`（清单里没过的项）。
+           以前这里只写 `err || '无结果'`，而"自检跑完了但某条判据没过"时 err 是 null，
+           于是报出来是"无结果" —— 和"进程压根没跑完"长得一模一样，误导过一次排查。
+           现在把没过的判据名字直接摊开，一眼能看出是哪一项。 */
+        const why = (r.result && r.result.err)
+          || (r.result && Array.isArray(r.result.passFailed) && r.result.passFailed.length
+            ? '未通过：' + r.result.passFailed.join(' / ') : null)
+          || (s ? '快照里没有 passFailed（旧版自检）' : '无结果（进程没写出结果文件）');
+        check('自检整体通过', false, why);
         return;
       }
       check('自检整体通过', true);

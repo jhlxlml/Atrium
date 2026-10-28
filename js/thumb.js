@@ -61,10 +61,79 @@
 
   const thumbs = new LRU(THUMB_CAP);   // id -> {url, side}
   const bigs = new LRU(BIG_CAP);       // id -> {url}
+  const screens = new LRU(8);          // id -> {url, side, w, h, tw, th, full}（灯箱的"屏幕尺寸代"）
   const pending = new Map();           // id -> Promise<string|null>
 
+  /* ---------- 灯箱的"屏幕尺寸代" ----------
+     为什么需要它：灯箱把图片按「自然尺寸 + transform 缩放」显示，一张 6000×4000 的照片
+     在 1440 宽的窗口里实际只占 938px，可浏览器必须先把**整张 24MP** 解出来才画得出第一帧。
+     实测（真实 exe、软件渲染、5MB 的 24MP JPEG）：解一次 130ms、48MP 要 265ms，
+     而且**冷热一样慢** —— 这么大的位图不会被浏览器的解码缓存留住，来回翻每次都重解。
+     于是每切一张就白等 150–300ms，用户看到的就是"转圈，然后图才出来"。
+
+     办法与网格缩略图完全相同：用 createImageBitmap 的 resizeWidth/Height 让解码器
+     直接吐一个屏幕尺寸的位图（libjpeg 的降采样解码，快一个数量级）。
+     真要看 1:1 细节时灯箱会再换回原图（Lightbox._upgradeToFull），那条路只在
+     "用户主动放大"时付一次代价。
+
+     与 thumbURL 的关键差别：**不写 IndexedDB**。一代 1920 宽的 JPEG 约 0.3–1MB，
+     几千张照片就是几个 GB 的磁盘，而它随时可以再算一遍。只留内存，LRU 淘汰即 revoke。 */
+  const SCREEN_SIDES = [1280, 1920, 2560, 3072, 4096];
+  function screenBucket(need) {
+    for (let i = 0; i < SCREEN_SIDES.length; i++) if (SCREEN_SIDES[i] >= need) return SCREEN_SIDES[i];
+    return SCREEN_SIDES[SCREEN_SIDES.length - 1];
+  }
+
+  /**
+   * 取一张"够屏幕显示"的位图 URL。
+   * @param {object} meta 条目
+   * @param {number} cssW 图片将要占的 CSS 像素宽（会乘 dpr 再向上取档）
+   * @returns {Promise<{url:string,side:number,w:number,h:number,tw:number,th:number,full:boolean}|null>}
+   *   tw/th 是**原图**尺寸（0 = 没探到）；full=true 表示这本来就是原图。
+   */
+  async function screenURL(meta, cssW) {
+    if (!meta || meta.bad) return null;
+    const dpr = Math.min(global.devicePixelRatio || 1, 2);
+    const need = Math.max(320, Math.round((cssW || 1200) * dpr));
+    const side = screenBucket(need);
+    const hit = screens.get(meta.id);
+    if (hit && hit.side >= side) { stats.screenHits++; return hit; }
+
+    // 先知道原图多大：原图本来就不比目标档大，就直接给原图，省一次 canvas 编码
+    let ow = meta.w > 0 ? meta.w : 0;
+    let oh = meta.h > 0 ? meta.h : 0;
+    if (!ow && global.Loader && global.Loader.imageSize) {
+      const sz = await global.Loader.imageSize(meta).catch(() => null);
+      if (sz && sz.w > 0) { ow = sz.w; oh = sz.h; }
+    }
+    const maxSide = Math.max(ow, oh);
+    if (maxSide > 0 && maxSide <= side) {
+      const url = elURL(meta);
+      if (!url) return null;
+      const rec = { url, side: maxSide, w: ow, h: oh, tw: ow, th: oh, full: true };
+      screens.set(meta.id, rec);
+      return rec;
+    }
+
+    const res = await decodeThumb(meta, side);
+    if (!res || !res.blob) {
+      // 降级：拿原图。慢，但保证"一定能显示"
+      const url = elURL(meta);
+      return url ? { url, side: 0, w: 0, h: 0, tw: 0, th: 0, full: true } : null;
+    }
+    const url = global.URL.createObjectURL(res.blob);
+    const rec = {
+      url, side: Math.max(res.dw, res.dh), w: res.dw, h: res.dh,
+      tw: res.tw, th: res.th, full: false,
+    };
+    screens.set(meta.id, rec);   // LRU 淘汰时会把旧 URL revoke 掉
+    stats.screenMakes++;
+    return rec;
+  }
+
+
   /* 计数供性能探针断言（不参与业务逻辑） */
-  const stats = { decodes: 0, memHits: 0, diskHits: 0, misses: 0, viaBitmap: 0, viaImg: 0, lastMs: 0, maxMs: 0 };
+  const stats = { decodes: 0, memHits: 0, diskHits: 0, misses: 0, viaBitmap: 0, viaImg: 0, lastMs: 0, maxMs: 0, screenHits: 0, screenMakes: 0 };
   function noteDecode(via, ms) {
     stats.lastMs = ms;
     if (ms > stats.maxMs) stats.maxMs = ms;
@@ -342,12 +411,44 @@
       }
     },
 
+    /** 取"够屏幕显示"的位图（灯箱用；见上面 screenURL 的注释） */
+    screenURL,
+
+    /**
+     * 同步看一眼"代"在不在缓存里（不生成）。
+     * 灯箱用它决定：备好了就直接上代（切图 2–15ms）；没备好就**先上原图**
+     * —— 生成一代要 130–630ms（48MP 尤其慢，比直接解原图还贵），
+     * 绝不能为了"用上代"让用户先等这一段。原图先顶上，代在后台备着，下次翻回来就快了。
+     */
+    screenPeek(meta, cssW) {
+      if (!meta || meta.bad) return null;
+      const dpr = Math.min(global.devicePixelRatio || 1, 2);
+      const side = screenBucket(Math.max(320, Math.round((cssW || 1200) * dpr)));
+      const hit = screens.get(meta.id);
+      return (hit && hit.side >= side) ? hit : null;
+    },
+
+    /**
+     * 预取相邻图的**屏幕尺寸代**。
+     * near=true（紧邻的上一张/下一张）立刻排队，用户下一步很可能就切过去；
+     * near=false（隔一张）等空闲，别和当前这张抢解码槽。
+     * 注意预取的是"代"而不是原图：一代只有原图 1/40 的像素，几十毫秒就能备好，
+     * 内存也只有十几 MB —— 直接预取 24MP 原图要 96MB/张，三张就 300MB 起。
+     */
+    preloadScreen(meta, cssW, near) {
+      if (!meta || meta.bad) return;
+      const run = () => { screenURL(meta, cssW).catch(() => { }); };
+      if (near) setTimeout(run, 40);
+      else if (global.requestIdleCallback) global.requestIdleCallback(run, { timeout: 2000 });
+      else setTimeout(run, 400);
+    },
+
     /** 网格把当前可视区条目 id 报进来 → 解码槽优先服务这些图 */
     setDesired,
 
     /** 性能计数（探针用） */
     stats: () => Object.assign({}, stats),
-    resetStats() { stats.decodes = 0; stats.memHits = 0; stats.diskHits = 0; stats.misses = 0; },
+    resetStats() { stats.decodes = 0; stats.memHits = 0; stats.diskHits = 0; stats.misses = 0; stats.screenHits = 0; stats.screenMakes = 0; },
 
     releaseBig(id) {
       const v = bigs.get(id);
@@ -363,12 +464,15 @@
       const b = bigs.get(id);
       if (b && b.url) revoke(b.url);
       bigs.map.delete(id);
+      const s = screens.get(id);
+      if (s && s.url) revoke(s.url);
+      screens.map.delete(id);
       pending.delete(id);
     },
 
     /** 切换文件夹时清空内存缓存（磁盘缓存保留，供下次直接命中） */
     clearAll() {
-      thumbs.clear(); bigs.clear(); pending.clear();
+      thumbs.clear(); bigs.clear(); screens.clear(); pending.clear();
       desired = new Set();
     },
   };

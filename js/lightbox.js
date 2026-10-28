@@ -312,31 +312,138 @@
 
       if (meta.bad) { this._showErr(this._badReason(meta)); return; }
 
-      const url = Thumbs.bigURL(meta);
-      if (!url) { this._showErr('无法读取该文件'); return; }
+      /* ---- 按「屏幕尺寸」解码，而不是原图 ----
+         灯箱按「自然尺寸 + transform 缩放」显示，6000×4000 的照片在窗口里实际只占
+         938px，可浏览器必须先把整张 24MP 解出来才画得出第一帧。实测（真实 exe）：
+         解 24MP 要 130ms、48MP 要 265ms，而且冷热一样慢 —— 这么大的位图留不住缓存，
+         来回翻每次都重解。于是"切一张"要白等 150–300ms，表现就是转圈半天。
+         先上一代屏幕尺寸的位图（同一套 createImageBitmap 降采样，2–15ms 就能显示），
+         真要放大看 1:1 时再由 _upgradeToFull() 换回原图。
+         这里用 token 兜住"晚到的结果"：快速连按下一张时，前一张的 promise 可能后到，
+         不认 token 的话会把已经切走的那张又贴回来。 */
+      this._full = false;
+      this._rec = null;
+      this._upgrading = false;
+      const token = (this._renderToken = (this._renderToken || 0) + 1);
+      const still = () => this.openFlag && this.meta === meta && token === this._renderToken;
+
+      const start = (rec) => {
+        if (!still()) return;
+        const url = (rec && rec.url) || Thumbs.bigURL(meta);
+        if (!url) { this._showErr('无法读取该文件'); return; }
+        this._rec = rec || null;
+        this.img.onload = () => {
+          if (!still()) return;
+          this.spin.classList.add('hide');
+          this._adoptNatural(meta);
+          /* 这张就是原图（没走代，或者代本来就跟原图一样大）→ 不必再"升级" */
+          this._full = !rec || !!rec.full;
+          // 尺寸交给 CSS（left/top:50% + translate(-50%,-50%)）居中，缩放只改 transform
+          this.img.style.width = 'auto'; this.img.style.height = 'auto';
+          this.img.classList.add('ld');
+          this.fit(false);
+          this._preloadNeighbors();
+          const dim = this.origW && this.origH ? `${this.origW}×${this.origH}` : '';
+          this.countEl.textContent = n > 1
+            ? `${this.i + 1} / ${n}${dim ? ' · ' + dim : ''}`
+            : dim;
+          if (this.infoOn) this._renderInfo();
+        };
+        this.img.onerror = () => {
+          if (!still()) return;
+          this._showErr('浏览器无法解码这张图片');
+        };
+        this.img.src = url;
+      };
 
       this.scale = 1; this.tx = 0; this.ty = 0; this.base = 1;
       this.img.style.transform = '';
       this.img.style.width = 'auto'; this.img.style.height = 'auto';
+
+      const cssW = this._needPx(meta);
+      /* 代已备好 → 直接上（切图 2–15ms）；没备好 → **先上原图**，别让用户等生成。
+         生成一代要 130–630ms（48MP 比直接解原图还贵），为了"用上代"先等这一段是本末倒置。
+         原图先顶上，代在后台备着，下次翻回来（以及预取到相邻图）就都是 2ms 级了。 */
+      const peek = Thumbs.screenPeek ? Thumbs.screenPeek(meta, cssW) : null;
+      if (peek) start(peek);
+      else {
+        start(null);
+        if (Thumbs.preloadScreen) Thumbs.preloadScreen(meta, cssW, true);
+      }
+    },
+
+    /**
+     * 这张图"实际会占多少 CSS 像素宽" —— 用来决定解码多大的代。
+     * 不能拿舞台宽度了事：横图在横屏里是**高度**先撞线（844×563 的框，舞台却有 1300 宽），
+     * 按 1300 取档会白算近一倍像素（实测多花 40ms/张）。
+     */
+    _needPx(meta) {
+      const aw = (this.availW ? this.availW() : 0) || global.innerWidth;
+      const ah = (this.availH ? this.availH() : 0) || global.innerHeight;
+      const w = (meta && meta.w > 0) ? meta.w : 0;
+      const h = (meta && meta.h > 0) ? meta.h : 0;
+      if (!w || !h) return Math.max(320, Math.min(aw, ah) * 1.6);
+      // 旋转 90°/270° 时长宽互换
+      const ar = (this.rot % 180 === 0) ? (w / h) : (h / w);
+      return Math.max(320, Math.min(aw, ah * ar));
+    },
+
+    /**
+     * 记下当前这张图的尺寸。
+     * 关键：屏幕上那张**可能是缩小过的"代"**，它的 naturalWidth 绝不是原图尺寸 ——
+     * 直接写进尺寸库会污染网格（thumbURL 那边专门为此加了 `res.tw !== res.dw` 判断）。
+     * 所以原图尺寸优先取 rec.tw/th（解码时顺手探到的），其次 meta.w/h，最后才退回 naturalWidth。
+     */
+    _adoptNatural(meta) {
+      const rec = this._rec;
+      const natW = this.img.naturalWidth, natH = this.img.naturalHeight;
+      this.nw = natW; this.nh = natH;
+      /* 已知的原图尺寸：解码时探到的 → 条目里记着的 → 都拿不到就**留空**。
+         绝不能在这里退回 naturalWidth —— 屏幕上那张可能是 2560 宽的"代"，
+         一旦把它的尺寸写进 meta.w，网格的尺寸显示与尺寸库就永久错了
+         （而且下次再算"代"时会按错的尺寸算缩放比）。 */
+      const knownW = (rec && rec.tw) || (meta.w > 0 ? meta.w : 0) || 0;
+      const knownH = (rec && rec.th) || (meta.h > 0 ? meta.h : 0) || 0;
+      const isFull = !rec || rec.full;
+      this.origW = knownW || (isFull ? natW : 0);
+      this.origH = knownH || (isFull ? natH : 0);
+      if (isFull) {
+        meta.w = natW; meta.h = natH;
+        Loader.recordDims(meta, natW, natH);
+      } else if (knownW > 0 && knownH > 0) {
+        meta.w = knownW; meta.h = knownH;
+        Loader.recordDims(meta, knownW, knownH);
+      }
+    },
+
+    /**
+     * 把"代"换成原图（只在用户放大到超过代的 1:1 时才调）。
+     * 换 src 期间浏览器会一直显示旧帧，所以画面不闪；
+     * 换完按 oldNat/newNat 等比缩小 scale 与 base，屏幕上尺寸分毫不动。
+     */
+    _upgradeToFull() {
+      const meta = this.meta;
+      if (!meta || this._full || this._upgrading || !this.nw) return;
+      const url = Thumbs.bigURL(meta);
+      if (!url) return;
+      const oldNat = this.nw, oldScale = this.scale, oldBase = this.base;
+      const prev = this.img.onload;
+      this._upgrading = true;
       this.img.onload = () => {
+        this.img.onload = prev;
+        this._upgrading = false;
         if (!this.openFlag || this.meta !== meta) return;
-        this.spin.classList.add('hide');
-        this.nw = this.img.naturalWidth; this.nh = this.img.naturalHeight;
-        meta.w = this.nw; meta.h = this.nh;
-        Loader.recordDims(meta, this.nw, this.nh);
-        // 尺寸交给 CSS（left/top:50% + translate(-50%,-50%)）居中，缩放只改 transform
-        this.img.style.width = 'auto'; this.img.style.height = 'auto';
-        this.img.classList.add('ld');
-        this.fit(false);
-        this._preloadNeighbors();
-        this.countEl.textContent = n > 1
-          ? `${this.i + 1} / ${n} · ${this.nw}×${this.nh}`
-          : `${this.nw}×${this.nh}`;
-        if (this.infoOn) this._renderInfo();
-      };
-      this.img.onerror = () => {
-        if (!this.openFlag || this.meta !== meta) return;
-        this._showErr('浏览器无法解码这张图片');
+        const newNat = this.img.naturalWidth;
+        if (!newNat || !oldNat) return;
+        const k = oldNat / newNat;
+        this.nw = newNat; this.nh = this.img.naturalHeight;
+        this.origW = newNat; this.origH = this.nh;
+        this.scale = oldScale * k;
+        this.base = oldBase * k;
+        this._full = true;
+        this._rec = null;
+        if (Loader && Loader.recordDims) Loader.recordDims(meta, newNat, this.nh);
+        this.apply();          // 只重算 transform：不动类名、不动 src 之外的东西 → 视觉零跳变
       };
       this.img.src = url;
     },
@@ -389,9 +496,13 @@
     },
 
     _preloadNeighbors() {
-      for (const d of [1, -1, 2, -2]) {
+      /* 只预取紧邻的两张（上一张/下一张），不再管 ±2：
+         生成一代是**重活**（24MP 约 170ms、48MP 能到 900ms 以上），同时铺开四张会把
+         CPU 抢爆 —— 实测 48MP 那张从 365ms 涨到 971ms，还会把正在显示的原图读盘拖慢 6 倍。
+         紧邻两张已经覆盖"连续翻页"这个主场景，隔一张的那步退回原图即可（和旧版一样快）。 */
+      for (const d of [1, -1]) {
         const m = this.list[this.i + d];
-        if (m) Thumbs.preloadBig(m);
+        if (m) Thumbs.preloadScreen(m, this._needPx(m), true);
       }
     },
 
@@ -467,6 +578,10 @@
       this.scale = r.scale; this.tx = r.tx; this.ty = r.ty;
       this._clampPan();   // 缩小时自动回正：一旦装得下就平滑归中，不会停在半空
       this.apply();
+      /* 放大到超过"代"的 1:1（scale > 1，即一个代像素要铺到一个以上 CSS 像素）时
+         画面开始靠插值撑大，这时才去取原图。换 src 期间旧帧继续显示，
+         换完按比例补偿 scale，屏幕上尺寸分毫不动（见 _upgradeToFull）。 */
+      if (!this._full && this.scale > 1.02) this._upgradeToFull();
     },
 
     /**
@@ -566,20 +681,27 @@
       const cx = e ? e.clientX : global.innerWidth / 2;
       const cy = e ? e.clientY : global.innerHeight / 2;
       if (this.scale > this.base * 1.02) { this.fit(true); return; }
-      if (this.base > 1) {
-        // 放大态“适应(最大)” 与 原始 100% 之间切换
-        const cur1 = Math.abs(this.scale - 1) < 0.02;
-        const t = cur1 ? this.base : 1;
+      const one = this._oneToOne();
+      if (this.base > one) {
+        // 图比舞台小：适应时已经被放大（base 超过 1:1）→ 在「适应」与「100%」之间切换
+        const cur1 = Math.abs(this.scale - one) < one * 0.02;
+        const t = cur1 ? this.base : one;
         this.zoomAt(t / this.scale, cx, cy);
       } else {
-        const target = Math.max(1, this.base * 2);
+        const target = Math.max(one, this.base * 2);
         this.zoomAt(target / this.scale, cx, cy);
       }
     },
 
     _updPct() {
-      this.pctEl.textContent = Math.round(this.scale * 100) + '%';
+      /* 百分比一律相对**原图**：屏幕上那张可能是缩小过的"代"，
+         直接拿 scale 报数会在换原图时突然从 49% 跳到 16%。 */
+      const k = this.origW && this.nw ? this.nw / this.origW : 1;
+      this.pctEl.textContent = Math.round(this.scale * k * 100) + '%';
     },
+
+    /** 「原图 1:1」对应的 scale（屏幕上那张是缩小代时要放大 origW/nw 倍） */
+    _oneToOne() { return this.origW && this.nw ? this.origW / this.nw : 1; },
 
     /**
      * 把平移量夹回合法范围（约束数学见 Transform.clampPan）。

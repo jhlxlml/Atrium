@@ -765,12 +765,30 @@ function wireIpc() {
      返回「实际生效后」的状态，而不是请求值 —— 便于界面与真实状态保持一致。
      v1.8.0：改为作用于**发起调用的那个窗口**（`e.sender`）。这样
      主窗口的📌和相框窗口的📌是各自独立的两颗钉子，互不干扰。 */
-  ipcMain.handle('vf:alwaysOnTop', (e, on) => {
+  ipcMain.handle('vf:alwaysOnTop', async (e, on) => {
     try {
       const w = winOf(e) || mainWin;
       if (!w || w.isDestroyed()) return false;
-      w.setAlwaysOnTop(!!on);
-      return w.isAlwaysOnTop();
+      /* 为什么要有界重试（v1.20.5 实测，别再简化回去）：
+         这台开发机是虚拟机 + 软件渲染（Microsoft Basic Render Driver），CPU 一有负载，
+         Windows 的窗口管理器**偶尔会把 SetWindowPos(HWND_TOPMOST) 吞掉** ——
+         `setAlwaysOnTop(true)` 调用不报错，可紧接着 `isAlwaysOnTop()` 仍是 false，
+         而且连续三次、间隔 350ms 都还是 false，直到一秒多以后才恢复正常。
+         用 Win32 直接读扩展样式（`GetWindowLong(GWL_EXSTYLE) & WS_EX_TOPMOST`）核对过：
+         **系统那边确实没有置顶位**，所以这不是 Electron 读回值骗人，是真没生效。
+         用户点一下📌却什么都没发生，是实打实的功能缺失 —— 所以这里重试几次。
+         正常机器上第一次就成立，直接返回，不引入任何延迟。 */
+      const want = !!on;
+      let real = false;
+      for (let i = 0; i < 5; i++) {
+        w.setAlwaysOnTop(want);
+        real = w.isAlwaysOnTop();
+        if (real === want) break;
+        if (i < 4) await new Promise((r) => setTimeout(r, 200));
+      }
+      trace('alwaysOnTop target=' + (w === frameWin ? 'frame' : (w === mainWin ? 'main' : '?'))
+        + ' want=' + want + ' real=' + real);
+      return real;
     } catch (err) { return false; }
   });
   ipcMain.handle('vf:getAlwaysOnTop', (e) => {
@@ -1086,6 +1104,7 @@ function ensureFrameWindow(target) {
     frameWin.__lastApplied = null;
     frameWin.__display = (target && target.id != null) ? String(target.id) : '';
     frameWin.setMenuBarVisibility(false);
+    trace('frame created aot=' + frameWin.isAlwaysOnTop() + ' vis=' + frameWin.isVisible());
     /* 窗口位置变了 → 回传真实矩形，由渲染进程决定"吸附到哪一条边"。
        原生拖拽由系统接管，渲染进程拿不到拖动过程，所以只能在这里补一刀。
        位置恰好等于我们上次 setBounds 的结果时不发 —— 那是程序性移动，不是用户拖动
@@ -1124,7 +1143,31 @@ function ensureFrameWindow(target) {
       });
     }
     frameWin.once('ready-to-show', () => {
-      if (frameWin && !frameWin.isDestroyed()) { frameWin.show(); frameWin.focus(); }
+      if (!frameWin || frameWin.isDestroyed()) return;
+      trace('frame ready-to-show in=' + frameWin.isAlwaysOnTop() + ' vis=' + frameWin.isVisible());
+      frameWin.show();
+      /* 「功能开启即置顶」是相框的既定行为。但**置顶必须发生在窗口真的显示之后**：
+         v1.20.5 实测（真实 exe，全量回归里机器最忙的那一段）——`ready-to-show` 触发时
+         `isVisible()` 还是 false（show() 只是把请求排进系统队列，窗口还没映射），
+         这时候调 `setAlwaysOnTop(true)` 会被 Windows 直接丢掉，**连调 5 次、跨 800ms
+         也一样**；而等窗口真的显示出来之后，同样一次调用立刻生效（实测点一下📌就置顶了）。
+         所以这里不能"show 完顺手设一次"，要**等到 isVisible() 为真再设**。
+         有界（约 5 秒）：一直设不上就放弃，绝不留下一个永不退出的定时器；
+         也不在设成功之后继续强制 —— 用户随时可能按📌取消置顶，那是有意的状态。 */
+      const pinWhenVisible = (left) => {
+        if (!frameWin || frameWin.isDestroyed()) return;
+        if (!frameWin.isVisible()) {
+          if (left > 0) setTimeout(() => pinWhenVisible(left - 1), 150);
+          return;
+        }
+        frameWin.setAlwaysOnTop(true);
+        trace('frame pin-when-visible vis=true aot=' + frameWin.isAlwaysOnTop() + ' left=' + left);
+        if (!frameWin.isAlwaysOnTop() && left > 0) {
+          setTimeout(() => pinWhenVisible(left - 1), 150);
+        }
+      };
+      pinWhenVisible(33);
+      frameWin.focus();
     });
     /* **渲染进程崩溃 / 无响应也必须收尾**（v1.11.0 补）。
        为什么只挂 `closed` 不够：渲染进程崩溃时**窗口对象仍然存在、`closed` 不会触发** ——
@@ -1686,32 +1729,56 @@ async function runSelfTest(win) {
     // `[frame] render-process-gone`，需要按"崩溃前的水位"切掉，否则「无控制台报错」恒红。
     await selftestFrame(snap, errors);
 
-    const pass = snap.items > 0 && snap.allDecoded && snap.lbW > 0 && snap.exifNoThrow && snap.readHeadOk
-      && snap.ls && snap.idb && snap.nativePath && snap.delApiOk && snap.delOk && snap.delGone
-      && snap.undoApiOk && snap.undoOk && snap.undoBack && snap.logApiOk && snap.logHas && snap.logPurged
-      && snap.uiDelOk && snap.uiCount && snap.uiRecOk && snap.uiUndoOk && snap.uiBack && snap.uiCount2
-      // 框选批量删除 + 回收站找回
-      && snap.selAll > 0 && snap.selBarShown && snap.selCleared && snap.selOne
-      && snap.batchApiOk && snap.batchDelOk && snap.batchCount && snap.batchGone
-      && snap.trashViewOk && snap.trashRows > 0 && snap.previewOk
-      && snap.batchUndoOk && snap.batchBack && snap.batchCount2 && snap.trashClosed
+    /* 总判据写成**带名字的清单**，而不是一个 30 项的长布尔表达式。
+       为什么值得改：v1.20.5 有一次全量回归里自检 `pass=false`，而结果里只有
+       `err: null` —— 报出来是"自检整体通过 → 无结果"，等于什么都没说。
+       真正的原因（`frameOnTop=false`）只能靠人去翻 trace 里的快照才发现。
+       清单化之后 `passFailed` 直接列出没过的那几条，失败信息自解释。 */
+    const gates = [
+      ['索引到素材且全部解码', snap.items > 0 && snap.allDecoded],
+      ['灯箱能打开真实图片 / EXIF 不抛异常 / 文件头可读',
+        snap.lbW > 0 && snap.exifNoThrow && snap.readHeadOk],
+      ['原生桥与持久化可用', snap.ls && snap.idb && snap.nativePath],
+      ['删除 → 回收站 → 撤销（IPC 层）',
+        snap.delApiOk && snap.delOk && snap.delGone
+        && snap.undoApiOk && snap.undoOk && snap.undoBack
+        && snap.logApiOk && snap.logHas && snap.logPurged],
+      ['删除 → 撤销（真实界面按钮）',
+        snap.uiDelOk && snap.uiCount && snap.uiRecOk && snap.uiUndoOk && snap.uiBack && snap.uiCount2],
+      ['框选与选择条', snap.selAll > 0 && snap.selBarShown && snap.selCleared && snap.selOne],
+      ['批量删除', snap.batchApiOk && snap.batchDelOk && snap.batchCount && snap.batchGone],
+      ['回收站视图与预览', snap.trashViewOk && snap.trashRows > 0 && snap.previewOk],
+      ['批量撤销与回收站关闭',
+        snap.batchUndoOk && snap.batchBack && snap.batchCount2 && snap.trashClosed],
       // 框选自愈回归：回收站往返后、以及上一次拖拽 mouseup 丢失后，框选仍应可用
-      && snap.diagMarquee && snap.diagMarquee.ok
-      && snap.diagImmediate && snap.diagImmediate.ok
-      && snap.diagHeal && snap.diagHeal.ok
+      ['框选自愈（回收站往返 / mouseup 丢失）',
+        !!(snap.diagMarquee && snap.diagMarquee.ok)
+        && !!(snap.diagImmediate && snap.diagImmediate.ok)
+        && !!(snap.diagHeal && snap.diagHeal.ok)],
       // 相框模式（v1.8.0）：无边框 / 置顶 / 按图片比例 / 真的画出来了 / 关掉后主窗回来
-      && snap.frameApiOk && snap.frameOpened > 0 && snap.frameExists
-      && snap.frameFrameless && snap.frameOnTop && snap.frameMainHidden
-      && snap.framePainted && snap.frameRatioOk
-      && snap.frameInner && snap.frameInner.on === true && snap.frameInner.items > 0
-      && snap.frameInner.curW > 0
-      && snap.framePinFlip && snap.framePinFlip.before === true && snap.framePinFlip.after === false
-      && snap.frameAfterClose && snap.frameAfterClose.open === false && snap.frameAfterClose.mainShown === true
+      ['相框存在且无边框、置顶、主窗已隐藏、真的出图、比例正确',
+        snap.frameApiOk && snap.frameOpened > 0 && snap.frameExists
+        && snap.frameFrameless && snap.frameOnTop && snap.frameMainHidden
+        && snap.framePainted && snap.frameRatioOk],
+      ['相框内部在播且画出了图',
+        !!(snap.frameInner && snap.frameInner.on === true && snap.frameInner.items > 0
+          && snap.frameInner.curW > 0)],
+      ['相框的📌只动相框自己（开→关两态都验）',
+        !!(snap.framePinFlip && snap.framePinFlip.before === true && snap.framePinFlip.after === false)],
+      ['关掉相框后主窗自己回来',
+        !!(snap.frameAfterClose && snap.frameAfterClose.open === false
+          && snap.frameAfterClose.mainShown === true)],
       // v1.11.0：鼠标拖动真的搬了窗口且没吃掉单击；假屏幕 id 回落到真实屏幕；崩溃后主窗自己回来
-      && snap.frameDrag && snap.frameDrag.ok === true
-      && snap.frameFallback && snap.frameFallback.open === true && snap.frameFallback.insideAny === true
-      && snap.frameCrash && snap.frameCrash.killed === true && snap.frameCrash.frameGone === true
-      && snap.frameCrash.mainBack === true && snap.frameCrash.reopenOk === true;
+      ['相框拖动 / 假屏幕回落 / 崩溃后恢复',
+        !!(snap.frameDrag && snap.frameDrag.ok === true)
+        && !!(snap.frameFallback && snap.frameFallback.open === true && snap.frameFallback.insideAny === true)
+        && !!(snap.frameCrash && snap.frameCrash.killed === true && snap.frameCrash.frameGone === true
+          && snap.frameCrash.mainBack === true && snap.frameCrash.reopenOk === true)],
+    ];
+    const passFailed = gates.filter(function (g) { return !g[1]; })
+      .map(function (g) { return g[0]; });
+    const pass = passFailed.length === 0;
+    snap.passFailed = passFailed;
     /* 「无控制台报错」这条要按崩溃前的水位切一刀：
        最后那步是我们**主动**杀掉相框渲染进程，主进程的兜底会照实汇报一条
        `[frame] render-process-gone ...`。那不是产品缺陷，是我们自己制造的。
@@ -1720,7 +1787,7 @@ async function runSelfTest(win) {
     const crashFrom = snap.frameCrashErrFrom;
     const errs = (typeof crashFrom === 'number' && crashFrom >= 0 && crashFrom <= errors.length)
       ? errors.slice(0, crashFrom) : errors;
-    finishSelfTest({ pass, snap, consoleErrors: errs }, pass ? 0 : 1);
+    finishSelfTest({ pass, passFailed, snap, consoleErrors: errs }, pass ? 0 : 1);
   } catch (err) {
     finishSelfTest({ pass: false, err: String(err && err.message || err), consoleErrors: errors }, 1);
   }
@@ -1738,6 +1805,43 @@ async function runSelfTest(win) {
      - 关掉之后主窗口必须自己回来（用户按 Alt+F4 也不能把应用"关没了"）
    顺带截图留档，肉眼复核用。
    ============================================================ */
+/* 等窗口"停下来"再量。
+   这台机器上 `setBounds` / `setAlwaysOnTop` 是**异步落到系统**的，机器一忙，700ms 都不一定
+   落完 —— 于是量到的基准位置是旧值，`dx/dy` 就会莫名其妙偏大
+   （v1.20.5 实测：期望 90/30，量到 208/154，而拖动本身完全正常）。
+   判据取"**连续 stableMs 毫秒内完全没动**"，而不是"等了 N 毫秒"：后者只是把概率调小。
+
+   还有一个更隐蔽的搅局者：相框在 `img.onload` 之后会 `fit()` 重新按比例适配并居中，
+   机器慢的时候它可能晚到一秒，正好落在"设好位置 → 开始拖动"这段空隙里，
+   把基准连同拖动一起挪走（实测最终落在 414,237 ≈ 居中位置 400,240 + 一点点拖动）。
+   所以拖动前要用更长的稳定窗（stableMs=800），确保那次迟到 `fit()` 已经落完。 */
+async function settleBounds(win, maxMs, stableMs) {
+  const t0 = Date.now();
+  const need = stableMs || 260;
+  let prev = win.getBounds();
+  let since = Date.now();
+  while (Date.now() - t0 < (maxMs || 2500)) {
+    await new Promise((r) => setTimeout(r, 100));
+    if (win.isDestroyed()) break;
+    const b = win.getBounds();
+    if (b.x === prev.x && b.y === prev.y && b.width === prev.width && b.height === prev.height) {
+      if (Date.now() - since >= need) return b;
+    } else { prev = b; since = Date.now(); }
+  }
+  return win.isDestroyed() ? prev : win.getBounds();
+}
+
+/** 等置顶状态落到 want（窗口管理器会吞请求，见 vf:alwaysOnTop 的注释） */
+async function settleAot(win, want, maxMs) {
+  const t0 = Date.now();
+  for (;;) {
+    const real = win.isDestroyed() ? false : win.isAlwaysOnTop();
+    if (real === want) return real;
+    if (Date.now() - t0 > (maxMs || 2000)) return real;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 async function selftestFrame(snap, sink) {
   const F = snap || {};
   F.frameExists = false; F.frameFrameless = false; F.frameOnTop = false;
@@ -1763,7 +1867,18 @@ async function selftestFrame(snap, sink) {
        回归失败时能直接看到实际数字。 */
     F.frameBorderDelta = { dw: b.width - c.width, dh: b.height - c.height };
     F.frameFrameless = Math.abs(b.width - c.width) <= 2 && Math.abs(b.height - c.height) <= 2;
+    /* 置顶可能比"出图"晚一拍：窗口映射完成后系统才接受 HWND_TOPMOST。
+       这里等它稳定（最多 1.5s）再判 —— 断言的是"置顶最终成立"，
+       不是"在某一瞬间成立"，否则判定结果会取决于机器忙不忙。 */
+    {
+      const t0 = Date.now();
+      while (!frameWin.isAlwaysOnTop() && Date.now() - t0 < 1500) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
     F.frameOnTop = frameWin.isAlwaysOnTop();
+    trace('selftest frameOnTop=' + F.frameOnTop + ' vis=' + frameWin.isVisible()
+      + ' focused=' + frameWin.isFocused());
     F.frameMainHidden = !!(mainWin && !mainWin.isDestroyed() && !mainWin.isVisible());
     F.framePainted = !!(framePainted && framePainted.nw > 0 && framePainted.nh > 0);
 
@@ -1801,14 +1916,16 @@ async function selftestFrame(snap, sink) {
 
     // 相框里那颗📌必须作用于**相框窗口**（与主窗口的钉子互不干扰）
     try {
-      const before = frameWin.isAlwaysOnTop();
+      const before = await settleAot(frameWin, true, 2000);
       await frameWin.webContents.executeJavaScript(`document.querySelector('[data-act="pin"]').click()`, true);
-      await new Promise((r) => setTimeout(r, 420));
-      const after = frameWin.isAlwaysOnTop();
+      /* 等它真的翻过去再读。`vf:alwaysOnTop` 内部有界重试最多要 1 秒，固定等 420ms
+         会在重试还没走完时就读，量到的是**上一态**（v1.20.5 实测 `{before:true, after:true}`，
+         而 3ms 之后的日志已经显示变 false 了）。 */
+      const after = await settleAot(frameWin, !before, 2000);
+      trace('selftest pinFlip before=' + before + ' after=' + after);
       F.framePinFlip = { before: before, after: after };
       await frameWin.webContents.executeJavaScript(`document.querySelector('[data-act="pin"]').click()`, true);
-      await new Promise((r) => setTimeout(r, 320));
-      F.framePinRestored = frameWin.isAlwaysOnTop();
+      F.framePinRestored = await settleAot(frameWin, before, 2000);
     } catch (e) { F.framePinWhy = String((e && e.message) || e); }
 
     /* v1.9.0 —— 控制了条改为「下缘感应区驱动」：默认隐藏，移入才出现，移开立刻收起。
@@ -1857,6 +1974,7 @@ async function selftestFrame(snap, sink) {
       const wa = screen.getDisplayMatching(frameWin.getBounds()).workArea;
       frameWin.setBounds({ x: wa.x + 6, y: wa.y + 140, width: 620, height: 420 });
       await new Promise((r) => setTimeout(r, 1400));
+      await settleBounds(frameWin, 1500);
       const nb = frameWin.getBounds();
       F.frameSnap = {
         workAreaX: wa.x,
@@ -1874,6 +1992,7 @@ async function selftestFrame(snap, sink) {
         width: 620, height: 420,
       });
       await new Promise((r) => setTimeout(r, 500));
+      await settleBounds(frameWin, 1500);
       F.frameUndockStayed = Math.abs(frameWin.getBounds().x - wa.x) > 50;
     } catch (e) { F.frameSnapWhy = String((e && e.message) || e); }
 
@@ -1886,18 +2005,28 @@ async function selftestFrame(snap, sink) {
          · 拖动**没有**顺手触发"单击换下一张"；
          · 而普通单击**仍然**能换图（证明拖动没把原功能吃掉）。 */
     try {
-      /* **先把自动轮播按停**：相框每换一张图都会按新图比例重新适配并居中，
-         窗口会在测量途中自己跑掉（第一版就是这么栽的：dx 量到 -188，拖动
-         其实完全正常，是窗口在 560ms 里被 `next()` 重新居中了一次）。
-         再摆一个确定的小窗口：远离开任何一条边（拖完 +90/+30 仍落在"自由区"，
-         不会被 `snapEdge` 半路拽走），尺寸也取得比工作区小得多，以免被边界夹住。 */
-      await frameWin.webContents.executeJavaScript('window.Frame.pause();', true);
+      /* 先把自动轮播按停，**并等当前这张图真的加载完**：`img.onload` 会触发
+         `fit()` 重新按比例适配并居中，机器慢的时候这一下可能晚到一秒，
+         正好落在"设好位置 → 开始拖动"之间，把基准连同拖动一起挪走
+         （v1.20.5 实测：期望 +90/+30，量到 +264/+87，而终点 ≈ 居中位置 + 一点点拖动）。 */
+      await frameWin.webContents.executeJavaScript(`(async () => {
+        const F = window.Frame;
+        F.pause();
+        const t0 = Date.now();
+        while (Date.now() - t0 < 3000) {
+          if (F.cur && F.cur.complete && F.cur.naturalWidth > 0) return true;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        return false;
+      })()`, true);
       const dwa = screen.getDisplayMatching(frameWin.getBounds()).workArea;
+      /* 摆一个确定的小窗口：远离任何一条边（拖完 +90/+30 仍落在"自由区"，不会被
+         `snapEdge` 半路拽走），尺寸也取得比工作区小得多，以免被边界夹住。 */
       frameWin.setBounds({
         x: Math.round(dwa.x + 150), y: Math.round(dwa.y + 150), width: 480, height: 320,
       });
       await new Promise((r) => setTimeout(r, 700));   // 跨过 200ms 的 move 抖动合并
-      const db0 = frameWin.getBounds();
+      const db0 = await settleBounds(frameWin, 3000, 800);
       /* 第一段：真的拖一遍。窗口应当刚好平移 (90, 30)；顺带合成一下 pointerup 之后
          浏览器会补的那颗 click —— 它**不该**换图（被 `_justDragged` 挡住）。 */
       const drag = await frameWin.webContents.executeJavaScript(`(async () => {
@@ -1929,8 +2058,10 @@ async function selftestFrame(snap, sink) {
       await new Promise((r) => setTimeout(r, 560));
       /* **先量位置、再做"普通单击仍能换图"的对照**：那一击会真的翻页并重新按比例适配
          窗口（`next()` → 重算 box → 居中），放在前面测会把 dx / dy 一起搅掉。
-         第一版就栽在这 —— 拖动本身是对的，却被后一步的居中抵消。 */
-      const db1 = frameWin.getBounds();
+         第一版就栽在这 —— 拖动本身是对的，却被后一步的居中抵消。
+         量之前同样要等窗口停稳：拖动是"渲染层算位移 → IPC → 主进程 setPosition"，
+         忙的时候 560ms 内还没落完，dx 就会量小。 */
+      const db1 = await settleBounds(frameWin, 3000, 800);
       drag.dx = db1.x - db0.x;
       drag.dy = db1.y - db0.y;
       // 对照：清掉"刚拖过"标记，真正的单击应当**能**换图
