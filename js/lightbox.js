@@ -185,6 +185,7 @@
       this.dragging = false;
       if (this._preT) { clearTimeout(this._preT); this._preT = 0; }
       if (this._spinT) { clearTimeout(this._spinT); this._spinT = 0; }
+      if (this._settleT) { clearTimeout(this._settleT); this._settleT = 0; }
       // 若处于全屏，先退出全屏（异步），再隐藏
       if (document.fullscreenElement === this.el) {
         const done = () => {
@@ -276,6 +277,14 @@
     render() {
       const meta = this.meta;
       if (!meta) return;
+      /* 连翻判定：两次切图间隔 < 100ms 就算"在按住方向键"。
+         Windows 的键盘重复是"约 500ms 后开始、每 ~33ms 一次"，所以按住时每次都在 33ms 上下；
+         而人手动连点两下通常 200ms 以上 —— 100ms 这条线把两者分得很开。
+         阈值不能取宽（试过 150ms）：一旦误判成连翻，铺上去的是占位小图，
+         画面会先糊一下；而"糊一下"比"多等 100ms"更让人难受。 */
+      const nowMs = (global.performance && performance.now) ? performance.now() : Date.now();
+      const fast = nowMs - (this._navAt || 0) < 100;
+      this._navAt = nowMs;
       // P1-4：恢复这张图此前保存过的旋转（没有记录即 0），重开保持一致
       this.rot = State.rotationOf ? State.rotationOf(meta) : 0;
       const n = this.list.length;
@@ -332,6 +341,7 @@
         this.spin.classList.remove('hide');
       }
       if (this._preT) { clearTimeout(this._preT); this._preT = 0; }
+      if (this._settleT) { clearTimeout(this._settleT); this._settleT = 0; }
       this._updateStripSel();
       this._checkStripEnd();
 
@@ -377,10 +387,15 @@
              下一次切图中间，48MP 那张被拖到 378ms（v1.13.0 是 315ms）。900ms 之后，
              "翻得比这快"就等于完全不做预取（每一帧都是干净的原图解码，不吃亏），
              "停下来看"才把相邻两张备好 —— 而看照片本来就是停下来的场景。 */
-          this._preT = setTimeout(() => {
-            this._preT = 0;
-            if (still()) this._preloadNeighbors();
-          }, 900);
+          /* 连翻时铺上去的是**占位小图**（见下面 fast 分支），它只是一张过渡画面 ——
+             为它去预取相邻两张纯属浪费，而且正好会在用户还在连翻的时候抢 CPU。
+             真图到位后（settle 定时器重新 start）才会走到这里。 */
+          if (!rec || !rec.thumb) {
+            this._preT = setTimeout(() => {
+              this._preT = 0;
+              if (still()) this._preloadNeighbors();
+            }, 900);
+          }
           const dim = this.origW && this.origH ? `${this.origW}×${this.origH}` : '';
           this.countEl.textContent = n > 1
             ? `${this.i + 1} / ${n}${dim ? ' · ' + dim : ''}`
@@ -389,6 +404,9 @@
         };
         this.img.onerror = () => {
           if (!still()) return;
+          /* 占位小图的 blob URL 可能已被 LRU 回收（revoke）→ 别报"无法解码"，
+             直接退回真图。真图也失败才报错。 */
+          if (rec && rec.thumb) { start(null); return; }
           this._showErr('浏览器无法解码这张图片');
         };
         this.img.src = url;
@@ -406,8 +424,45 @@
          —— 实测把 24MP 的首次显示从 89ms（v1.13.0 的水平）拖到 188ms、48MP 从 288ms 拖到 438ms。
          等真正空闲时再补（见下面的 idle 那一支），供下次翻回来用。 */
       const peek = Thumbs.screenPeek ? Thumbs.screenPeek(meta, cssW) : null;
-      if (peek) start(peek);
-      else start(null);
+      if (peek) {
+        start(peek);
+      } else if (fast) {
+        /* ---- 按住方向键连翻：先上**占位小图**，停手后再上真图 ----
+           为什么需要这一支（用户报"住方向键连翻慢"）：键盘重复是每 ~33ms 一次，
+           而一张 24MP 要 130ms、48MP 要 245ms 才解完 —— 于是每按一次就把上一次
+           还没解完的加载**掐掉**（换 src 就等于取消），一直掐到松手为止。
+           结果就是：按住的时候屏幕基本不动，松手之后还要再等一次完整解码。
+           实测（真实 exe、冷状态）：45 次 nav 里只有 30 次 load 真的完成，
+           而且多数因为已经切走而没被显示；松手后还要 284ms 画面才更新。
+
+           改法：连翻期间铺**缩略图**。条带（`_buildStrip`）在打开时就已经为每个条目
+           解好了 320px 的缩略图，`thumbURL` 在内存里一命中就是微任务级 ——
+           每按一次都能立刻看到下一张（糊，但认得出），不再有"按了没反应"。
+           停手 140ms 后（`_settleT`）再换成真图，这一次是干净的、不被中途掐断的加载。
+
+           注意用 148 而不是更大的宽度：`thumbURL` 会按 dpr 向上取档，
+           148×2 → 320 档，正好是条带已经生成并落盘的那一档 —— 命中缓存，
+           既不会重解，也不会为翻过的每一张多写一份缩略图到磁盘。 */
+        let settled = false;
+        Thumbs.thumbURL(meta, 148).then((u) => {
+          if (settled || !still()) return;
+          if (!u) { start(null); return; }
+          start({
+            url: u, side: 0, w: 0, h: 0,
+            tw: meta.w > 0 ? meta.w : 0, th: meta.h > 0 ? meta.h : 0,
+            full: false, thumb: true,
+          });
+        }).catch(() => { if (!settled && still()) start(null); });
+        this._settleT = setTimeout(() => {
+          this._settleT = 0;
+          if (!still()) return;
+          if (this._rec && !this._rec.thumb) return;   // 已经是真图了，别重来
+          settled = true;
+          start(Thumbs.screenPeek ? Thumbs.screenPeek(meta, cssW) : null);
+        }, 140);
+      } else {
+        start(null);
+      }
       /* 当前这张**不生成代**，一个定时器都不留。
          试过"等空闲再生成"（requestIdleCallback）：它会在页面一闲下来的**下一帧**
          就触发，等于什么都没等 —— 实测切图后 250ms 内就抢着开工了。

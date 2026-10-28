@@ -1497,6 +1497,26 @@ const SUITES = [
       check('放大过之后切图仍然清空（不许带旧缩放跳一下）',
         k && k.zoomedSync && k.zoomedSync.ld === false,
         k ? ('zoomedSync=' + JSON.stringify(k.zoomedSync)) : '缺 keep 步骤');
+
+      /* 按住方向键连翻：连翻期间铺占位小图，正常翻页不许铺。
+         这三条是一组：少一条就可能出现"正常浏览也糊"或"按住还是不动"。 */
+      const rp = d.rapid || null;
+      check('正常翻页（间隔 400ms）不走占位小图',
+        rp && Array.isArray(rp.slow) && rp.slow.length === 2
+          && rp.slow.every(function (x) { return x.thumb === false; }),
+        rp ? ('slow=' + JSON.stringify(rp.slow)) : '缺 rapid 步骤');
+      /* "出画面"的判据是两条：12 次按键至少 11 次真的 load 了，且每次出的都是
+         **快的东西**（占位小图，或者已经有"代"时用代）—— 绝不能退回 3200 宽的原图。
+         注意 fixture 只有 3 张，转过一圈之后"代"就都有了，所以 thumbHits 只需要 ≥1：
+         这条断言要防的是"按住时一张都出不来"，不是"必须张张都是缩略图"。 */
+      check('按住连翻时每次按键都出画面（12 次至少 11 次 load，且都是快图）',
+        rp && rp.loads >= 11 && rp.thumbHits >= 1
+          && Array.isArray(rp.widths) && rp.widths.every(function (x) { return x <= 2000; }),
+        rp ? ('loads=' + rp.loads + ' thumbHits=' + rp.thumbHits
+          + ' widths=' + JSON.stringify(rp.widths)) : '缺 rapid 步骤');
+      check('停手之后占位小图被真图换掉（不会一直糊着）',
+        rp && rp.settledW > 1280,
+        rp ? ('midW=' + rp.midW + ' settledW=' + rp.settledW) : '缺 rapid 步骤');
     },
   },
 

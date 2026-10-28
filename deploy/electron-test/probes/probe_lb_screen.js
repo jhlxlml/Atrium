@@ -310,6 +310,49 @@ app.whenReady().then(async () => {
     return { before, afterSync, at200, zoomedSync };
   })()`);
 
+  /* 按住方向键连翻（v1.20.6）。
+     键盘重复每 ~33ms 一次，而一张 24MP 要 130ms、48MP 要 245ms 才解完 ——
+     每按一次就把上一次没解完的加载掐掉，于是按住的时候屏幕基本不动。
+     改法：连翻期间铺**占位小图**（条带里早就解好的缩略图），停手 140ms 后再换真图。
+     三件事一起验：
+       ① 正常翻页（间隔 400ms）**不许**走占位分支 —— 否则正常浏览会先糊一下；
+       ② 按住连翻时**每次按键都要出画面**（12 次 nav 至少 11 次 load）；
+       ③ 停手之后必须换成真图（占位小图只是过渡，不能一直留着）。 */
+  R.rapid = await w.webContents.executeJavaScript(`(async () => {
+    const L = window.Lightbox, img = document.getElementById('lbImg');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    L.open(L.list, L.list[0]);
+    await wait(700);
+    /* ① 慢速：间隔 400ms，**不许**走占位分支。
+       判据用 Lightbox._rec.thumb 而不是 naturalWidth —— 后者在"保留上一帧"时
+       读到的是上一张的尺寸，判不出来；而 _rec 是这一刻真正挂上去的那份。 */
+    const slow = [];
+    for (let k = 0; k < 2; k++) {
+      await wait(400);
+      L.nav(1);
+      await wait(40);
+      slow.push({ thumb: !!(L._rec && L._rec.thumb), w: img.naturalWidth });
+    }
+    /* ② 连翻：间隔 33ms（模拟键盘重复） */
+    let loads = 0;
+    const onLoad = () => { loads++; };
+    img.addEventListener('load', onLoad);
+    const widths = [];
+    let thumbHits = 0;
+    for (let k = 0; k < 12; k++) {
+      L.nav(1);
+      await wait(33);
+      widths.push(img.naturalWidth);
+      if (L._rec && L._rec.thumb) thumbHits++;
+    }
+    img.removeEventListener('load', onLoad);
+    const midW = img.naturalWidth;
+    /* ③ 停手 600ms：占位小图必须被真图换掉 */
+    await wait(600);
+    const settledW = img.naturalWidth;
+    return { slow, loads, widths, thumbHits, midW, settledW };
+  })()`);
+
   console.log('LBSCREEN ' + JSON.stringify(R, null, 1));  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { }
   app.quit();
 });

@@ -178,7 +178,12 @@ app.whenReady().then(async () => {
 
   /* --- 顺时针转 90° --- */
   await exec(`(() => { window.Lightbox.rotate(1); return 1; })()`);
-  await wait(400);
+  /* 等 650ms 而不是 400ms：`saveRots()` 是**400ms 合并写**，这条断言验的正是
+     "它自己会落盘"（所以这里**不能**调 flushRotations()，那等于绕过被测对象）。
+     但等 400ms 会跟那个定时器赛跑 —— 探针的 wait 跑在 Node 侧、saveRots 的定时器
+     跑在渲染进程，两个事件循环没有时序保证，机器一有负载就会偶发读到还没写进去的空表
+     （实测 v1.20.7 全量回归红过一次：count=1 而 ls={}）。留 250ms 余量。 */
+  await wait(650);
   const B1 = await exec(`(() => {
     const L = window.Lightbox, S = window.State;
     let ls = null; try { ls = JSON.parse(localStorage.getItem('viewfinder.rot.v1') || '{}'); } catch (e) {}

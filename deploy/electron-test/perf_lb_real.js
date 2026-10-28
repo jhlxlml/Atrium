@@ -201,9 +201,13 @@ const MEASURE = (delta) => `(async () => {
       stripHidden: document.getElementById('lbStrip').hidden,
       n: Lightbox.list.length })`);
 
-    /* 冷路径：往前切 4 次 */
+    /* 冷路径：往前切 4 次。
+       每一步之前先**停 400ms** —— 灯箱在"两次切图间隔 < 100ms"时会判定为连翻、
+       先铺占位小图（见 lightbox.js 的 fast 分支）。这里量的是"正常翻页"（人手按键
+       通常 200ms 以上），不先停一下的话量到的会是占位图，数字没意义。 */
     out.cold = [];
     for (let k = 0; k < Math.min(4, items - 1); k++) {
+      await sleep(400);
       out.cold.push(await c.eval(MEASURE(1)));
     }
     /* 热路径：回到第 0 张再来一遍 */
@@ -211,6 +215,7 @@ const MEASURE = (delta) => `(async () => {
       await new Promise((r) => setTimeout(r, 3000)); return true; })()`);
     out.warm = [];
     for (let k = 0; k < Math.min(4, items - 1); k++) {
+      await sleep(400);
       out.warm.push(await c.eval(MEASURE(1)));
     }
     /* 反向切（上一张）：很多人习惯往回翻。
@@ -220,6 +225,7 @@ const MEASURE = (delta) => `(async () => {
        真正的"回头看"在下面的 dwellBack 段。 */
     out.back = [];
     for (let k = 0; k < 3; k++) {
+      await sleep(400);
       out.back.push(await c.eval(MEASURE(-1)));
     }
 
@@ -246,9 +252,82 @@ const MEASURE = (delta) => `(async () => {
        不代表日常使用，只用来量"最坏情况下不许比 v1.13.0 慢"。 */
     out.browse = [];
     for (let k = 0; k < Math.min(4, items - 1); k++) {
+      await sleep(400);
       out.browse.push(await c.eval(MEASURE(1)));
       await c.eval(`new Promise((r) => setTimeout(r, 1500))`);
     }
+
+    /* 按住方向键连翻 —— 用户报的「住方向键连翻慢」就是这一条。
+       Windows 的键盘重复是"约 500ms 后开始、每 ~33ms 一次"，所以这里每 33ms 调一次 nav，
+       持续 1.5 秒（约 45 次），然后停手，量"停手之后多久画面才更新到目标那张"。
+
+       关键指标是 **during**：这 1.5 秒里到底有几张图真的画出来了。
+       如果接近 0，说明按住键的时候屏幕是完全冻结的 —— 每按一次就把上一次的加载
+       掐掉（`img.src` 换了就等于取消），而一张要 130ms 才解完，33ms 一次永远解不完。
+       那用户看到的就是"按住没反应"，也就是他说的"慢"。 */
+    out.repeat = await c.eval(`(async () => {
+      const L = window.Lightbox, T = window.Thumbs, img = document.getElementById('lbImg');
+      /* 先把所有"代"踢掉 —— 不踢的话每一张都是 blob 命中（十几毫秒），
+         33ms 一次当然跟得上，什么也测不到。要测的是"代还没备好"的冷情况。 */
+      L.list.forEach((m) => T.forget(m.id));
+      let during = 0, lastLoadAt = 0, lastNavAt = 0;
+      const onLoad = () => { during++; lastLoadAt = performance.now(); };
+      img.addEventListener('load', onLoad);
+      L.open(L.list, L.list[0]);
+      await new Promise((r) => setTimeout(r, 700));
+      during = 0;
+      const seen = [];
+      /* **画面到底动了几次** —— 这才是"按住方向键连翻慢"的直接对立面。
+         during 数的是 load 事件（加载完成了），但加载完不等于**画出来了**：
+         33ms 按一次、而一张 24MP 要 130ms 才解完，那么上一个还没解完就被下一个掐掉，
+         load 可能一个都没触发，屏幕一直停在第一张 —— 用户看到的就是"按了没反应"。
+         所以这里用 rAF 采样 img.naturalWidth：只有解码出新像素它才会变，
+         变一次 = 屏幕上真的换了一张。 */
+      const paints = [];
+      let lastSig = img.naturalWidth;
+      let sampling = true;
+      const sample = () => {
+        if (!sampling) return;
+        const w = img.naturalWidth;
+        if (w && w !== lastSig) { lastSig = w; paints.push(+(performance.now() - t0).toFixed(0)); }
+        requestAnimationFrame(sample);
+      };
+      const t0 = performance.now();
+      requestAnimationFrame(sample);
+      for (let k = 0; k < 45; k++) {
+        L.nav(1);
+        lastNavAt = performance.now();
+        await new Promise((r) => setTimeout(r, 33));
+        seen.push(img.naturalWidth);
+      }
+      const tBurst = +(performance.now() - t0).toFixed(0);
+      sampling = false;
+      const target = L.meta;
+      const midNat = img.naturalWidth;
+      /* 量的是"停手之后多久**真图**（不是占位小图）上屏"。
+         判据用 Lightbox._rec && !_rec.thumb —— 占位小图时 _rec.thumb 为真。 */
+      const settle = await new Promise((resolve) => {
+        const t1b = performance.now();
+        const tick = () => {
+          const r = L._rec;
+          /* 判"真图"用两条：_rec 不再是占位（null 也算真图，因为 start(null) 就是原图），
+             且 naturalWidth 回到了原图量级（占位小图只有几百到 1280）。 */
+          if ((!r || !r.thumb) && img.complete && img.naturalWidth >= 2000) {
+            img.decode().catch(() => {}).then(() => resolve(+(performance.now() - t1b).toFixed(0)));
+            return true;
+          }
+          return false;
+        };
+        if (tick()) return;
+        const iv = setInterval(() => {
+          if (tick()) { clearInterval(iv); return; }
+          if (performance.now() - t1b > 4000) { clearInterval(iv); resolve(null); }
+        }, 10);
+      });
+      img.removeEventListener('load', onLoad);
+      const uniq = []; seen.forEach((v) => { if (uniq.indexOf(v) < 0) uniq.push(v); });
+      return { during, paints, tBurst, settle, midNat, natW: img.naturalWidth, seen: uniq, endNat: img.naturalWidth, target: target && target.name };
+    })()`);
     c.close();
   } catch (e) {
     out.error = String((e && e.message) || e);
