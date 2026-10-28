@@ -14,7 +14,10 @@ const fs = require('fs');
 const os = require('os');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const EXE = path.join(ROOT, 'deploy', 'dist-electron', 'Atrium_Electron版', 'Atrium.exe');
+/* 允许指向**别的构建**：做版本 A/B 时（比如和 v1.13.0 比）不必覆盖当前产物。
+   例：LB_PERF_EXE=D:/tmp/1130/Atrium.exe node perf_lb_real.js <目录> */
+const EXE = process.env.LB_PERF_EXE
+  || path.join(ROOT, 'deploy', 'dist-electron', 'Atrium_Electron版', 'Atrium.exe');
 const DIR = process.argv[2];
 const W = +(process.argv[3] || 2560);
 const H = +(process.argv[4] || 1400);
@@ -134,11 +137,16 @@ const MEASURE = (delta) => `(async () => {
   } catch (e) { tDecode = -1; }
   const tPixels = +(performance.now() - t0).toFixed(1);
 
-  // 再等一帧，确保这一帧真的画出去了
+  /* 分开量"这一帧排到没有"和"画出去没有"：
+     tFrame1 = decode 之后到**下一帧回调**，这段含布局/光栅提交；
+     tPainted = 再等一帧，这段含合成/上屏。
+     两者差得远时，慢的是合成器（滤镜、大图层、阴影），不是解码。 */
+  const tFrame1 = await new Promise((r) => requestAnimationFrame(
+    () => r(+(performance.now() - t0).toFixed(1))));
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   const tPainted = +(performance.now() - t0).toFixed(1);
   if (po) po.disconnect();
-  return { tNav, tLoad, tReady, tDecode, tPixels, tPainted,
+  return { tNav, tLoad, tReady, tDecode, tPixels, tFrame1, tPainted,
            natW: img.naturalWidth, natH: img.naturalHeight,
            boxW: Math.round(img.getBoundingClientRect().width),
            name: target && target.name, longtasks: lt };
@@ -168,6 +176,19 @@ const MEASURE = (delta) => `(async () => {
       return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : 'no-webgl';
     })()`);
 
+    /* 可选：注入一段 CSS 再量 —— 用来做"某个样式到底花多少钱"的 A/B。
+       例：LB_PERF_CSS='*{backdrop-filter:none!important}' */
+    if (process.env.LB_PERF_CSS) {
+      await c.eval(`(() => {
+        const st = document.createElement('style');
+        st.id = 'perf-override';
+        st.textContent = ${JSON.stringify(process.env.LB_PERF_CSS)};
+        document.head.appendChild(st);
+        return true;
+      })()`);
+      out.cssOverride = process.env.LB_PERF_CSS;
+    }
+
     /* 打开灯箱，等它彻底稳定 */
     await c.eval(`(async () => {
       const L = window.Lightbox;
@@ -192,10 +213,41 @@ const MEASURE = (delta) => `(async () => {
     for (let k = 0; k < Math.min(4, items - 1); k++) {
       out.warm.push(await c.eval(MEASURE(1)));
     }
-    /* 反向切（上一张）：很多人习惯往回翻 */
+    /* 反向切（上一张）：很多人习惯往回翻。
+       **注意这一段量的是"快翻"，不是"回头看"**：每步量完（几十到几百毫秒）就立刻翻下一张，
+       而 v1.20.6 的停留预取阈值是 900ms —— 这里的间隔根本到不了，预取永远来不及跑完。
+       所以这一段每帧都是"干净的原图解码"，退回到 v1.13.0 的水平，这是设计取舍，不是退化。
+       真正的"回头看"在下面的 dwellBack 段。 */
     out.back = [];
     for (let k = 0; k < 3; k++) {
       out.back.push(await c.eval(MEASURE(-1)));
+    }
+
+    /* 停留后回翻 —— 这才是"看完一张再往回翻"的真实节奏。
+       先往前翻一张并**停 1.6 秒**（> 900ms 阈值），让停留预取把相邻两张的代备好，
+       然后再往回翻：此时上一张的代应该已经在内存里，解码只要 2–15ms。
+       这一段是 v1.20.6 相对 v1.13.0 的**净收益**所在（v1.13.0 完全没预取）。 */
+    out.dwellBack = [];
+    for (let k = 0; k < 2; k++) {
+      await c.eval(`(async () => {
+        Lightbox.nav(1);
+        await new Promise((r) => setTimeout(r, 1600));
+        return true;
+      })()`);
+      out.dwellBack.push(await c.eval(MEASURE(-1)));
+    }
+
+    /* 真实浏览节奏：**每张看 1.5 秒再翻**。
+       这是最有代表性的一段 —— 用户看照片本来就是停下来的：
+       翻到一张 → 看一两秒 → 翻下一张。1.5 秒 > 900ms 的停留阈值，
+       所以每张的代都会在后台被备好；但 48MP 生成一代要 600ms 以上，
+       1.5 秒够不够、会不会正好压在下一次切图上，只有这一段能量出来。
+       前面 cold / warm / back 三段都是"每 0.2 秒连翻"，属于极端快翻，
+       不代表日常使用，只用来量"最坏情况下不许比 v1.13.0 慢"。 */
+    out.browse = [];
+    for (let k = 0; k < Math.min(4, items - 1); k++) {
+      out.browse.push(await c.eval(MEASURE(1)));
+      await c.eval(`new Promise((r) => setTimeout(r, 1500))`);
     }
     c.close();
   } catch (e) {

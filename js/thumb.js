@@ -63,6 +63,8 @@
   const bigs = new LRU(BIG_CAP);       // id -> {url}
   const screens = new LRU(8);          // id -> {url, side, w, h, tw, th, full}（灯箱的"屏幕尺寸代"）
   const pending = new Map();           // id -> Promise<string|null>
+  /* 「代」的生成串成一条链，一次只跑一个 —— 理由见 preloadScreen 的注释 */
+  let screenChain = Promise.resolve();
 
   /* ---------- 灯箱的"屏幕尺寸代" ----------
      为什么需要它：灯箱把图片按「自然尺寸 + transform 缩放」显示，一张 6000×4000 的照片
@@ -430,14 +432,25 @@
 
     /**
      * 预取相邻图的**屏幕尺寸代**。
-     * near=true（紧邻的上一张/下一张）立刻排队，用户下一步很可能就切过去；
+     * near=true（紧邻的上一张/下一张）尽快排队，用户下一步很可能就切过去；
      * near=false（隔一张）等空闲，别和当前这张抢解码槽。
      * 注意预取的是"代"而不是原图：一代只有原图 1/40 的像素，几十毫秒就能备好，
      * 内存也只有十几 MB —— 直接预取 24MP 原图要 96MB/张，三张就 300MB 起。
+     *
+     * **一次只跑一个**（v1.20.6）。生成一代是重活（24MP 约 170ms、48MP 能到 900ms），
+     * 两个并发就会和"正在显示那张的解码"抢 CPU —— 实测把 24MP 的首次显示从 89ms
+     * 拖到 188ms、48MP 从 288ms 拖到 438ms，比 v1.13.0 还慢。串成一条链之后，
+     * 预取只是把空档填满，不会再压到用户正在等的那一帧上。
      */
     preloadScreen(meta, cssW, near) {
       if (!meta || meta.bad) return;
-      const run = () => { screenURL(meta, cssW).catch(() => { }); };
+      const run = () => {
+        screenChain = screenChain.then(() => {
+          if (!meta || meta.bad) return null;
+          return screenURL(meta, cssW).catch(() => null);
+        });
+        return screenChain;
+      };
       if (near) setTimeout(run, 40);
       else if (global.requestIdleCallback) global.requestIdleCallback(run, { timeout: 2000 });
       else setTimeout(run, 400);

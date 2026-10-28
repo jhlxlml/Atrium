@@ -136,7 +136,8 @@ app.whenReady().then(async () => {
     const need = L._needPx(State.items[1]);
     const peek0 = T.screenPeek(State.items[1], need);
     L.open(State.items, State.items[0]);
-    await new Promise((r) => setTimeout(r, 1500));
+    // 停留预取的阈值是 900ms，这里给足 2.4s 再验
+    await new Promise((r) => setTimeout(r, 2400));
     const peek1 = T.screenPeek(State.items[1], need);
     return {
       peekBeforePrefetch: peek0 ? 'has' : null,
@@ -212,18 +213,25 @@ app.whenReady().then(async () => {
     };
   })()`);
 
-  /* 尺寸未知的那张：代的尺寸绝不能写进条目 */
+  /* 尺寸未知的那张：代的尺寸绝不能写进条目。
+     这一步**显式先把代造出来**（和上面"验灯箱自己会不会预取"那条不同，那条绝不能手动造）。
+     理由：这里要验的是"屏幕上摆着一张代、而原图尺寸未知"时 `origW / meta.w` 会不会被
+     代的尺寸顶掉。若让预取碰运气，很可能代还没备好就退回原图（naturalWidth 正好等于原图
+     宽度），那这条就退化成"验原图"了，什么也没测到。 */
   R.unknown = await w.webContents.executeJavaScript(`(async () => {
-    const L = window.Lightbox, img = document.getElementById('lbImg');
+    const L = window.Lightbox, T = window.Thumbs, img = document.getElementById('lbImg');
+    const need = L._needPx(L.list[2]);
+    const rec = await T.screenURL(L.list[2], need);   // 先备好，保证走的是代
     L.open(L.list, L.list[2]);
     await new Promise((r) => setTimeout(r, 60));
-    // 等这一张真正显示（可能要先生成代）
     for (let k = 0; k < 100; k++) {
       if (img.complete && img.naturalWidth > 0 && !L._upgrading) break;
       await new Promise((r) => setTimeout(r, 50));
     }
     await new Promise((r) => setTimeout(r, 200));
     return {
+      need,
+      recW: rec ? rec.w : null,
       natW: img.naturalWidth,
       usedRendition: img.naturalWidth > 0 && img.naturalWidth < 2600,
       origW: L.origW,
@@ -232,7 +240,76 @@ app.whenReady().then(async () => {
     };
   })()`);
 
-  console.log('LBSCREEN ' + JSON.stringify(R, null, 1));
-  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { }
+  /* 切图之后的头 250ms 里，后台**不许**为"当前这张"生成代。
+     这是 v1.20.6 的核心行为：生成一代要 170–900ms，和你正在等的那一帧抢 CPU，
+     实测会把 24MP 的首次显示从 89ms 拖到 188ms（比 v1.13.0 还慢）。
+     做法是"停留 900ms 才预取相邻图"，当前这张根本不生成代。
+     这里先打开第 0 张、**立刻**切到第 1 张（趁预取还没起来），再看 250ms 内有没有代。 */
+  R.gate = await w.webContents.executeJavaScript(`(async () => {
+    const L = window.Lightbox, T = window.Thumbs;
+    /* 先把它从缓存里踢掉，模拟"这张从没被看过" —— 前面的步骤已经把它预取过了，
+       不踢掉的话这里量到的会是"早就有代"，什么也证明不了。 */
+    T.forget(L.list[1].id);
+    L.open(L.list, L.list[0]);
+    await new Promise((r) => setTimeout(r, 120));     // 趁 900ms 的停留预取还没触发
+    const m1 = L.list[1];
+    const need = L._needPx(m1);
+    const before = T.stats().screenMakes;
+    L.nav(1);
+    await new Promise((r) => setTimeout(r, 250));
+    const peekSelf = T.screenPeek(m1, need);
+    const after = T.stats().screenMakes;
+    return { peekSelf: peekSelf ? { w: peekSelf.w } : null, madeDelta: after - before };
+  })()`);
+
+  /* 切图时**不许把上一帧清掉**（v1.20.6）。
+     以前每次切图都 `removeAttribute('src')` + 摘掉 .ld：屏幕先变空、转圈出现，
+     130–300ms 之后新图才"啪"地出来 —— 这段空白就是用户说的"卡"（按了没反应）。
+     现在保留旧帧让浏览器继续画，转圈延后 250ms 才出现。三件事一起验：
+       ① 切图后**同一刻** .ld 还在（没被清空）
+       ② 切图后 200ms 转圈仍然隐藏（快的切图不该看到转圈）
+       ③ 放大过（scale>1）之后切图**必须**走老路清空 —— 否则新图第一帧会带着旧缩放
+          先出现一下，看着像跳。这条是"别为了顺滑把缩放场景弄坏"的守门。 */
+  R.keep = await w.webContents.executeJavaScript(`(async () => {
+    const L = window.Lightbox, img = document.getElementById('lbImg');
+    const spin = document.getElementById('lbSpin');
+    const waitImg = async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 4000) {
+        if (img.complete && img.naturalWidth > 0 && img.classList.contains('ld')) return true;
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      return false;
+    };
+    L.open(L.list, L.list[0]);
+    await waitImg();
+    L.scale = 1; L.tx = 0; L.ty = 0; L.apply(false);
+    const before = {
+      ld: img.classList.contains('ld'),
+      src: !!img.getAttribute('src'),
+      spinHidden: spin.classList.contains('hide'),
+    };
+    L.nav(1);
+    /* 同步读：转圈是"延后 250ms 才出现"，所以切图这一刻应该有一个**挂着的定时器**
+       而不是已经显示出来的转圈。这条比"200ms 时转圈是否隐藏"更硬 ——
+       后者在快图（代命中，15ms 就到位）上恒真，什么也证明不了。 */
+    const afterSync = {
+      ld: img.classList.contains('ld'),
+      src: !!img.getAttribute('src'),
+      spinPending: !!L._spinT,
+      spinShown: !spin.classList.contains('hide'),
+    };
+    await new Promise((r) => setTimeout(r, 200));
+    const at200 = { spinHidden: spin.classList.contains('hide'), ld: img.classList.contains('ld') };
+    await waitImg();
+    /* ③ 放大到 2 倍再切：这时候必须清空 */
+    L.scale = 2; L.apply(false);
+    L.nav(1);
+    const zoomedSync = { ld: img.classList.contains('ld'), scaleWas: 2 };
+    L.scale = 1; L.tx = 0; L.ty = 0; L.apply(false);
+    return { before, afterSync, at200, zoomedSync };
+  })()`);
+
+  console.log('LBSCREEN ' + JSON.stringify(R, null, 1));  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { }
   app.quit();
 });

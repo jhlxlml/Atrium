@@ -1420,7 +1420,8 @@ const SUITES = [
     run: function (ctx) {
       const check = ctx.check, d = ctx.data;
       if (!d || !d.make) { check('探针返回数据', false, '未解析到 LBSCREEN 输出'); return; }
-      const b = d.before || {}, m = d.make, s = d.swap || {}, z = d.zoom || {}, u = d.unknown || {};
+      const b = d.before || {}, m = d.make, s = d.swap || {}, z = d.zoom || {},
+        u = d.unknown || {}, g = d.gate || null, k = d.keep || null;
 
       check('夹具确实是"远大于屏幕"的原图（否则这条路根本没被测到）',
         (d.fixtures || []).length >= 2 && d.fixtures[0].w >= 2600,
@@ -1463,10 +1464,39 @@ const SUITES = [
         'w ' + z.midW + '→' + z.afterW + ' h ' + z.midH + '→' + z.afterH);
 
       /* 条目本身没有 w/h（真实应用里"还没探到尺寸"就是这种状态）：
-         这时**宁可留空**，也不能把屏幕上那张代的宽度当成原图尺寸写进条目。 */
+         这时**宁可留空**，也不能把屏幕上那张代的宽度当成原图尺寸写进条目。
+         探针这一步会显式先把代造好（`Thumbs.screenURL`）再打开 —— 否则预取一旦没赶上，
+         退回原图时 naturalWidth 恰好等于原图宽度，这条就退化成"验原图"，什么也没测到。 */
       check('原图尺寸未知时不许拿代的尺寸充数（宁可留空）',
         u.usedRendition === true && u.origW !== u.natW && u.metaW !== u.natW,
-        'nat=' + u.natW + ' origW=' + u.origW + ' metaW=' + u.metaW);
+        'nat=' + u.natW + ' origW=' + u.origW + ' metaW=' + u.metaW
+          + ' recW=' + u.recW + ' need=' + u.need);
+
+      /* 切图后的头 250ms 里后台不许为"当前这张"生成代。
+         v1.20.5 就是这里栽的：它一显示就立刻生成当前这张的代，和你正在等的那一帧抢 CPU，
+         实测把 24MP 首次显示从 89ms（v1.13.0 的水平）拖到 188ms、48MP 从 288 拖到 438 ——
+         用户反馈"比 v1.13.0 还慢"就是这么来的。现在改成"停留 900ms 才预取相邻图"。 */
+      check('切图后的头 250ms 里不给当前这张生成代（不跟显示抢 CPU）',
+        g && g.peekSelf === null,
+        g ? ('peekSelf=' + JSON.stringify(g.peekSelf) + ' madeDelta=' + g.madeDelta) : '缺 gate 步骤');
+
+      /* 切图时保留上一帧 —— 这是"按了没反应"的直接来源。
+         以前每次切图先 removeAttribute('src') + 摘 .ld：屏幕立刻变空、转圈出现，
+         130–300ms 后新图才出来。这段空白不占解码时间，但占用户感知的全部。 */
+      check('切图时不清空上一帧（.ld 还在，浏览器继续画旧帧）',
+        k && k.before && k.before.ld === true && k.afterSync && k.afterSync.ld === true,
+        k ? ('before=' + JSON.stringify(k.before) + ' after=' + JSON.stringify(k.afterSync))
+          : '缺 keep 步骤');
+      check('快的切图看不到转圈（转圈延后 250ms，切图那一刻只是挂了个定时器）',
+        k && k.afterSync && k.afterSync.spinPending === true && k.afterSync.spinShown === false,
+        k ? ('afterSync=' + JSON.stringify(k.afterSync) + ' at200=' + JSON.stringify(k.at200))
+          : '缺 keep 步骤');
+      /* 反向守门：放大过（scale≠1）必须走老路清空 ——
+         否则新图第一帧会带着旧缩放先出现一下，看着像"跳"。
+         这条红了说明"为了顺滑"把缩放场景弄坏了。 */
+      check('放大过之后切图仍然清空（不许带旧缩放跳一下）',
+        k && k.zoomedSync && k.zoomedSync.ld === false,
+        k ? ('zoomedSync=' + JSON.stringify(k.zoomedSync)) : '缺 keep 步骤');
     },
   },
 
