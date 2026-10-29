@@ -431,6 +431,26 @@
     },
 
     /**
+     * 同步看一眼「缩略图在不在内存里」，命中返回 URL，没命中返回 null。**绝不生成。**
+     *
+     * 为什么要这个（v1.20.8）：连翻时原来直接 `await thumbURL(meta, 148)`，
+     * 没命中就当场解码原图 + 缩放 + 编码（24MP 约 30–50ms、48MP 几百 ms）。
+     * 可等它 resolve 时用户往往已经又按了一下，`still()` 变假 → 这份工作**整个白做**，
+     * 却实实在在抢了 CPU。实测 Downloads（15 张）连翻 45 次里 miss 了 25 次，
+     * 全是这种白干。
+     *
+     * 现在连翻分支只用 peek：命中就铺缩略图（微任务级），没命中就直接解原图 ——
+     * 小图（≤2MP）解原图只要 10–20ms，比现场生成缩略图更快、还更清晰。
+     */
+    thumbPeek(meta, cssW) {
+      if (!meta || meta.bad) return null;
+      const dpr = Math.min(global.devicePixelRatio || 1, 2);
+      const side = bucketOf(Math.min(MAX_THUMB, Math.max(96, Math.round((cssW || 200) * dpr))));
+      const hit = thumbs.get(meta.id);
+      return (hit && hit.side >= side) ? hit.url : null;
+    },
+
+    /**
      * 预取相邻图的**屏幕尺寸代**。
      * near=true（紧邻的上一张/下一张）尽快排队，用户下一步很可能就切过去；
      * near=false（隔一张）等空闲，别和当前这张抢解码槽。

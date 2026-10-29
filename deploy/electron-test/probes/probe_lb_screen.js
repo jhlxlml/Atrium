@@ -99,6 +99,9 @@ app.whenReady().then(async () => {
     { n: 'big-a.png', w: 2600, h: 1800 },
     { n: 'big-b.png', w: 3200, h: 2000 },
     { n: 'big-c.png', w: 2600, h: 1800 },   // 尺寸故意不告诉应用（meta.w/h=0）
+    /* 小图：1.26MP。连翻时**不该**铺缩略图（v1.20.8）—— 它解码只要十几毫秒，
+       铺一张 320px 的糊图再换回来，反而让人看到"先糊一下"。 */
+    { n: 'small.png', w: 1400, h: 900 },
   ];
   const files = specs.map((s) => {
     const abs = path.join(TMP, s.n);
@@ -120,7 +123,8 @@ app.whenReady().then(async () => {
     S.items = [
       { id: 'b0', name: 'big-a.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[0].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 2600, h: 1800 },
       { id: 'b1', name: 'big-b.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[1].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 3200, h: 2000 },
-      { id: 'b2', name: 'big-c.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[2].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 0, h: 0 }
+      { id: 'b2', name: 'big-c.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[2].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 0, h: 0 },
+      { id: 'b3', name: 'small.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[3].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 1400, h: 900 }
     ];
     S.sourceCount = () => S.items.length;
     A.showGallery(); A.renderSources(); document.getElementById('topbar').hidden = false;
@@ -351,6 +355,30 @@ app.whenReady().then(async () => {
     await wait(600);
     const settledW = img.naturalWidth;
     return { slow, loads, widths, thumbHits, midW, settledW };
+  })()`);
+
+  /* 小图（1.26MP）连翻时**不许**铺缩略图。
+     理由（v1.20.8）：铺缩略图的代价不是解码，是用户看到"先糊一下、140ms 后才清晰"。
+     一张 1.26MP 的图解码只要十几毫秒，画面本来就一直是清晰的。
+     这里先**确保缩略图在内存里**（不然测到的是"没命中"，而不是"命中但不铺"，
+     两者完全不同），再用 <100ms 的间隔连翻过去，看最终挂上去的是不是原图。 */
+  R.small = await w.webContents.executeJavaScript(`(async () => {
+    const L = window.Lightbox, T = window.Thumbs;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const m = State.items[3];
+    await T.thumbURL(m, 148);          // 先把缩略图备好，保证 peek 能命中
+    const peek = !!T.thumbPeek(m, 148);
+    L.open(L.list, L.list[0]);
+    await wait(400);
+    L.nav(1); L.nav(1); L.nav(1);      // 连续三次，间隔 <1ms → 全走连翻分支
+    await wait(120);
+    const rec = L._rec;
+    return {
+      peek: peek, idx: L.i,
+      thumb: !!(rec && rec.thumb),
+      natW: document.getElementById('lbImg').naturalWidth,
+      name: L.meta && L.meta.name,
+    };
   })()`);
 
   console.log('LBSCREEN ' + JSON.stringify(R, null, 1));  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { }

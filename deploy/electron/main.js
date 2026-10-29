@@ -1152,21 +1152,29 @@ function ensureFrameWindow(target) {
          这时候调 `setAlwaysOnTop(true)` 会被 Windows 直接丢掉，**连调 5 次、跨 800ms
          也一样**；而等窗口真的显示出来之后，同样一次调用立刻生效（实测点一下📌就置顶了）。
          所以这里不能"show 完顺手设一次"，要**等到 isVisible() 为真再设**。
-         有界（约 5 秒）：一直设不上就放弃，绝不留下一个永不退出的定时器；
-         也不在设成功之后继续强制 —— 用户随时可能按📌取消置顶，那是有意的状态。 */
+         有界（约 7.5 秒）：一直设不上就放弃，绝不留下一个永不退出的定时器；
+         也不在设成功之后继续强制 —— 用户随时可能按📌取消置顶，那是有意的状态。
+
+         v1.20.8 又加固了一次：全量回归跑到第 16 个套件时（机器已连跑 6 分钟），
+         这条**偶发**失败（单独跑 4 次里红 1 次）。实测失败时的快照是
+         `frameOpenInfo.alwaysOnTop=false` —— 窗口是可见的、图也画出来了，
+         只有置顶位没落上。所以：① 重试从 33 次放宽到 50 次（7.5 秒）；
+         ② 每次重试前先 `setAlwaysOnTop(false)` 再 `true` —— 先清掉可能残留的
+         半截状态，比反复调同一个方向更容易让窗口管理器接受。 */
       const pinWhenVisible = (left) => {
         if (!frameWin || frameWin.isDestroyed()) return;
         if (!frameWin.isVisible()) {
           if (left > 0) setTimeout(() => pinWhenVisible(left - 1), 150);
           return;
         }
+        if (left < 50) frameWin.setAlwaysOnTop(false);   // 先清残留状态再设
         frameWin.setAlwaysOnTop(true);
         trace('frame pin-when-visible vis=true aot=' + frameWin.isAlwaysOnTop() + ' left=' + left);
         if (!frameWin.isAlwaysOnTop() && left > 0) {
           setTimeout(() => pinWhenVisible(left - 1), 150);
         }
       };
-      pinWhenVisible(33);
+      pinWhenVisible(50);
       frameWin.focus();
     });
     /* **渲染进程崩溃 / 无响应也必须收尾**（v1.11.0 补）。

@@ -1421,7 +1421,8 @@ const SUITES = [
       const check = ctx.check, d = ctx.data;
       if (!d || !d.make) { check('探针返回数据', false, '未解析到 LBSCREEN 输出'); return; }
       const b = d.before || {}, m = d.make, s = d.swap || {}, z = d.zoom || {},
-        u = d.unknown || {}, g = d.gate || null, k = d.keep || null;
+        u = d.unknown || {}, g = d.gate || null, k = d.keep || null,
+        sm = d.small || null;
 
       check('夹具确实是"远大于屏幕"的原图（否则这条路根本没被测到）',
         (d.fixtures || []).length >= 2 && d.fixtures[0].w >= 2600,
@@ -1517,6 +1518,14 @@ const SUITES = [
       check('停手之后占位小图被真图换掉（不会一直糊着）',
         rp && rp.settledW > 1280,
         rp ? ('midW=' + rp.midW + ' settledW=' + rp.settledW) : '缺 rapid 步骤');
+      /* 小图（≤4MP）连翻时**不许**铺缩略图：铺上去的代价不是解码，而是
+         用户看到"先糊一下、140ms 后才清晰"。1.26MP 的图解码只要十几毫秒，
+         画面本来就一直是清晰的。这条断言的前提是"缩略图确实在内存里"
+         （peek=true）—— 否则它退化成"没命中"，什么也证明不了。 */
+      check('小图（≤4MP）连翻时直接上原图，不铺糊缩略图',
+        sm && sm.peek === true && sm.thumb === false && sm.natW >= 1000,
+        sm ? ('peek=' + sm.peek + ' thumb=' + sm.thumb + ' natW=' + sm.natW
+          + ' name=' + sm.name) : '缺 small 步骤');
     },
   },
 

@@ -265,6 +265,40 @@ const MEASURE = (delta) => `(async () => {
        如果接近 0，说明按住键的时候屏幕是完全冻结的 —— 每按一次就把上一次的加载
        掐掉（`img.src` 换了就等于取消），而一张要 130ms 才解完，33ms 一次永远解不完。
        那用户看到的就是"按住没反应"，也就是他说的"慢"。 */
+    /* 暖连翻：**不清缓存** —— 模拟最常见的真实路径：
+       用户先看网格（网格已经为每张瓦片生成过缩略图）→ 点开灯箱 → 按住方向键。
+       下面那段 repeat 会主动 `forget` 掉全部缓存去测"最坏情况"，
+       两者差别很大，必须分开量，否则会把最坏情况当成用户的日常。 */
+    out.repeatWarm = await c.eval(`(async () => {
+      const L = window.Lightbox, T = window.Thumbs, img = document.getElementById('lbImg');
+      L.open(L.list, L.list[0]);
+      await new Promise((r) => setTimeout(r, 900));
+      let during = 0;
+      const onLoad = () => { during++; };
+      img.addEventListener('load', onLoad);
+      const paints = [];
+      let lastSig = img.naturalWidth;
+      let sampling = true;
+      const sample = () => {
+        if (!sampling) return;
+        const w = img.naturalWidth;
+        if (w && w !== lastSig) { lastSig = w; paints.push(1); }
+        requestAnimationFrame(sample);
+      };
+      const t0 = performance.now();
+      requestAnimationFrame(sample);
+      for (let k = 0; k < 45; k++) {
+        L.nav(1);
+        await new Promise((r) => setTimeout(r, 33));
+      }
+      sampling = false;
+      img.removeEventListener('load', onLoad);
+      const tBurst = +(performance.now() - t0).toFixed(0);
+      return { paints: paints.length, during: during, tBurst: tBurst,
+        dpr: window.devicePixelRatio, memHits: T.stats().memHits,
+        misses: T.stats().misses, screenMakes: T.stats().screenMakes };
+    })()`);
+
     out.repeat = await c.eval(`(async () => {
       const L = window.Lightbox, T = window.Thumbs, img = document.getElementById('lbImg');
       /* 先把所有"代"踢掉 —— 不踢的话每一张都是 blob 命中（十几毫秒），
@@ -326,7 +360,9 @@ const MEASURE = (delta) => `(async () => {
       });
       img.removeEventListener('load', onLoad);
       const uniq = []; seen.forEach((v) => { if (uniq.indexOf(v) < 0) uniq.push(v); });
-      return { during, paints, tBurst, settle, midNat, natW: img.naturalWidth, seen: uniq, endNat: img.naturalWidth, target: target && target.name };
+      return { during, paints, tBurst, settle, midNat, natW: img.naturalWidth, seen: uniq, endNat: img.naturalWidth, target: target && target.name,
+        dpr: window.devicePixelRatio, screenMakes: T.stats().screenMakes, screenHits: T.stats().screenHits,
+        memHits: T.stats().memHits, misses: T.stats().misses };
     })()`);
     c.close();
   } catch (e) {

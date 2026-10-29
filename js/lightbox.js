@@ -186,6 +186,9 @@
       if (this._preT) { clearTimeout(this._preT); this._preT = 0; }
       if (this._spinT) { clearTimeout(this._spinT); this._spinT = 0; }
       if (this._settleT) { clearTimeout(this._settleT); this._settleT = 0; }
+      if (this._stripT) { clearTimeout(this._stripT); this._stripT = 0; }
+      this._stripOrder = null;
+      this._stripSlots = null;
       // 若处于全屏，先退出全屏（异步），再隐藏
       if (document.fullscreenElement === this.el) {
         const done = () => {
@@ -442,22 +445,41 @@
 
            注意用 148 而不是更大的宽度：`thumbURL` 会按 dpr 向上取档，
            148×2 → 320 档，正好是条带已经生成并落盘的那一档 —— 命中缓存，
-           既不会重解，也不会为翻过的每一张多写一份缩略图到磁盘。 */
-        let settled = false;
-        Thumbs.thumbURL(meta, 148).then((u) => {
-          if (settled || !still()) return;
-          if (!u) { start(null); return; }
+           既不会重解，也不会为翻过的每一张多写一份缩略图到磁盘。
+
+           **只用 peek，不等生成**（v1.20.8）：原来这里是 `await thumbURL(...)`，
+           没命中就当场解码原图 + 缩放 + 编码（24MP 约 30–50ms、48MP 几百 ms）。
+           等它 resolve 时用户往往已经又按了一下，`still()` 变假 → 这份工作**整个白做**，
+           却实实在在抢了 CPU。实测 Downloads（15 张图）连翻 45 次 miss 了 25 次，
+           全是白干，而 miss 期间屏幕什么也没变 —— 这正是"快速切换很慢"的直接来源。
+           现在没命中就退回原图：小图（≤2MP）解原图只要 10–20ms，比现场生成缩略图
+           更快，画面还更清晰（不再是一张糊的 320px）。 */
+        const peekThumb = Thumbs.thumbPeek ? Thumbs.thumbPeek(meta, 148) : null;
+        /* 小图**不铺缩略图**，直接解原图。
+           这是 v1.20.8 针对"Downloads 里都是小图却还嫌慢"改的：
+           铺缩略图的代价不是解码，而是**用户看到的是"先糊、140ms 后才清晰"**——
+           本来一张 1.8MP 的图解码只要 13ms、画面一直是清晰的，非要先糊一下反而更难受。
+           判据用 4MP：4MP 解码约 20–30ms，能跟上 33ms 的按键节奏，清晰度还保住了。
+           超过 4MP（12/24/48MP）才值得用缩略图顶 —— 那些图解码要 65–260ms，
+           不铺的话按住方向键时屏幕会一直不动。 */
+        const mp = (meta.w > 0 && meta.h > 0) ? (meta.w * meta.h) : 0;
+        const small = mp > 0 && mp <= 4e6;
+        if (peekThumb && !small) {
           start({
-            url: u, side: 0, w: 0, h: 0,
+            url: peekThumb, side: 0, w: 0, h: 0,
             tw: meta.w > 0 ? meta.w : 0, th: meta.h > 0 ? meta.h : 0,
             full: false, thumb: true,
           });
-        }).catch(() => { if (!settled && still()) start(null); });
+        } else {
+          /* 没有现成的缩略图（或者本身就是小图）→ 直接解原图。
+             **不要**在这里 await 生成缩略图：生成一份要 30–600ms，
+             而按住方向键时下一次按键 33ms 后就来，生成完也没人用得上。 */
+          start(null);
+        }
         this._settleT = setTimeout(() => {
           this._settleT = 0;
           if (!still()) return;
           if (this._rec && !this._rec.thumb) return;   // 已经是真图了，别重来
-          settled = true;
           start(Thumbs.screenPeek ? Thumbs.screenPeek(meta, cssW) : null);
         }, 140);
       } else {
@@ -596,6 +618,20 @@
       this.render();
     },
 
+    /**
+     * 打开灯箱时**不要**预取附近几张的代 —— 试过，退化了。
+     *
+     * 想法很自然："用户快速切换时不停留，900ms 的停留预取触发不了，那就打开时就备好"。
+     * 实测（v1.20.8，Downloads 15 张，冷连翻 45 次按键）：
+     *   不预取 → 画面变化 32/45，松手后清晰 381ms
+     *   ±3 预取 → 画面变化 22/45，松手后清晰 288ms
+     * 也就是**按住时的跟手程度掉了三成**，换来的只是松手后快 90ms。
+     * 而用户报的就是"快速切换慢"，按住时动不动才是他的痛点 —— 所以这条回退了。
+     *
+     * 这是 v1.20.5 同一个坑的第二次：**任何后台解码都会和"你正在等的那一帧"抢 CPU**，
+     * 包括 requestIdleCallback（页面在连翻时并不空闲，它照样会插进来）。
+     * 以后想"提前备好"之前，先量 `paints`（按住时画面变化次数），别只看松手后的耗时。
+     */
     _preloadNeighbors() {
       /* 只预取紧邻的两张（上一张/下一张），不再管 ±2：
          生成一代是**重活**（24MP 约 170ms、48MP 能到 900ms 以上），同时铺开四张会把
@@ -1010,11 +1046,17 @@
     /* ---------- 缩略图条 ---------- */
     _buildStrip() {
       this.strip.textContent = '';
+      if (this._stripT) { clearTimeout(this._stripT); this._stripT = 0; }
       const n = this.list.length;
-      if (n < 2) { this.stripBtn.classList.add('disabled'); return; }
+      if (n < 2) { this.stripBtn.classList.add('disabled'); this._stripSlots = null; return; }
       this.stripBtn.classList.remove('disabled');
       // 超长列表条带截断，保证打开开销可接受
       const shown = Math.min(n, 1200);
+      /* 分两段：先**同步**把 DOM 建完（很快，纯 createElement），
+         缩略图另外**分批**填 —— 原来是一个循环里直接调 1200 次 `thumbURL`，
+         等于打开灯箱的瞬间同时发起 1200 份「解码原图 + 缩放 + 编码」，
+         把主线程和 CPU 一起打满，紧接着的第一次切图就被拖慢（v1.20.8）。 */
+      const slots = new Array(shown);
       for (let k = 0; k < shown; k++) {
         const m = this.list[k];
         const b = document.createElement('button');
@@ -1024,14 +1066,12 @@
         const ic = document.createElement('span');
         ic.className = 'tile-err-ic';
         ic.style.cssText = 'position:absolute;inset:0;margin:auto;width:15px;height:15px;';
+        let img = null;
         if (!m.bad) {
-          const img = document.createElement('img');
+          img = document.createElement('img');
           img.alt = '';
           img.loading = 'lazy';
           img.decoding = 'async';
-          Thumbs.thumbURL(m, 148).then((url) => {
-            if (url && b.isConnected) { img.src = url; ic.remove(); }
-          });
           b.appendChild(img);
         }
         b.appendChild(ic);
@@ -1041,9 +1081,44 @@
         });
         b._idx = k;
         this.strip.appendChild(b);
+        slots[k] = { b: b, ic: ic, img: img, m: m };
       }
+      this._stripSlots = slots;
+      /* 填充顺序：**当前这张和它的邻居先来**，然后向两侧展开。
+         用户打开灯箱第一眼看的是当前张，接着最可能按下一张 —— 让这些先出图，
+         远处的等有空再说。 */
+      const order = [];
+      const seen = new Set();
+      const push = (k) => {
+        if (k >= 0 && k < shown && !seen.has(k)) { seen.add(k); order.push(k); }
+      };
+      push(this.i);
+      for (let d = 1; d < shown; d++) { push(this.i + d); push(this.i - d); }
+      this._stripOrder = order;
       this._updateStripSel();
       this._checkStripEnd();
+      this._fillStrip(0);
+    },
+
+    /** 分批填条带缩略图：每批 6 张，填完让出主线程再填下一批 */
+    _fillStrip(pos) {
+      const order = this._stripOrder, slots = this._stripSlots;
+      if (!order || !slots) return;
+      const end = Math.min(pos + 6, order.length);
+      for (let p = pos; p < end; p++) {
+        const s = slots[order[p]];
+        if (!s || !s.img || s.filled) continue;
+        s.filled = true;
+        Thumbs.thumbURL(s.m, 148).then((url) => {
+          if (url && s.b.isConnected) { s.img.src = url; s.ic.remove(); }
+        }).catch(() => {});
+      }
+      if (end < order.length) {
+        this._stripT = setTimeout(() => {
+          this._stripT = 0;
+          if (this.openFlag) this._fillStrip(end);
+        }, 0);
+      }
     },
 
     _updateStripSel() {
