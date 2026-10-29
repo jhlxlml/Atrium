@@ -87,6 +87,20 @@
   }
 
   /**
+   * 缓存里的这一代够不够"这次请求"用。
+   *
+   * 为什么不能只写 `rec.side >= side`（v1.20.9）：`full: true` 表示**这就是原图**，
+   * 它的 `side` 记的是原图边长（如 958），而请求档位可能是 1280 —— 于是 `958 >= 1280`
+   * 恒假，这类"原图本来就比档位小"的图**永远不命中**，每停一张就重跑一次 `screenURL`
+   * （还会为 File 条目重新 createObjectURL 一次，旧 URL 没人 revoke）。
+   * 原图永远够用 —— 没有比它更清楚的版本了，所以 `full` 直接放行。
+   *
+   * 实测（Downloads 15 张，每张停 3 秒）：8 张"原图小于档位"的图在两圈里
+   * 全部 peek=N，而它们占着 `screens` 的槽位、把真正有用的代挤出去。
+   */
+  const screenOk = (rec, side) => !!rec && (!!rec.full || rec.side >= side);
+
+  /**
    * 取一张"够屏幕显示"的位图 URL。
    * @param {object} meta 条目
    * @param {number} cssW 图片将要占的 CSS 像素宽（会乘 dpr 再向上取档）
@@ -99,7 +113,7 @@
     const need = Math.max(320, Math.round((cssW || 1200) * dpr));
     const side = screenBucket(need);
     const hit = screens.get(meta.id);
-    if (hit && hit.side >= side) { stats.screenHits++; return hit; }
+    if (screenOk(hit, side)) { stats.screenHits++; return hit; }
 
     // 先知道原图多大：原图本来就不比目标档大，就直接给原图，省一次 canvas 编码
     let ow = meta.w > 0 ? meta.w : 0;
@@ -112,8 +126,12 @@
     if (maxSide > 0 && maxSide <= side) {
       const url = elURL(meta);
       if (!url) return null;
+      const old = screens.get(meta.id);
       const rec = { url, side: maxSide, w: ow, h: oh, tw: ow, th: oh, full: true };
       screens.set(meta.id, rec);
+      /* 覆盖同一个键时 LRU 不会 revoke 旧值 —— File 条目每跑一次这里就多一个
+         blob URL（旧的那个再也没人放得掉）。 */
+      if (old && old.url && old.url !== url) revoke(old.url);
       return rec;
     }
 
@@ -427,7 +445,7 @@
       const dpr = Math.min(global.devicePixelRatio || 1, 2);
       const side = screenBucket(Math.max(320, Math.round((cssW || 1200) * dpr)));
       const hit = screens.get(meta.id);
-      return (hit && hit.side >= side) ? hit : null;
+      return screenOk(hit, side) ? hit : null;
     },
 
     /**
@@ -480,7 +498,7 @@
     setDesired,
 
     /** 性能计数（探针用） */
-    stats: () => Object.assign({}, stats),
+    stats: () => Object.assign({}, stats, { screensSize: screens.map.size, screensCap: screens.cap }),
     resetStats() { stats.decodes = 0; stats.memHits = 0; stats.diskHits = 0; stats.misses = 0; stats.screenHits = 0; stats.screenMakes = 0; },
 
     releaseBig(id) {

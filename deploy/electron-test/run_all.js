@@ -1422,7 +1422,7 @@ const SUITES = [
       if (!d || !d.make) { check('探针返回数据', false, '未解析到 LBSCREEN 输出'); return; }
       const b = d.before || {}, m = d.make, s = d.swap || {}, z = d.zoom || {},
         u = d.unknown || {}, g = d.gate || null, k = d.keep || null,
-        sm = d.small || null;
+        sm = d.small || null, wr = d.wrap || null, fh = d.fullhit || null;
 
       check('夹具确实是"远大于屏幕"的原图（否则这条路根本没被测到）',
         (d.fixtures || []).length >= 2 && d.fixtures[0].w >= 2600,
@@ -1515,9 +1515,15 @@ const SUITES = [
           && Array.isArray(rp.widths) && rp.widths.every(function (x) { return x <= 2000; }),
         rp ? ('loads=' + rp.loads + ' thumbHits=' + rp.thumbHits
           + ' widths=' + JSON.stringify(rp.widths)) : '缺 rapid 步骤');
+      /* 判"换掉了"不能写 settledW > 1280 —— 那等于假设"停手后一定停在 2600 宽的大图上"，
+         而 14 次 nav 落在哪张取决于夹具张数（加一张 tiny.png 就变）。占位小图是
+         thumbPeek(meta, 148) → 桶 192（dpr=2 时 320），所以 > 320 就足以排除占位图，
+         再看 endThumb（这一刻挂着的到底是不是占位）做双保险。 */
       check('停手之后占位小图被真图换掉（不会一直糊着）',
-        rp && rp.settledW > 1280,
-        rp ? ('midW=' + rp.midW + ' settledW=' + rp.settledW) : '缺 rapid 步骤');
+        rp && rp.settledW > 320 && rp.endThumb === false,
+        rp ? ('midW=' + rp.midW + ' settledW=' + rp.settledW
+          + ' end=' + rp.endName + ' endMetaW=' + rp.endMetaW + ' endThumb=' + rp.endThumb)
+          : '缺 rapid 步骤');
       /* 小图（≤4MP）连翻时**不许**铺缩略图：铺上去的代价不是解码，而是
          用户看到"先糊一下、140ms 后才清晰"。1.26MP 的图解码只要十几毫秒，
          画面本来就一直是清晰的。这条断言的前提是"缩略图确实在内存里"
@@ -1526,6 +1532,35 @@ const SUITES = [
         sm && sm.peek === true && sm.thumb === false && sm.natW >= 1000,
         sm ? ('peek=' + sm.peek + ' thumb=' + sm.thumb + ' natW=' + sm.natW
           + ' name=' + sm.name) : '缺 small 步骤');
+
+      /* 从最后一张按"下一张"要绕回第 0 张，而第 0 张的代必须已经备好（v1.20.9）。
+         `nav()` 一直是 `(i + delta + n) % n`，`_preloadNeighbors()` 却直接取 `list[i+1]`
+         —— 在最后一张拿到 undefined 就什么也不做，于是第 0 张从来没被预取过，
+         而它多半已被 `screens` 的 8 槽 LRU 淘汰，绕回去只能整张解原图。
+         实测（12 张 24MP、每张停 3 秒、两圈、反向实验各跑一次）：
+           不环绕  绕回第 0 张 natW=6000，解 143.8 / 158.8ms；第二圈"打开灯箱" 209.9ms
+           环绕后  绕回第 0 张 natW=1920，解  14.1 /  14.2ms；第二圈"打开灯箱"   5.6ms
+         用户报的"第二轮打开就很慢"就是这一下 —— 第二圈是从第 0 张开始的。 */
+      check('最后一张按“下一张”绕回第 0 张时，第 0 张的代已经备好（v1.20.9）',
+        wr && wr.idx === 0 && wr.peekFirst !== null && wr.recFull === false
+          && wr.recW > 0 && wr.recW < 2600 && wr.natW === wr.recW,
+        wr ? ('idx=' + wr.idx + ' peekFirst=' + JSON.stringify(wr.peekFirst)
+          + ' recW=' + wr.recW + ' full=' + wr.recFull + ' natW=' + wr.natW
+          + ' peekNext=' + wr.peekNext) : '缺 wrap 步骤');
+
+      /* 原图**比屏幕档位小**的图，代也必须能命中缓存（v1.20.9）。
+         这类图走 `screenURL` 里"原图不比目标档大就直接给原图"那一支，记的 `side` 是
+         原图边长（900），而请求档位是 1280 —— 旧判据 `hit.side >= side` 恒假，
+         于是**永远不命中**：每停一张就重跑一次 screenURL（File 条目还会重新
+         createObjectURL，旧 URL 没人 revoke），并且白占 `screens` 的槽位，
+         把真正有用的代挤出去。实测 Downloads 15 张里 8 张是这种情况，两圈全是 peek=N。 */
+      /* 判据不能写 recSide < need —— need 是**CSS 像素**（844.5），recSide 是**原图像素**
+         （900），两个单位比大小没有意义。真正要钉的是"请求档位（screenBucket(844.5) =
+         1280）比原图（900）大"，所以这里比 1280。 */
+      check('原图比屏幕档位小的图，代也能命中缓存（full 直通，v1.20.9）',
+        fh && fh.full === true && fh.recSide < 1280 && fh.peek === true && fh.same === true,
+        fh ? ('full=' + fh.full + ' recSide=' + fh.recSide + ' need=' + fh.need
+          + ' recW=' + fh.recW + ' peek=' + fh.peek + ' same=' + fh.same) : '缺 fullhit 步骤');
     },
   },
 

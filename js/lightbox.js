@@ -640,11 +640,26 @@
 
          两张还分先后：**下一张**最可能是用户马上要的，排前面；上一张等空闲再备。
          `Thumbs.preloadScreen` 内部还有一条串行链，保证同一时刻只生成一代 ——
-         否则两张并发同样会压到"正在等的那一帧"上。 */
-      const next = this.list[this.i + 1];
-      if (next) Thumbs.preloadScreen(next, this._needPx(next), true);
-      const prev = this.list[this.i - 1];
-      if (prev) Thumbs.preloadScreen(prev, this._needPx(prev), false);
+         否则两张并发同样会压到"正在等的那一帧"上。
+
+         **必须环绕**（v1.20.9）。`nav()` 是 `(i + delta + n) % n`，在最后一张按"下一张"
+         会回到第 0 张；这里原来直接取 `list[i + 1]`，在最后一张拿到 undefined 就什么
+         也不做 —— 于是"第二轮"的第一张（第 0 张）从来没被预取过，而它多半已经被
+         `screens` 那个 8 槽 LRU 淘汰，绕回去时只能整张解原图。
+         实测（12 张 24MP、每张停 3 秒、连走两圈，两次复现）：
+           普通切一张    peek=Y/1920  解 9–16ms
+           绕回第 0 张   peek=N       解 144.6 / 147.6ms（natW=6000，真解原图）
+         差一个数量级，而且正好落在"第二轮"的起点上 —— 用户说的"第二轮打开就很慢"
+         就是这一下。预取这一步只要 3 秒，远比"停下来才补"划算。 */
+      const n = this.list.length;
+      if (n < 2) return;
+      const ni = (this.i + 1) % n;
+      const pi = (this.i - 1 + n) % n;
+      const next = this.list[ni];
+      const prev = this.list[pi];
+      if (next && ni !== this.i) Thumbs.preloadScreen(next, this._needPx(next), true);
+      /* pi === ni 只会在 n === 2 时发生（上一张和下一张是同一张），别预取两遍。 */
+      if (prev && pi !== this.i && pi !== ni) Thumbs.preloadScreen(prev, this._needPx(prev), false);
     },
 
     /* ---------- 缩放（居中 + 尽量放大整张可见） ---------- */

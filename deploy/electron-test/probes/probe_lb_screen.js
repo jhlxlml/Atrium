@@ -102,6 +102,9 @@ app.whenReady().then(async () => {
     /* 小图：1.26MP。连翻时**不该**铺缩略图（v1.20.8）—— 它解码只要十几毫秒，
        铺一张 320px 的糊图再换回来，反而让人看到"先糊一下"。 */
     { n: 'small.png', w: 1400, h: 900 },
+    /* 更小的图：最长边 900，**小于**屏幕档位 1280 —— 走"原图不比档位大就直接给原图"
+       那一支（v1.20.9 修的缓存契约就在这一支上）。 */
+    { n: 'tiny.png', w: 900, h: 600 },
   ];
   const files = specs.map((s) => {
     const abs = path.join(TMP, s.n);
@@ -124,7 +127,8 @@ app.whenReady().then(async () => {
       { id: 'b0', name: 'big-a.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[0].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 2600, h: 1800 },
       { id: 'b1', name: 'big-b.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[1].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 3200, h: 2000 },
       { id: 'b2', name: 'big-c.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[2].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 0, h: 0 },
-      { id: 'b3', name: 'small.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[3].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 1400, h: 900 }
+      { id: 'b3', name: 'small.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[3].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 1400, h: 900 },
+      { id: 'b4', name: 'tiny.png', src: 'all', sid: 's0', size: 1, path: ${JSON.stringify(files[4].abs)}, ext: 'png', lastModified: 1, state: 'idle', w: 900, h: 600 }
     ];
     S.sourceCount = () => S.items.length;
     A.showGallery(); A.renderSources(); document.getElementById('topbar').hidden = false;
@@ -354,7 +358,11 @@ app.whenReady().then(async () => {
     /* ③ 停手 600ms：占位小图必须被真图换掉 */
     await wait(600);
     const settledW = img.naturalWidth;
-    return { slow, loads, widths, thumbHits, midW, settledW };
+    /* 记下"停手之后停在哪张图上" —— 加了新夹具之后条目数变了，
+       12 % n 落到的位置跟着变，只看宽度会读不出是哪张。 */
+    return { slow, loads, widths, thumbHits, midW, settledW,
+      endIdx: L.i, endName: L.meta && L.meta.name, endMetaW: L.meta && L.meta.w,
+      endThumb: !!(L._rec && L._rec.thumb) };
   })()`);
 
   /* 小图（1.26MP）连翻时**不许**铺缩略图。
@@ -378,6 +386,55 @@ app.whenReady().then(async () => {
       thumb: !!(rec && rec.thumb),
       natW: document.getElementById('lbImg').naturalWidth,
       name: L.meta && L.meta.name,
+    };
+  })()`);
+
+  /* 从最后一张按"下一张"要**绕回第 0 张**（v1.20.9）。
+     `nav()` 一直是 `(i + delta + n) % n`，可 `_preloadNeighbors()` 原来直接取
+     `list[i + 1]` —— 在最后一张拿到 undefined 就什么也不做，于是第 0 张从来没被预取过，
+     而它多半已经被 `screens` 的 8 槽 LRU 淘汰，绕回去时只能整张解原图。
+     实测（12 张 24MP、每张停 3 秒、连走两圈、两次复现）：
+       普通切一张    peek=Y/1920  解 9–16ms
+       绕回第 0 张   peek=N       解 144.6 / 147.6ms（natW=6000）
+     修好之后绕回是 14.1 / 14.2ms，而且第二圈"打开灯箱"从 232–498ms 降到 5.6ms。
+     这条断言直接验"最后一张停留之后，第 0 张的代备好了没有"。 */
+  R.wrap = await w.webContents.executeJavaScript(`(async () => {
+    const L = window.Lightbox, T = window.Thumbs, img = document.getElementById('lbImg');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const n = L.list.length;
+    T.forget(L.list[0].id);            // 从零开始：假装第 0 张从没被备过
+    L.open(L.list, L.list[n - 2]);
+    await wait(2400);                  // 900ms 停留预取 + 生成一代的时间
+    const peekNext = !!T.screenPeek(L.list[n - 1], L._needPx(L.list[n - 1]));
+    L.nav(1);                          // 走到最后一张
+    await wait(2400);                  // 这一刻应当预取**环绕到第 0 张**
+    const peekFirst = T.screenPeek(L.list[0], L._needPx(L.list[0]));
+    L.nav(1);                          // 再按一次 → 环绕回第 0 张
+    await wait(80);
+    const rec = L._rec;
+    return {
+      n, peekNext, peekFirst: peekFirst ? { w: peekFirst.w, full: !!peekFirst.full } : null,
+      idx: L.i, recW: rec ? rec.w : 0, recFull: rec ? !!rec.full : false,
+      natW: img.naturalWidth,
+    };
+  })()`);
+
+  /* 原图**比屏幕档位小**的图，代必须能命中缓存（v1.20.9）。
+     走的是 `screenURL` 里"原图不比目标档大就直接给原图"那一支，它记的 `side` 是
+     原图边长（900），而请求档位是 1280 —— 旧判据 `hit.side >= side` 恒假，
+     于是这类图**永远不命中**，每停一张就重跑一次 screenURL（还会为 File 条目
+     重新 createObjectURL，旧 URL 没人 revoke），并且白占 `screens` 的槽位。
+     实测（Downloads 15 张、每张停 3 秒）：8 张这样的图两圈里全是 peek=N。 */
+  R.fullhit = await w.webContents.executeJavaScript(`(async () => {
+    const L = window.Lightbox, T = window.Thumbs;
+    const m = State.items[4];          // tiny.png 900×600
+    T.forget(m.id);
+    const need = L._needPx(m);
+    const rec = await T.screenURL(m, need);
+    const peek = T.screenPeek(m, need);
+    return {
+      need, full: !!(rec && rec.full), recSide: rec && rec.side, recW: rec && rec.w,
+      peek: !!peek, same: !!(peek && rec && peek.url === rec.url),
     };
   })()`);
 
