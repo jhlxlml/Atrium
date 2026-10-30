@@ -326,6 +326,48 @@
     return null;
   };
 
+  /* ---------- 动图探测（只读文件头） ----------
+     灯箱会把"屏幕尺寸代"用 canvas 重新编码成静态图 —— 对动图来说这是毁灭性的：
+     GIF 会停在第一帧，APNG / 动态 WebP 同理。而"是不是动图"从扩展名看不出来
+     （.png / .webp 都可能动），所以读文件头时顺手判一下：
+
+       PNG  ：在 IDAT 之前出现 acTL 块（规范要求它在 IDAT 前，前 64KB 一定覆盖）
+       WebP ：出现 ANIM 块（VP8X 的动画标志位在 flags 的 bit1，这里按块名判更直接）
+       GIF  ：一律当作动图（静态 GIF 极少，宁可少走一条优化）
+
+     返回 true 表示"不要栅格化它"。认不出/读不全一律返回 false（保守：照常走代理）。 */
+  U.looksAnimated = (input) => {
+    try {
+      let b;
+      if (input instanceof Uint8Array) b = input;
+      else if (typeof ArrayBuffer !== 'undefined' && input instanceof ArrayBuffer) b = new Uint8Array(input);
+      else if (input && input.buffer) b = new Uint8Array(input.buffer, input.byteOffset || 0, input.byteLength);
+      else return false;
+      const n = b.length;
+      if (n < 12) return false;
+      // GIF87a / GIF89a
+      if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return true;
+      // PNG：找 acTL
+      if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) {
+        for (let i = 8; i + 8 <= n; i++) {
+          // 块长度(4) + 类型(4)；遇到 IDAT 还没见到 acTL 就是静态
+          if (b[i + 4] === 0x49 && b[i + 5] === 0x44 && b[i + 6] === 0x41 && b[i + 7] === 0x54) return false;
+          if (b[i + 4] === 0x61 && b[i + 5] === 0x63 && b[i + 6] === 0x54 && b[i + 7] === 0x4C) return true;
+        }
+        return false;
+      }
+      // WebP：RIFF....WEBP，找 ANIM 块
+      if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+          b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) {
+        for (let i = 12; i + 4 <= n; i++) {
+          if (b[i] === 0x41 && b[i + 1] === 0x4E && b[i + 2] === 0x49 && b[i + 3] === 0x4D) return true;
+        }
+        return false;
+      }
+      return false;
+    } catch (e) { return false; }
+  };
+
   /* ---------- HEIC/HEIF 可解码性探测（P1-2） ----------
      以前是无条件把 .heic/.heif 标成 bad，于是「机器上真的装了 HEVC 解码器、
      Chromium 能正常显示」的用户也被判死。现在改为运行时能力探测：

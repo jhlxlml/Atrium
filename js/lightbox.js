@@ -189,6 +189,13 @@
       if (this._stripT) { clearTimeout(this._stripT); this._stripT = 0; }
       this._stripOrder = null;
       this._stripSlots = null;
+      /* 关灯箱：把正在显示的那个 URL 解钉（这时才允许缓存层回收它），
+         并作废"还没跑"的后台预取 —— 用户已经走了，没必要再为几张图解码。 */
+      if (this._pinnedURL && global.Thumbs && global.Thumbs.unpinURL) {
+        global.Thumbs.unpinURL(this._pinnedURL);
+        this._pinnedURL = null;
+      }
+      if (global.Thumbs && global.Thumbs.cancelPrefetch) global.Thumbs.cancelPrefetch();
       // 若处于全屏，先退出全屏（异步），再隐藏
       if (document.fullscreenElement === this.el) {
         const done = () => {
@@ -412,7 +419,7 @@
           if (rec && rec.thumb) { start(null); return; }
           this._showErr('浏览器无法解码这张图片');
         };
-        this.img.src = url;
+        this._setSrc(url);
       };
 
       this.scale = 1; this.tx = 0; this.ty = 0; this.base = 1;
@@ -509,6 +516,22 @@
     },
 
     /**
+     * 换图统一入口：钉住新 URL、放掉旧 URL，再写 src。
+     *
+     * 为什么要"钉"：缓存层（thumbs/bigs/screens 三个 LRU）在淘汰或尺寸升级时
+     * 会 revoke 掉被替换的 blob URL，而那个 URL 可能正是此刻屏幕上这一帧。
+     * 被 revoke 的 blob 一旦需要重新取资源，画面就碎了。
+     * pinURL/unpinURL 让"正在显示"的 URL 延后回收，换图/关闭时再补做。
+     */
+    _setSrc(url) {
+      const T = global.Thumbs;
+      if (this._pinnedURL && this._pinnedURL !== url && T && T.unpinURL) T.unpinURL(this._pinnedURL);
+      this._pinnedURL = url || null;
+      if (url && T && T.pinURL) T.pinURL(url);
+      this.img.src = url;
+    },
+
+    /**
      * 记下当前这张图的尺寸。
      * 关键：屏幕上那张**可能是缩小过的"代"**，它的 naturalWidth 绝不是原图尺寸 ——
      * 直接写进尺寸库会污染网格（thumbURL 那边专门为此加了 `res.tw !== res.dw` 判断）。
@@ -565,7 +588,7 @@
         if (Loader && Loader.recordDims) Loader.recordDims(meta, newNat, this.nh);
         this.apply();          // 只重算 transform：不动类名、不动 src 之外的东西 → 视觉零跳变
       };
-      this.img.src = url;
+      this._setSrc(url);
     },
 
     /** 灯箱里「为什么打不开」的人话解释（P1-2：区分格式不支持 / 文件损坏 / 环境缺解码器） */

@@ -89,8 +89,8 @@ async function testA() {
   A.ok('A1 尺寸升级生成了更大的代', !!r2 && r2.side === 2560, '实际 ' + (r2 && r2.side));
   A.eq('A1 升级时新建了一个 URL', ledger.createdCount, 2);
   A.eq('A1 被覆盖的旧 URL 已回收', ledger.revokedCount, 1);
-  A.ok('A1 没有遗留未回收的 URL', ledger.leaked().length === 0,
-    '泄漏 ' + ledger.leaked().join(','));
+  /* 存活数 = 缓存里那一条（1 个）；旧的那个必须已经被回收 */
+  A.eq('A1 只有缓存里那一条 URL 还活着', ledger.leaked().length, 1);
 
   /* 反向：再请求更小的档位不该降级覆盖（也不该新建 URL） */
   const r3 = await T.screenURL(m, 1000);
@@ -135,7 +135,7 @@ async function testBDedupe() {
   A.eq('B1 并发两次只建一个 blob URL', ledger.createdCount, 1);
   A.ok('B1 两次拿到同一个 URL', !!a && !!b && a.url === b.url,
     'a=' + (a && a.url) + ' b=' + (b && b.url));
-  A.ok('B1 没有泄漏', ledger.leaked().length === 0, ledger.leaked().join(','));
+  A.eq('B1 只有缓存里那一条 URL 还活着', ledger.leaked().length, 1);
 }
 
 /* ============================================================

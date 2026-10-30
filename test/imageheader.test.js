@@ -193,6 +193,56 @@ isNull('尺寸溢出上限 → null（明显是坏头）', size(png(9999999, 10)
 }
 
 /* ============================================================
+   动图探测（Util.looksAnimated）
+   ------------------------------------------------------------
+   灯箱的"屏幕尺寸代"会把内容栅格化成一张静态图。对动图来说这是毁灭性的：
+   GIF 停在第一帧、APNG / 动态 WebP 同样。而"动不动"从扩展名看不出来
+   （.png / .webp 都可能动），所以必须读文件头判。
+   ============================================================ */
+{
+  const anim = U.looksAnimated;
+  ok('looksAnimated 存在', typeof anim === 'function');
+
+  // 静态 PNG（IHDR 之后直接 IDAT）
+  const staticPng = cat([
+    [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+    be32(13), [0x49, 0x48, 0x44, 0x52], be32(4), be32(4), [8, 6, 0, 0, 0],
+    be32(0), [0x49, 0x44, 0x41, 0x54],
+  ]);
+  ok('静态 PNG 不判为动图', anim(staticPng) === false);
+
+  // APNG：IHDR 之后有 acTL
+  const apng = cat([
+    [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+    be32(13), [0x49, 0x48, 0x44, 0x52], be32(4), be32(4), [8, 6, 0, 0, 0],
+    be32(8), [0x61, 0x63, 0x54, 0x4C], [0, 0, 0, 2, 0, 0, 0, 0],
+    be32(0), [0x49, 0x44, 0x41, 0x54],
+  ]);
+  ok('APNG（带 acTL）判为动图', anim(apng) === true);
+
+  // GIF 一律按动图处理
+  ok('GIF 判为动图', anim(gif(10, 10)) === true);
+
+  // WebP：RIFF....WEBP + ANIM 块
+  const webpAnim = cat([
+    [0x52, 0x49, 0x46, 0x46], le32(64), [0x57, 0x45, 0x42, 0x50],
+    [0x41, 0x4E, 0x49, 0x4D],
+  ]);
+  ok('动态 WebP（带 ANIM）判为动图', anim(webpAnim) === true);
+
+  // 静态 WebP（VP8X，无 ANIM）
+  const webpStill = cat([
+    [0x52, 0x49, 0x46, 0x46], le32(64), [0x57, 0x45, 0x42, 0x50],
+    [0x56, 0x50, 0x38, 0x58],
+  ]);
+  ok('静态 WebP 不判为动图', anim(webpStill) === false);
+
+  // JPEG / 垃圾数据 / 空
+  ok('JPEG 不判为动图', anim(cat([[0xFF, 0xD8], be16(0xFFE0), [0, 0]])) === false);
+  ok('空输入不抛错', anim(null) === false && anim(new Uint8Array(0)) === false);
+}
+
+/* ============================================================
    汇总
    ============================================================ */
 console.log('\n' + '='.repeat(64));
