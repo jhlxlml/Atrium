@@ -23,6 +23,7 @@ const H = require('./_harness.js');
 const A = H.makeAsserts();
 
 let LB = null;
+const STRIP_CONC_EXPECT = 2;   // 与 lightbox.js 的 STRIP_CONC 对齐
 let log = [];        // 所有请求 {k, prio, cssW}
 let pending = [];    // 还没放行的请求 {k, res}
 
@@ -77,6 +78,7 @@ function host(n, i) {
     _stripWant: new Set(),
     _stripT: 0,
     _navAt: 0,
+    _lastNavAt: 0,
     render() { this.rendered = (this.rendered || 0) + 1; },
     close() { this.closed = true; },
   });
@@ -178,19 +180,28 @@ async function testF3() {
 async function testF4() {
   installEnv();
   const h = host(200, 0);
-  h._navAt = Date.now();            // 刚切过图
+  h._lastNavAt = Date.now();        // 刚切过图
   fill(h);
   A.eq('F4 刚切图时不发请求', log.length, 0);
   A.ok('F4 但排了一个续跑的定时器', !!h._stripT);
 
   await H.tick(170);                // 让路窗口过去
-  A.eq('F4 停手后自动续跑', log.length, 1);
+  A.eq('F4 停手后自动续跑（一次补到并发上限）', log.length, STRIP_CONC_EXPECT);
   A.ok('F4 续跑后清掉定时器句柄', h._stripT === 0, '句柄 ' + String(h._stripT));
+
+  /* 打开灯箱时 render() 也会写 _navAt，但那不是切图 —— 条带不该因此白等 */
+  log = [];
+  const h3 = host(200, 0);
+  h3._navAt = Date.now();           // render 打的点（"连翻判定"用）
+  h3._lastNavAt = 0;                // 但没真的切过图
+  fill(h3);
+  A.eq('F4 打开时的 render 不算切图，条带立刻开工', log.length, STRIP_CONC_EXPECT);
+  h3.openFlag = false;
 
   /* 连续切图：定时器被不断推后，全程不发请求 */
   log = [];
   const h2 = host(200, 0);
-  for (let t = 0; t < 6; t++) { h2._navAt = Date.now(); fill(h2); await H.tick(30); }
+  for (let t = 0; t < 6; t++) { h2._lastNavAt = Date.now(); fill(h2); await H.tick(30); }
   A.eq('F4 按住方向键期间一个请求都不发', log.length, 0);
   /* 收尾：让两个宿主"关掉"，它们残留的续跑定时器醒来后会立刻 return，
      不会把请求漏到下一个用例的日志里（否则后面统计到的请求数会莫名翻倍）。 */
@@ -232,7 +243,7 @@ async function testF6() {
   A.eq('F6 条带收起时一个请求都不发', log.length, 0);
   h.strip.hidden = false;
   fill(h);
-  A.eq('F6 展开后才开始填', log.length, 1);
+  A.eq('F6 展开后才开始填', log.length, STRIP_CONC_EXPECT);
 }
 
 /* ============================================================
@@ -250,7 +261,7 @@ async function testF7() {
   for (let t = 0; t < 6; t++) await H.tick(0);
   A.eq('F7 旧世代的结果不写进新 DOM', h._stripSlots[0].img.src, '');
   A.eq('F7 旧世代不回写计数', h._stripBusy, 0);
-  A.eq('F7 旧世代不触发续跑', log.length, 1);
+  A.eq('F7 旧世代不触发续跑', log.length, STRIP_CONC_EXPECT);
 }
 
 /* ============================================================

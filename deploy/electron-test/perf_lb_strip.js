@@ -12,7 +12,9 @@
      queueMax      Thumbs 调度队列的最大等待长度（没有该指标时记为 -1）
      stripFilled   条带里真的被填了 src 的槽位数
 
-   用法： node perf_lb_strip.js <目录> [宽] [高] [观察ms]
+   用法： node perf_lb_strip.js <目录> [宽] [高] [观察ms] [strip]
+     第 6 个参数写 `strip` 表示"打开灯箱时就把缩略图条展开"（默认是收起的，
+     此时按需填充应当一个缩略图都不解 —— 这是改造后的预期行为）。
    ============================================================ */
 'use strict';
 const { spawn } = require('child_process');
@@ -27,6 +29,7 @@ const DIR = process.argv[2];
 const W = +(process.argv[3] || 2560);
 const H = +(process.argv[4] || 1400);
 const WATCH = +(process.argv[5] || 3000);
+const OPEN_STRIP = process.argv[6] === 'strip';
 const PORT = 10100 + (Date.now() % 300);
 
 if (!DIR) { console.error('用法: node perf_lb_strip.js <目录> [宽] [高] [观察ms]'); process.exit(2); }
@@ -40,7 +43,14 @@ delete env.NODE_OPTIONS;
 const child = spawn(EXE, [
   '--open-dir', DIR, '--remote-debugging-port=' + PORT, '--no-sandbox',
   '--window-size=' + W + ',' + H,
-], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+], {
+  env,
+  /* stdout 必须 ignore：这三个脚本从不读 child.stdout，接了管道就等于给它
+     64KB 的窗口 —— Electron 一旦多打几行（DevTools 提示、GPU 警告），
+     子进程就卡在 write 上，脚本永远等不到 CDP 目标。stderr 仍然收着，出错时打印。 */
+  stdio: ['ignore', 'ignore', 'pipe'],
+  windowsHide: true,
+});
 let childErr = '';
 child.stderr.on('data', (d) => { childErr += String(d); });
 
@@ -100,6 +110,8 @@ const PAGE = `(async () => {
     po.observe({ entryTypes: ['longtask'] });
   } catch (e) {}
 
+  /* 条带是否展开会彻底改变这件事的性质：收起时按需填充应当一个都不解 */
+  L.autoStrip = ${OPEN_STRIP};
   const s0 = T.stats();
   const t0 = performance.now();
   L.open(LIST, LIST[0]);
@@ -111,19 +123,33 @@ const PAGE = `(async () => {
     if (img.naturalWidth > 0) { firstMs = +(performance.now() - t0).toFixed(1); break; }
     await wait(10);
   }
-  await wait(${WATCH});
-  const s1 = T.stats();
+  /* 「用户真正能看见的那一段」多久填满 —— 这才是条带的手感指标。
+     全量填了多少个只说明后台还愿不愿意干活，不说明用户等多久。 */
   const slots = L._stripSlots || [];
+  const has = (k) => !!(slots[k] && slots[k].img && slots[k].img.getAttribute('src'));
+  const visCount = Math.min(slots.length, Math.max(8, Math.round(
+    (document.getElementById('lbStrip').clientWidth || 800) / 64)));
+  let visibleReadyMs = null;
+  const tVis = performance.now();
+  while (performance.now() - tVis < ${WATCH}) {
+    let all = true;
+    for (let k = 0; k < visCount; k++) if (!has(k)) { all = false; break; }
+    if (all) { visibleReadyMs = +(performance.now() - t0).toFixed(1); break; }
+    await wait(50);
+  }
+  await wait(300);
+  const s1 = T.stats();
   let filled = 0;
   for (const s of slots) if (s && s.img && s.img.getAttribute('src')) filled++;
   if (po) { try { po.disconnect(); } catch (e) {} }
   const ltSum = lt.reduce((a, b) => a + b, 0);
   return {
-    items: LIST.length, slots: slots.length, filled,
-    openCallMs, firstMs,
+    items: LIST.length, slots: slots.length, filled, visCount, visibleReadyMs,
+    openCallMs, firstMs, stripOpen: ${OPEN_STRIP},
     thumbsDecoded: s1.decodes - s0.decodes,
     screenMakes: s1.screenMakes - s0.screenMakes,
     longTasks: lt.length, longTaskMs: ltSum, longTaskMax: lt.length ? Math.max(...lt) : 0,
+    stats: s1,
     queue: (T.schedStats ? T.schedStats() : null),
   };
 })()`;
@@ -142,7 +168,7 @@ const PAGE = `(async () => {
       await sleep(250);
     }
     await sleep(1200);          // 让网格先稳定下来，避免把"首屏网格解码"算进灯箱账上
-    out = Object.assign({ dir: DIR, w: W, h: H, watchMs: WATCH }, await c.eval(PAGE));
+    out = Object.assign({ dir: DIR, w: W, h: H, watchMs: WATCH, stripOpen: OPEN_STRIP }, await c.eval(PAGE));
   } catch (e) {
     out = { error: String((e && e.message) || e) };
     code = 1;

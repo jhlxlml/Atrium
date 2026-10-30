@@ -48,7 +48,14 @@ const child = spawn(EXE, [
   '--remote-debugging-port=' + PORT,
   '--no-sandbox',
   '--window-size=' + W + ',' + H,
-], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+], {
+  env,
+  /* stdout 必须 ignore：这三个脚本从不读 child.stdout，接了管道就等于给它
+     64KB 的窗口 —— Electron 一旦多打几行（DevTools 提示、GPU 警告），
+     子进程就卡在 write 上，脚本永远等不到 CDP 目标。stderr 仍然收着，出错时打印。 */
+  stdio: ['ignore', 'ignore', 'pipe'],
+  windowsHide: true,
+});
 let childErr = '';
 child.stderr.on('data', (d) => { childErr += String(d); });
 

@@ -14,6 +14,11 @@
   const MAX_FIT = 3;      // “适应”放大上限（小图最大放到 3 倍原始像素）
   const PLAY_MS = 3800;   // 幻灯片间隔
   const INFO_W = 300;     // 信息面板宽
+  /* 条带缩略图的在途并发。取 2 而不是更大：条带是纯后台活，
+     而"你正在等的那一帧"用的是浏览器自己的解码器（不经过我们的调度槽），
+     这里多发一个请求就是实打实多抢一份 CPU。实测（1000 张目录）：
+     2 个在途时可见段 20 格 60ms 内填满，再往上加对可见段没有可测收益。 */
+  const STRIP_CONC = 2;
 
   const Lightbox = {
     el: null, stage: null, img: null, spin: null, errBox: null,
@@ -194,6 +199,7 @@
       this._stripGen = (this._stripGen || 0) + 1;   // 旧世代的在途结果作废
       this._stripBusy = 0;
       this._stripWant = null;
+      this._lastNavAt = 0;
       this._stripOrder = null;
       this._stripSlots = null;
       /* 关灯箱：把正在显示的那个 URL 解钉（这时才允许缓存层回收它），
@@ -634,6 +640,10 @@
       if (n <= 1) return;
       this.i = (this.i + delta + n) % n;
       this.meta = this.list[this.i];
+      /* 只有**真正的切图**才打这个点：条带的"连翻让路"看它（见 _fillStrip）。
+         render() 里那个 _navAt 是给"连翻判定"用的，打开灯箱时也会被写，
+         拿它当"刚切过图"会让条带在打开瞬间白等 140ms。 */
+      this._lastNavAt = (global.performance && performance.now) ? performance.now() : Date.now();
       this.render();
     },
 
@@ -1137,7 +1147,9 @@
         }
         b.appendChild(ic);
         b.addEventListener('click', () => {
-          this.i = k; this.meta = m; this.render();
+          this.i = k; this.meta = m;
+          this._lastNavAt = (global.performance && performance.now) ? performance.now() : Date.now();
+          this.render();
           b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: Util.scrollBehavior() });
         });
         b._idx = k;
@@ -1172,25 +1184,34 @@
          · **条带收起时不填**：看不见的东西不值得解码（按 H 展开时才开工）。 */
     _stripWin() { return 30; },
 
-    /** 启动/续跑填充：有在途就不重复发，回来一个再补一个 */
+    /** 启动/续跑填充：一直补到"在途数 = STRIP_CONC"为止，回来一个再补一个 */
     _fillStrip() {
       if (!this.openFlag) return;
       const slots = this._stripSlots;
       if (!slots || !slots.length) return;
       if (this.strip.hidden) return;                     // 条带收起：不填
-      if (this._stripBusy >= 2) return;                  // 背压：等在途的回来
       /* 连翻期间不发新请求：此刻 CPU 应该全给"当前这一张"。
+         判据是**真正的切图**（nav / 点条带），不是每次 render —— 打开灯箱时的
+         首次 render 也走 render()，拿它当"刚切过图"会让条带白等 140ms。
          用一个定时器延后重试，而不是每次 nav 都新起一条链。 */
       const nowMs = (global.performance && performance.now) ? performance.now() : Date.now();
-      if (nowMs - (this._navAt || 0) < 120) {
+      if (nowMs - (this._lastNavAt || 0) < 120) {
         if (this._stripT) clearTimeout(this._stripT);
         this._stripT = setTimeout(() => { this._stripT = 0; this._fillStrip(); }, 140);
         return;
       }
-      const k = this._nextStripSlot();
-      if (k < 0) return;
-      const s = slots[k];
-      if (!s || !s.img) return;
+      while (this._stripBusy < STRIP_CONC) {
+        const k = this._nextStripSlot();
+        if (k < 0) return;
+        this._issueStrip(k);
+      }
+    },
+
+    /** 发一个条带缩略图请求（背压计数 + 世代校验都在这里） */
+    _issueStrip(k) {
+      const slots = this._stripSlots;
+      const s = slots && slots[k];
+      if (!s || !s.img || s.filled) return;
       s.filled = true;
       const d = Math.abs(k - this.i);
       const prio = d === 0 ? 0 : (d === 1 ? 1 : (d <= 6 ? 2 : 3));
