@@ -143,9 +143,33 @@ function pickNewest(list) {
   return best;
 }
 
+/* ---------- 回收站扫描的粗筛 ----------
+   回收站不是"只有你刚删的那几个"：本机实测一个用户下就有 48985 个条目。
+   每还原一张都要把整个 $I 读一遍、再给对应 $R 做一次 stat ——
+   条目多的机器上"撤销删除"会从毫秒级涨到分钟级（实测打包自检因此 240s 超时）。
+
+   $I 文件的 mtime 就是"这次删除发生的时刻"（资源管理器建 $I 时写入），
+   所以可以**先 stat 粗筛、再读内容**：比 afterMs 早很多的条目不可能命中，
+   直接跳过，连 readFileSync 都不用。
+
+   窗口比 matchRecord 宽 60s：matchRecord 只允许 2s 偏差，这里多留的 60s
+   纯粹是给"文件系统时间戳精度 / 系统时钟抖动"兜底 —— 粗筛只做"排除"，
+   命中与否仍由 matchRecord 决定，所以放宽不会让语义变松。 */
+const MTIME_MARGIN_MS = 60000;
+
+/**
+ * 这条 $I 的 mtime 还有没有可能命中"afterMs 之后的那次删除"。
+ *   mtimeMs 0 / afterMs 0 → 拿不到时间或没给提示，一律"可能命中"（不筛）。
+ */
+function mtimeMayMatch(mtimeMs, afterMs) {
+  if (!afterMs || !mtimeMs) return true;
+  return mtimeMs >= afterMs - HINT_SLACK_MS - MTIME_MARGIN_MS;
+}
+
 module.exports = {
   FT_TICKS_AT_UNIX_EPOCH,
   HINT_SLACK_MS,
+  MTIME_MARGIN_MS,
   ftToMs,
   isAbsWin,
   isInfoName,
@@ -154,5 +178,6 @@ module.exports = {
   hintNum,
   hintsOf,
   matchRecord,
+  mtimeMayMatch,
   pickNewest,
 };

@@ -228,13 +228,23 @@ async function findTrashed(origPath, sizeHint, afterMs) {
     try { ents = await fs.readdir(path.join(rb, sid)); } catch (e) { continue; }
     for (const n of ents) {
       if (!trashLib.isInfoName(n)) continue; // 只看 $I…
-      const rec = parseTrashInfo(path.join(rb, sid, n));
+      const iFile = path.join(rb, sid, n);
+      /* 先用 $I 的 mtime 粗筛（见 trashlib.mtimeMayMatch）：
+         回收站可能有几万个条目，每还原一张都全站读一遍+stat 一遍，
+         在条目多的机器上会从毫秒级涨到分钟级。粗筛只做"排除"，
+         命中与否仍由下面的 matchRecord 决定。 */
+      if (afterMs) {
+        let mt = 0;
+        try { mt = fsx.statSync(iFile).mtimeMs; } catch (e) { continue; }
+        if (!trashLib.mtimeMayMatch(mt, afterMs)) continue;
+      }
+      const rec = parseTrashInfo(iFile);
       if (!trashLib.matchRecord(rec, want, sizeHint, afterMs)) continue;
       const rFile = path.join(rb, sid, trashLib.rNameOf(n));
       let isFile = false;
       try { isFile = fsx.statSync(rFile).isFile(); } catch (e) { isFile = false; }
       if (!isFile) continue;
-      hits.push({ ms: rec.ms, size: rec.size, rFile, iFile: path.join(rb, sid, n) });
+      hits.push({ ms: rec.ms, size: rec.size, rFile, iFile: iFile });
     }
   }
   return trashLib.pickNewest(hits);

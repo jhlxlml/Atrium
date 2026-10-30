@@ -239,9 +239,51 @@ ok('反向：3GiB 经过 |0 变成负数（大文件永远还原不了的根源�
 }
 
 /* ============================================================
-   7) 源级接线：main.js 不许再出现位运算截断
+   6.5) 扫描粗筛：$I 的 mtime 早于 afterMs 太多就不可能命中
+   ------------------------------------------------------------
+   为什么需要它：回收站可能有几万个条目（本机实测 48985 个）。
+   "撤销删除"每做一次都要把整站的 $I 读一遍 + 给 $R 做 stat，
+   条目多的机器上会从毫秒级涨到分钟级（实测打包自检 240s 超时）。
+   粗筛只做"排除"，命中与否仍由 matchRecord 决定 —— 所以放宽窗口
+   不会让"只认这一次删除"的语义变松，这里正反两面都要钉住。
    ============================================================ */
 {
+  const TS = 1793344085845;              // 一次删除的毫秒时刻
+  const M = L.MTIME_MARGIN_MS;
+  eq('粗筛窗口 = 匹配窗口 + 60s 余量', M, 60000);
+  ok('刚删完的 $I（mtime = 删除时刻）会进入解析',
+    L.mtimeMayMatch(TS, TS) === true);
+  ok('早 1 秒的 $I 仍在窗口内（时钟抖动兜底）',
+    L.mtimeMayMatch(TS - 1000, TS) === true);
+  ok('早 61 秒的 $I 仍在窗口内（2s 匹配窗口 + 60s 余量）',
+    L.mtimeMayMatch(TS - 61000, TS) === true);
+  ok('恰好落在窗口边界（早 62s）仍进入解析', L.mtimeMayMatch(TS - 62000, TS) === true);
+  ok('早 62 秒多 1ms 就被粗筛掉（不读、不解析、不 stat $R）',
+    L.mtimeMayMatch(TS - 62001, TS) === false);
+  ok('早一天的历史条目被粗筛掉',
+    L.mtimeMayMatch(TS - 86400000, TS) === false);
+  ok('没给 afterMs（0）时不做粗筛', L.mtimeMayMatch(TS - 86400000, 0) === true);
+  ok('拿不到 mtime（0）时不做粗筛', L.mtimeMayMatch(0, TS) === true);
+
+  /* 关键性质：粗筛必须是 matchRecord 的**超集**（放行 ⊇ 命中）。
+     反过来不要求相等 —— 粗筛本来就会放过一些"进来后被 matchRecord 否掉"的条目，
+     那只是多读几个文件；真正致命的是"该命中的被粗筛掉了"。 */
+  const want = 'c:\\pics\\a.jpg';
+  const recAt = (ms) => ({ orig: 'C:\\pics\\a.jpg', size: 100, ms });
+  let supersetOk = true, matched = 0;
+  for (const delta of [0, -500, -1000, -1900, -2000, -2001, -61000, -62000, -62001]) {
+    const mt = TS + delta;
+    const passMatch = L.matchRecord(recAt(mt), want, 100, TS);
+    if (passMatch) matched++;
+    if (passMatch && !L.mtimeMayMatch(mt, TS)) supersetOk = false;
+  }
+  ok('粗筛放行 ⊇ matchRecord 命中（该命中的绝不会被筛掉）', supersetOk);
+  ok('这组样本里确实有"该命中"的条目（否则上一条恒真）', matched >= 3, '命中 ' + matched + ' 条');
+}
+
+/* ============================================================
+   7) 源级接线：main.js 不许再出现位运算截断
+   ============================================================ */{
   const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'electron', 'main.js'), 'utf8');
   /* 注释里会**故意**写出 `(rec.ts) | 0` 当反面教材，所以扫代码前先把注释剥掉 */
   const codeOnly = mainSrc
@@ -266,6 +308,8 @@ ok('反向：3GiB 经过 |0 变成负数（大文件永远还原不了的根源�
     codeOnly.indexOf('size: size ||') < 0);
   ok('trashlib.js 不依赖 electron（必须能被 Node 直接 require）',
     require(path.join(__dirname, '..', 'deploy', 'electron', 'trashlib.js')) === L);
+  ok('findTrashed 在解析 $I 之前先用 mtime 粗筛（否则几万条目会扫到分钟级）',
+    /trashLib\.mtimeMayMatch\s*\(/.test(codeOnly) && codeOnly.indexOf('parseTrashInfo(iFile)') >= 0);
 }
 
 /* ============================================================
