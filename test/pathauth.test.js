@@ -228,9 +228,30 @@ ok('反向：只差一个尾部分隔符不算子目录（C:\\Users\\me\\Picture
     /if \(!picAuth\.has\(abs\)\)/.test(mainSrc));
   ok('授权检查在 stat 之前（不靠文件存不存在泄露信息）',
     mainSrc.indexOf('if (!picAuth.has(abs))') < mainSrc.indexOf('const st = await fs.stat(abs); if (!st.isFile())'));
-  ok('唯一的授权入口是 vf:loadDir（与"用户打开过这个目录"对应）',
-    (mainSrc.match(/picAuth\.add\(/g) || []).length === 1
-      && /picAuth\.add\(dir\)/.test(mainSrc));
+  /* 这一条在安全改造里**收紧**了（不是放宽）：原来 loadDir 自己就往 picAuth 里
+     add，等于把"授予能力"交给了渲染层。现在授予只能发生在 grantDir() 里，
+     而 grantDir 只有两个调用点：pickFolder（原生对话框）与 autoDir（我们自己
+     持久化的上次目录）。下面同时断言"loadDir 里不再有 add"。 */
+  ok('授予只能经 grantDir()，且只由 pickFolder / autoDir 触发',
+    (mainSrc.match(/picAuth\.add\(/g) || []).length === 2      // 字面路径 + 真实路径
+      && /function grantDir\(/.test(mainSrc)
+      && (mainSrc.match(/await grantDir\(/g) || []).length === 2);
+  ok('vf:loadDir 不再自己授予权限，改为先问 dirTrust',
+    /ipcMain\.handle\('vf:loadDir'[\s\S]{0,900}dirTrust\.has\(dir\)/.test(mainSrc)
+      && !/ipcMain\.handle\('vf:loadDir'[\s\S]{0,900}picAuth\.add\(/.test(mainSrc));
+  ok('loadDir 在 stat 之前就拒绝未授权路径',
+    mainSrc.indexOf("if (!dirTrust.has(dir))") <
+      mainSrc.indexOf("const st = await fs.stat(real);"));
+  ok('setLastDir 只接受已授权路径（否则 autoDir 会把任意目录授予出去）',
+    /ipcMain\.on\('vf:setLastDir'[\s\S]{0,400}dirTrust\.has\(dir\)/.test(mainSrc));
+  ok('vf://pic 在字面判定之后再复核真实路径（防目录联接点逃逸）',
+    /await picAllowed\(abs\)/.test(mainSrc));
+  ok('readHead 同样复核真实路径',
+    /readhead-deny[\s\S]{0,120}picAllowed\(p\)/.test(mainSrc));
+  ok('删除也复核真实路径（否则可以借联接点把文件搬出授权树）',
+    (mainSrc.match(/picAuth\.has\(p\) \|\| !\(await picAllowed\(p\)\)/g) || []).length === 2);
+  ok('主进程没有把 --no-sandbox 当成常规启动参数',
+    !/args:\s*\[[^\]]*--no-sandbox/.test(mainSrc));
   ok('Access-Control-Allow-Origin 不再是 *',
     mainSrc.indexOf("h.set('Access-Control-Allow-Origin', '*')") < 0
       && mainSrc.indexOf("h.set('Access-Control-Allow-Origin', 'vf://app')") >= 0);

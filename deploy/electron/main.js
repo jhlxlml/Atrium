@@ -332,6 +332,40 @@ async function scanOne(it, items, files) {
    （见 vf:loadDir）。空清单 = 一个都不许读，默认拒绝。 */
 const picAuth = pathAuth.createAllowlist();
 
+/* 「哪个目录允许被 loadDir 打开」的闸门。与 picAuth 是两件事：
+     · picAuth   —— 已授权的根目录，vf://pic 可以读里面的文件；
+     · dirTrust  —— 允许被 vf:loadDir 索引的目录。
+   旧实现里 loadDir 自己就往 picAuth 里 add，等于把"授予能力"交给了渲染层：
+   注入脚本 invoke 一次 loadDir('C:////Users////me') 就把整个用户目录变成合法根，
+   接着想读哪个文件就读哪个。现在**只有原生对话框（pickFolder）与我们自己
+   持久化的上次目录（autoDir）能授予**，loadDir 只校验、不授予。 */
+const dirTrust = pathAuth.createDirTrust();
+
+/** 授予一个目录（对话框/上次目录专用）：同时登记字面路径与真实路径。
+    真实路径是必需的 —— 授权根本身可能就是一个目录联接点。 */
+async function grantDir(dir) {
+  let real = null;
+  try { real = await fs.realpath(dir); } catch (e) { real = null; }
+  picAuth.add(dir); if (real) picAuth.add(real);
+  dirTrust.grant(dir, real);
+  return real;
+}
+
+/**
+ * 读盘授权：先按字面路径判，再按**真实路径**判。
+ * 目录联接点 / 符号链接会让 `C://Pics//link//x` 字面上在授权根之下、
+ * 实际指向 `C://Windows//x` —— 只做前缀比较是看不出来的。
+ * 解析不出真实路径时一律拒绝（fail-closed）。
+ */
+async function picAllowed(p) {
+  if (!picAuth.has(p)) return false;
+  let real = null;
+  try { real = await fs.realpath(p); } catch (e) { return false; }
+  if (picAuth.has(real)) return true;
+  trace('pic-deny-real ' + p + ' -> ' + real);
+  return false;
+}
+
 /* 允许**写入**（导出落盘）的目录。只有用户通过原生「选择导出位置」对话框
    真的选过的目录会进来（见 vf:pickExportDir）。
    为什么写盘也要授权：`vf:exportFiles` 的 dir 是渲染层传上来的，不校验就等于
@@ -364,6 +398,9 @@ async function handleVf(req) {
         trace('pic-deny ' + abs);
         return new Response('forbidden', { status: 403 });
       }
+      /* 字面判定通过还不够：符号链接 / 目录联接点会把路径指到授权根之外。
+         真实路径也必须落在某个授权根之下（见 picAllowed 的注释）。 */
+      if (!(await picAllowed(abs))) return new Response('forbidden', { status: 403 });
       try { const st = await fs.stat(abs); if (!st.isFile()) return new Response('not found', { status: 404 }); }
       catch (e) { return new Response('not found', { status: 404 }); }
       const resp = await net.fetch(pathToFileURL(abs).toString());
@@ -432,7 +469,11 @@ function wireIpc() {
       buttonLabel: '打开此文件夹',
       properties: ['openDirectory'],
     });
-    return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+    if (r.canceled || !r.filePaths.length) return null;
+    /* **唯一的授予点**：用户亲手在原生对话框里选了这个目录。
+       （exportAuth 的授予同理，见 vf:pickExportDir。） */
+    await grantDir(r.filePaths[0]);
+    return r.filePaths[0];
   });
 
   /* ---------- 导出（P1-4） ----------
@@ -486,14 +527,25 @@ function wireIpc() {
        以前这里一律 `{ok:false}`，渲染层又把它和空目录压成同一分支 ——
        于是打开一个没权限 / 已删除的目录时界面毫无反应。 */
     if (!dir || typeof dir !== 'string') return { ok: false, reason: 'bad-path' };
+    /* 授权检查必须在 stat 之前：不能让"未授权路径"的 stat/ENOENT
+       变成探测某个路径存不存在的工具。 */
+    if (!dirTrust.has(dir)) {
+      trace('loaddir-deny ' + dir);
+      return { ok: false, reason: 'denied' };
+    }
     try {
-      const st = await fs.stat(dir);
+      const real = await fs.realpath(dir);
+      if (!dirTrust.canOpen(dir, real)) {
+        trace('loaddir-deny-real ' + dir + ' -> ' + real);
+        return { ok: false, reason: 'denied' };
+      }
+      const st = await fs.stat(real);
       if (!st.isDirectory()) return { ok: false, reason: 'not-dir' };
-      const files = await listImages(dir);
-      /* 授权 vf://pic 读这个目录 —— 这是**唯一**的授权入口，
-         与"用户真的打开过这个目录"严格对应。 */
-      picAuth.add(dir);
-      return { ok: true, name: path.basename(dir), files };
+      const files = await listImages(real);
+      /* 这里**不再** picAuth.add：授权只发生在 pickFolder / autoDir。
+         列目录用的是真实路径 —— 经联接点进来的子项也要按真实路径登记，
+         否则 vf://pic 复核真实路径时会被自己拦掉。 */
+      return { ok: true, name: path.basename(real), files };
     } catch (err) {
       return { ok: false, reason: (err && err.code) || 'read-failed' };
     }
@@ -502,12 +554,26 @@ function wireIpc() {
   ipcMain.handle('vf:autoDir', async () => {
     const dir = await readLast();
     if (!dir) return null;
-    try { const st = await fs.stat(dir); return st.isDirectory() ? dir : null; } catch (e) { return null; }
+    try {
+      const st = await fs.stat(dir);
+      if (!st.isDirectory()) return null;
+      /* 上次目录是**我们自己**持久化的（写入时已校验过它来自对话框），
+         所以这里可以恢复授权 —— 否则重启后"自动打开上次文件夹"会因为没有
+         授权而失效。 */
+      await grantDir(dir);
+      return dir;
+    } catch (e) { return null; }
   });
 
   /* 记住「上次目录」；dir 传 null / 空串表示**清除**
      （设置里关掉「记住上次位置」时用，否则下次启动照样会自动打开）。 */
   ipcMain.on('vf:setLastDir', (e, dir) => {
+    if (typeof dir === 'string' && dir && !dirTrust.has(dir)) {
+      /* 未授权的路径不许写进"上次目录"：否则渲染层可以先 setLastDir('C:////Users')，
+         下次启动 autoDir 就会把它当成合法目录授予出去 —— 绕一圈又回到任意路径。 */
+      trace('setlastdir-deny ' + dir);
+      return;
+    }
     writeLast(typeof dir === 'string' && dir ? dir : null);
   });
 
@@ -568,7 +634,7 @@ function wireIpc() {
      上一次会话删掉的文件，那时 picAuth 是空的，加了就会把"跨启动撤销"
      这个核心功能整个废掉 —— 授权范围要跟着"能力方向"走，不能一刀切。 */
   ipcMain.handle('vf:deleteFile', async (e, p, rec) => {
-    if (!picAuth.has(p)) {
+    if (!picAuth.has(p) || !(await picAllowed(p))) {
       trace('delete-deny ' + String(p));
       return { ok: false, reason: 'denied', path: p };
     }
@@ -583,7 +649,7 @@ function wireIpc() {
     for (const it of list.slice(0, 2000)) {
       const p = it && it.path;
       if (!p) { out.push({ ok: false, reason: 'bad-path' }); continue; }
-      if (!picAuth.has(p)) {
+      if (!picAuth.has(p) || !(await picAllowed(p))) {
         trace('delete-deny ' + String(p));
         out.push({ ok: false, reason: 'denied', path: p });
         continue;
@@ -751,6 +817,8 @@ function wireIpc() {
   ipcMain.handle('vf:readHead', async (e, p, n) => {
     try {
       if (!picAuth.has(p)) { trace('readhead-deny ' + p); return null; }
+      /* 同 vf://pic：真实路径也要在授权范围内（防目录联接点逃逸） */
+      if (!(await picAllowed(p))) { trace('readhead-deny-real ' + p); return null; }
       const len = Math.max(1, Math.min(n || 262144, 1024 * 1024));
       const fh = await fs.open(p, 'r');
       const buf = Buffer.allocUnsafe(len);

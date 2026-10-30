@@ -63,4 +63,50 @@ function createAllowlist() {
   };
 }
 
-module.exports = { normPath, isUnder, createAllowlist };
+/* ============================================================
+   目录授权闸门（vf:loadDir 的入口）
+   ------------------------------------------------------------
+   这里补的是 pathauth 原本缺的那一半语义：**谁能授权**。
+
+   旧实现里 `vf:loadDir` 收到渲染层传来的任意字符串就 `picAuth.add(dir)`。
+   于是"只允许读用户打开过的目录"这道门形同虚设 —— 注入脚本只要先
+   invoke 一次 loadDir('C:\\Users\\me')，整个用户目录就变成了合法根，
+   接着 vf://pic 想读什么读什么。登记新根目录必须与**用户亲手做的动作**
+   （原生目录对话框）绑定，而 loadDir 只负责校验、不负责授予。
+
+   另外这里把"真实路径"也纳入判定：Windows 的目录联接点（junction）与
+   符号链接会让 `C:\Pics\link\x` 字面上在授权根之下、实际指向 `C:\Windows`。
+   纯前缀比较看不出这件事，必须由调用方给出 fs.realpath 的结果再判一次。
+   ============================================================ */
+function createDirTrust() {
+  const allow = createAllowlist();
+  return {
+    /** 授予一个目录（只应由原生对话框 / 我们自己持久化的上次目录调用）。
+     *  realDir 是该目录的真实路径（fs.realpath），授权根本身是联接点时必需。 */
+    grant(dir, realDir) {
+      const a = allow.add(dir);
+      if (realDir) allow.add(realDir);
+      return a;
+    },
+    /**
+     * 这个目录允许打开/索引吗？
+     * @param {string} dir 请求的路径
+     * @param {string} [realDir] 真实路径。传了就必须也在授权范围内；
+     *   传 null/''（解析失败）按**拒绝**处理 —— fail-closed。
+     *   不传表示"只做字面判定"（纯逻辑测试与不需要跟随链接的场景）。
+     */
+    canOpen(dir, realDir) {
+      if (!allow.has(dir)) return false;
+      if (realDir === undefined) return true;
+      if (!realDir) return false;
+      return allow.has(realDir);
+    },
+    /** 字面判定（诊断用） */
+    has(dir) { return allow.has(dir); },
+    roots() { return allow.roots(); },
+    clear() { allow.clear(); },
+    get size() { return allow.size; },
+  };
+}
+
+module.exports = { normPath, isUnder, createAllowlist, createDirTrust };
