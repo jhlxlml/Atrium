@@ -1833,9 +1833,13 @@
 
     removeFolder(id, label) {
       if (!global.confirm(`从浏览列表中移除「${label}」？\n仅释放浏览器内数据，不会删除磁盘上的任何文件。`)) return;
+      /* 尺寸缓存按**条目 id 前缀**清，不能按文件夹名清：同名但不同路径的
+         两个来源前缀不同（名字·路径哈希），按名字清会把另一个的尺寸缓存一起删掉。
+         前缀必须在 removeSource 之前取 —— 取完来源对象就没了。 */
+      const key = State.sourceKey ? (State.sourceKey(id) || label) : label;
       State.removeSource(id);
       Thumbs.clearAll();
-      Loader.clearDimsFor(label);
+      Loader.clearDimsFor(key);
       this.renderSources();
       if (!State.sources.length) {
         // 全部来源被移除 → 回到引导页

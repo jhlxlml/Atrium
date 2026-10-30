@@ -252,6 +252,40 @@
   /* ---------- 状态 ---------- */
   let _srcSeq = 0;
 
+  /* ---------- 来源身份：名字 + 绝对路径 ----------
+     以前 `commitSource()` 只按**文件夹名**认来源。于是 D:\照片\2024 与
+     E:\备份\2024 是同一个来源：后打开的会把前一个的条目整批清掉
+     （用户看到"打开第二个文件夹，第一个就消失了"）。条目 id 也只看名字
+     （Util.itemId 的第一段），两个目录里的同名文件会算出同一个 id，
+     收藏、尺寸缓存、缩略图缓存全部串在一起。
+
+     现在来源带一个 `dir`（绝对路径，归一化后小写）。判定顺序：
+       ① 有 dir 且已有同 dir 的来源 → 就是它（"重新载入/刷新"）；
+       ② 没有 dir（拖拽 / 内存 File）→ 退回按名字合并，保持原行为；
+       ③ 都没有 → 新建。
+
+     条目 id 的前缀（= Util.itemId 的第一段）由 `tag` 决定：
+       · 该名字在本会话里**第一个**被占用的来源 → tag 为空，前缀就是文件夹名，
+         与旧版完全一致 —— 老用户的收藏、尺寸库、缩略图缓存一条都不用迁；
+       · 之后同名但不同路径的来源 → tag = 路径哈希，前缀变成 `名字·hash`，
+         互不干扰，且**同一个目录每次算出来的 tag 都一样**（可重复）。
+     代价：如果用户先打开带哈希的那个、再打开"正主"，两者的前缀会互换，
+     带哈希那一侧的收藏会失配（缓存会自愈）。这是"不改动旧持久化键"的必然取舍，
+     已记入风险清单。 */
+  const dirKey = (dir) => {
+    if (typeof dir !== 'string' || !dir) return '';
+    return dir.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  };
+  /** FNV-1a 32 位 → base36，够短又够散（只用于区分同名的不同目录） */
+  function hashKey(s) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(36).padStart(7, '0');
+  }
+
   const State = {
     MODES, MODE_ORDER, PAGE_SIZES, PAGE_DEFAULT, bus: Events,
 
@@ -380,14 +414,21 @@
 
     /**
      * 提交一批条目到（新/已有）来源。
-     * 同名来源视为“重新载入/刷新”：先清空其旧条目再并入。
+     * 同一目录（dir 相同）视为“重新载入/刷新”：先清空其旧条目再并入；
+     * 名字相同但目录不同 → 是两个来源，各自独立。
+     * @param {string} name 文件夹显示名
+     * @param {object[]} items 条目
+     * @param {string} [dir] 绝对路径（原生目录来源才有）
      * 返回该来源对象。
      */
-    commitSource(name, items) {
-      let src = this.sources.find((s) => s.name === name);
+    commitSource(name, items, dir) {
+      const dk = dirKey(dir);
+      let src = dk
+        ? this.sources.find((s) => s.dir === dk)
+        : this.sources.find((s) => !s.dir && s.name === name);
       if (src) this._purgeItemsOf(src.id);
       else {
-        src = { id: 'f' + (++_srcSeq), name };
+        src = { id: 'f' + (++_srcSeq), name, dir: dk, tag: this._tagFor(name, dk) };
         this.sources.push(src);
       }
       for (const it of items) { it.sid = src.id; it.srcName = src.name; }
@@ -398,19 +439,68 @@
       return src;
     },
 
+    /**
+     * 某个名字的"区分标签"：该名字还没被占用 → ''（沿用旧格式）；
+     * 已被别的目录占用 → 本目录路径的哈希。
+     * 同一个目录反复算得到同一个值（刷新/移除后重开都能对上）。
+     */
+    _tagFor(name, dk) {
+      const others = this.sources.filter((s) => s.name === name);
+      if (!others.length) return '';
+      if (dk && others.some((s) => s.dir === dk)) return '';        // 同目录：沿用已有那条
+      /* 与 sourcePrefix() 必须**逐字一致**：id 是在 buildEntries 里按前缀算好的，
+         这里若算出别的 tag，条目 id 就和来源对不上（收藏/缓存全失配）。 */
+      return hashKey(dk || ('\u0000' + name));
+    },
+
+    /**
+     * 条目 id 的前缀（= Util.itemId 的第一段 = 旧版的"文件夹名"）。
+     * Loader 必须在 buildEntries **之前**拿到它，因为 id 是在那里算出来的。
+     */
+    sourcePrefix(name, dir) {
+      const dk = dirKey(dir);
+      const same = this.sources.filter((s) => s.name === name);
+      const hit = dk ? same.find((s) => s.dir === dk) : null;
+      if (hit) return this.prefixOf(hit);
+      if (!same.length) return name;                                // 首次占用：旧格式
+      return name + '\u00b7' + hashKey(dk || ('\u0000' + name));
+    },
+
+    /** 来源 → 条目 id 前缀 */
+    prefixOf(src) {
+      if (!src) return '';
+      return src.tag ? src.name + '\u00b7' + src.tag : src.name;
+    },
+    /** 按来源 id 取前缀（app.js 清尺寸缓存时用） */
+    sourceKey(id) {
+      const s = this.sourceById(id);
+      return s ? this.prefixOf(s) : '';
+    },
+
     /** 移除某来源（仅释放浏览器内数据，不触碰磁盘文件） */
     removeSource(id) {
       const src = this.sourceById(id);
       if (!src) return;
-      this._purgeItemsOf(id);
-      this.sources = this.sources.filter((s) => s.id !== id);
-      // 清掉该来源遗留的收藏 id
-      const prefix = id + '│';
+      /* 收藏清理：必须按**条目 id 前缀**来，不能按来源 id。
+         原来写的是 `id + '│'`（即 'f1│'），而条目 id 的前缀是文件夹名
+         （'照片│a.jpg│…'）—— 前缀永远对不上，收藏一条都清不掉，
+         localStorage 里会永久堆着已移除来源的 id。
+         也不能简单改成"按名字前缀清"：同名不同路径的两个来源会互相误伤。
+         所以：① 先按该来源**当前条目的精确 id** 删（最准）；
+                ② 再按前缀删"残留但已不在列表里的"（磁盘上已删除的旧条目），
+                   前提是没有别的来源共用这个前缀。 */
+      const prefix = this.prefixOf(src);
+      const ownIds = new Set(this.items.filter((it) => it.sid === id).map((it) => it.id));
+      const shared = this.sources.some((s) => s.id !== id && this.prefixOf(s) === prefix);
+      const head = prefix + '\u2502';
       let dirty = false;
       for (const k of Array.from(favs)) {
-        if (k.startsWith(prefix)) { favs.delete(k); dirty = true; }
+        if (ownIds.has(k) || (!shared && k.startsWith(head))) { favs.delete(k); dirty = true; }
       }
-      if (dirty) saveFavs();
+      if (dirty) { saveFavs(); favRev++; }
+
+      this._purgeItemsOf(id);
+      this.sources = this.sources.filter((s) => s.id !== id);
       if (this.active === id) this.active = 'all';
       // 相框相册若指向刚被移除的来源，回落到「全部图片」，免得下次开相框是空的
       if (settings.frameSrc === id) { settings.frameSrc = 'all'; saveSettings(); }

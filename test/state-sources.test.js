@@ -28,10 +28,13 @@ H.loadScript('js/state.js');
 const State = globalThis.State;
 const Util = globalThis.Util;
 
-/** 造一批条目（模拟 Loader.buildEntries 的产物） */
-function entries(folder, rels) {
+/** 造一批条目（模拟 Loader.buildEntries 的产物）。
+    前缀必须走 State.sourcePrefix —— 生产代码里 id 就是在 buildEntries 里
+    按这个前缀算的，测试自己拼前缀等于绕开了被测契约。 */
+function entries(folder, rels, dir) {
+  const prefix = State.sourcePrefix ? State.sourcePrefix(folder, dir) : folder;
   return rels.map((rel, k) => ({
-    id: Util.itemId(folder, rel, 1000 + k, 1700000000000 + k),
+    id: Util.itemId(prefix, rel, 1000 + k, 1700000000000 + k),
     name: rel.split('/').pop(),
     rel,
     ext: 'jpg',
@@ -48,11 +51,11 @@ function entries(folder, rels) {
    E. 同名不同路径的来源必须能并存
    ============================================================ */
 function testSameNameDifferentDir() {
-  const a = entries('2024', ['a.jpg', 'b.jpg']);
+  const a = entries('2024', ['a.jpg', 'b.jpg'], 'D:////照片////2024');
   const srcA = State.commitSource('2024', a, 'D:\\照片\\2024');
   A.ok('E1 第一次提交创建了来源', !!srcA && typeof srcA.id === 'string');
 
-  const b = entries('2024', ['c.jpg']);
+  const b = entries('2024', ['c.jpg'], 'E:////备份////2024');
   const srcB = State.commitSource('2024', b, 'E:\\备份\\2024');
 
   A.eq('E2 两个同名目录产生两个来源', State.sources.length, 2);
@@ -70,7 +73,7 @@ function testSameNameDifferentDir() {
   A.ok('E5 第二个同名来源的条目 id 带路径区分', String(ids[2] || '').indexOf('2024│') !== 0, String(ids[2]));
 
   /* 同名目录「重新载入」应替换自己、且只替换自己 */
-  const a2 = entries('2024', ['a.jpg', 'b.jpg', 'd.jpg']);
+  const a2 = entries('2024', ['a.jpg', 'b.jpg', 'd.jpg'], 'D:////照片////2024');
   const srcA2 = State.commitSource('2024', a2, 'D:\\照片\\2024');
   A.eq('E6 刷新同一个目录不会新建来源', State.sources.length, 2);
   A.eq('E6 刷新沿用原来的来源 id', srcA2.id, srcA.id);
@@ -113,9 +116,9 @@ function testRemoveSourceFavs() {
       '残留：' + soloItem.id);
   }
 
-  const a = entries('照片', ['a.jpg', 'b.jpg']);
+  const a = entries('照片', ['a.jpg', 'b.jpg'], 'D:////A////照片');
   const srcA = State.commitSource('照片', a, 'D:\\A\\照片');
-  const b = entries('照片', ['c.jpg']);
+  const b = entries('照片', ['c.jpg'], 'E:////B////照片');
   const srcB = State.commitSource('照片', b, 'E:\\B\\照片');
 
   for (const it of State.items) State.toggleFav(it.id);
