@@ -207,10 +207,11 @@
    * 取一张"够屏幕显示"的位图 URL。
    * @param {object} meta 条目
    * @param {number} cssW 图片将要占的 CSS 像素宽（会乘 dpr 再向上取档）
+   * @param {number} [prio] 解码优先级（见 aquireSlot 的分级；不传按"可视区"=2）
    * @returns {Promise<{url:string,side:number,w:number,h:number,tw:number,th:number,full:boolean}|null>}
    *   tw/th 是**原图**尺寸（0 = 没探到）；full=true 表示这本来就是原图。
    */
-  async function screenURL(meta, cssW) {
+  async function screenURL(meta, cssW, prio) {
     if (!meta || meta.bad) return null;
     const dpr = Math.min(global.devicePixelRatio || 1, 2);
     const need = Math.max(320, Math.round((cssW || 1200) * dpr));
@@ -230,14 +231,14 @@
     }
 
     const ep = epoch;
-    const p = screenMake(meta, side, ep);
+    const p = screenMake(meta, side, ep, prio);
     screenPending.set(meta.id, { side, p });
     try { return await p; }
     finally { if (screenPending.get(meta.id) && screenPending.get(meta.id).p === p) screenPending.delete(meta.id); }
   }
 
   /** 真正生成一代（不含去重/缓存判定，那些在 screenURL / commitScreen 里） */
-  async function screenMake(meta, side, ep) {
+  async function screenMake(meta, side, ep, prio) {
     const t0 = now();
 
     /* 先确认"是不是动图"。只有 png/webp/gif 需要读文件头（几十 KB，
@@ -268,7 +269,7 @@
       return commitScreen(meta.id, fullRec(meta, ow, oh), ep);
     }
 
-    const res = await decodeThumb(meta, side);
+    const res = await decodeThumb(meta, side, prio);
     if (ep !== epoch) { stats.screenDropped++; return null; }   // 白做了一次，但绝不能回写
     if (!res || !res.blob) {
       // 降级：拿原图。慢，但保证"一定能显示"
@@ -325,12 +326,17 @@
        2  可视区（网格当前视口、条带里靠近当前张的）
        3  后台（远端条带、隔一张的预取）
 
-     **后台不能占满全部槽位**：只要队列里还有 0/1 级的请求，
-     3 级最多只能用 DECODE_CONCURRENCY - BG_RESERVE 个槽。
+     **后台不能占满全部槽位**：3 级（条带远端、隔一张的预取）最多同时跑 BG_CONC 个，
+     于是前台永远至少剩 DECODE_CONCURRENCY - BG_CONC 个空槽，不必等后台解码结束。
      这条是"当前图片最高优先级、后台不得长期占满解码资源"的落地方式 ——
-     不是靠调大并发，而是靠给前台留出固定余量。 */
-  const BG_RESERVE = 2;
+     不是靠调大并发，而是靠给前台留出固定余量。
+
+     为什么不是"等前台排队了才让路"（v1.20.9 第一版就是这样，实测是死代码）：
+     调度器是**严格按优先级出队**的，3 级任务只有在队列里没有 0/1 级任务时才会被选中，
+     "选中它的时候前台正好在等"这件事永远不会发生。所以必须给 3 级一个独立的额度。 */
+  const BG_CONC = 2;
   let activeDecodes = 0;
+  let activeBg = 0;              // 其中 3 级（后台）占了几个
   const queue = [];              // { id, prio, seq, resolve }
   let desired = new Set();       // 网格当前可视区 id 集合
   let seqNo = 0;
@@ -347,38 +353,37 @@
       pump();
     });
   }
-  /** 挑最急的那一个；同级按先来后到（seq 保证 FIFO，不会饿死后台） */
-  function pick() {
-    let best = 0;
-    for (let i = 1; i < queue.length; i++) {
-      const a = queue[i], b = queue[best];
-      if (a.prio < b.prio || (a.prio === b.prio && a.seq < b.seq)) best = i;
-    }
-    return best;
-  }
-  const highWaiting = () => {
-    for (const j of queue) if (j.prio <= 1) return true;
-    return false;
-  };
   function pump() {
     for (;;) {
-      if (!queue.length) return;
-      const i = pick();
-      const job = queue[i];
-      const limit = (job.prio >= 3 && highWaiting())
-        ? Math.max(1, DECODE_CONCURRENCY - BG_RESERVE)
-        : DECODE_CONCURRENCY;
-      if (activeDecodes >= limit) return;
-      queue.splice(i, 1);
+      if (activeDecodes >= DECODE_CONCURRENCY) return;
+      /* 在"此刻允许开工"的任务里挑最急的（同级按先来后到，seq 保证 FIFO 不饿死）：
+         后台额度已满就跳过 3 级 —— 跳过最不紧急的那一级，不会挡住任何更急的活。 */
+      let best = -1;
+      for (let i = 0; i < queue.length; i++) {
+        const j = queue[i];
+        if (j.prio >= 3 && activeBg >= BG_CONC) continue;
+        const b = best >= 0 ? queue[best] : null;
+        if (!b || j.prio < b.prio || (j.prio === b.prio && j.seq < b.seq)) best = i;
+      }
+      if (best < 0) return;
+      const job = queue.splice(best, 1)[0];
       activeDecodes++;
-      job.resolve(() => { activeDecodes--; pump(); });
+      if (job.prio >= 3) activeBg++;
+      job.resolve(() => {
+        activeDecodes--;
+        if (job.prio >= 3) activeBg--;
+        pump();
+      });
     }
   }
   /** 调度器状态（探针用）：在跑的、排队的、按优先级分组 */
   function schedStats() {
     const byPrio = [0, 0, 0, 0];
     for (const j of queue) byPrio[Math.min(3, j.prio)]++;
-    return { active: activeDecodes, waiting: queue.length, byPrio, cap: DECODE_CONCURRENCY, bgReserve: BG_RESERVE };
+    return {
+      active: activeDecodes, activeBg, waiting: queue.length, byPrio,
+      cap: DECODE_CONCURRENCY, bgConc: BG_CONC,
+    };
   }
 
   /* ---------- 媒体源抽象：兼容 File（浏览器）与磁盘 path（Electron vf://） ---------- */
@@ -686,12 +691,16 @@
          以前只检查 meta.bad —— 切目录后排队中的任务照样会为一张已经不在列表里的
          图解码、建 blob URL、写进刚被清空的缓存。 */
       const ep = epoch;
+      /* 预取也要标优先级：near=true 是"用户下一步很可能要的"（1 级，与当前张同级梯队），
+         near=false 是隔一张的后备（3 级后台）—— 于是只要前台有活，
+         后台预取就自动让出 BG_CONC 个额度以外的那部分槽位，不会把"正在等的那一帧"堵在队列里。 */
+      const prio = near ? 1 : 3;
       const run = () => {
         if (ep !== epoch) { stats.screenDropped++; return Promise.resolve(null); }
         screenChain = screenChain.then(() => {
           if (ep !== epoch) { stats.screenDropped++; return null; }
           if (!meta || meta.bad) return null;
-          return screenURL(meta, cssW).catch(() => null);
+          return screenURL(meta, cssW, prio).catch(() => null);
         });
         return screenChain;
       };
