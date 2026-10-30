@@ -113,6 +113,111 @@ ok('反向：只差一个尾部分隔符不算子目录（C:\\Users\\me\\Picture
 }
 
 /* ============================================================
+   4b) 目录授权闸门（vf:loadDir 的入口）
+   ------------------------------------------------------------
+   背景：`vf:loadDir` 原来**无条件**把渲染层传来的路径登记进 picAuth。
+   于是「读任意文件」那道口子并没有真的关上 —— 只要先 invoke 一次
+   loadDir('C:\\Users\\me')，整个用户目录就变成合法根目录。
+   现在的语义是：只有**原生目录对话框**（pickFolder）或**我们自己持久化的
+   上次目录**（autoDir）能授予，loadDir 本身只做校验、不授予。
+
+   下面这组用例分「允许」与「拒绝」两类，拒绝的那一类是重点。
+   ============================================================ */
+{
+  /* 没有这个 API 就直接记红，但不要中断整套用例（后面的接线断言还要跑） */
+  const hasApi = typeof A.createDirTrust === 'function';
+  ok('pathauth 提供目录授权闸门 createDirTrust', hasApi);
+  const trust = hasApi ? A.createDirTrust() : null;
+  const T = trust || { canOpen: () => false, grant: () => '', roots: () => [], clear() {} };
+
+  /* --- 拒绝（默认拒绝） --- */
+  ok('未授权：空清单时任意路径都不能打开', !T.canOpen('C:\\Users\\me\\Pictures'));
+  ok('未授权：空串不能打开', !T.canOpen(''));
+  ok('未授权：null 不能打开', !T.canOpen(null));
+  ok('未授权：数字不能打开', !T.canOpen(12345));
+
+  /* --- 允许（对话框真的选过之后） --- */
+  const g = T.grant('C:\\Users\\me\\Pictures');
+  ok('授权：对话框选过的目录可以打开', T.canOpen('C:\\Users\\me\\Pictures'));
+  ok('授权：授权目录的子目录可以打开（列目录要递归）',
+    T.canOpen('C:\\Users\\me\\Pictures\\2024'));
+  ok('授权：大小写/分隔符变体仍可打开',
+    T.canOpen('c:/users/ME/pictures/2024'));
+
+  /* --- 拒绝（授权范围之外的边界） --- */
+  ok('拒绝：同前缀的兄弟目录（Pictures2）不能打开',
+    !T.canOpen('C:\\Users\\me\\Pictures2'));
+  ok('拒绝：父目录不能打开（授权不能向上溢出）',
+    !T.canOpen('C:\\Users\\me'));
+  ok('拒绝：.. 跳出授权根不能打开',
+    !T.canOpen('C:\\Users\\me\\Pictures\\..\\..\\.ssh'));
+  ok('拒绝：盘符根不能打开', !T.canOpen('C:\\'));
+  ok('拒绝：另一块盘不能打开', !T.canOpen('D:\\Pictures'));
+
+  /* --- 真实路径校验：符号链接 / 目录联接点 --- */
+  ok('拒绝：真实路径跳出授权根（目录联接点指向别处）',
+    !T.canOpen('C:\\Users\\me\\Pictures\\link\\secret.txt', 'C:\\Windows\\System32\\secret.txt'));
+  ok('允许：真实路径仍在授权根内',
+    T.canOpen('C:\\Users\\me\\Pictures\\a.png', 'C:\\Users\\me\\Pictures\\a.png'));
+  ok('拒绝：解析不出真实路径时按拒绝处理（fail-closed）',
+    !T.canOpen('C:\\Users\\me\\Pictures\\a.png', null));
+
+  /* 授权根本身就是一个联接点：原始路径与真实路径都要登记 */
+  const t2 = hasApi ? A.createDirTrust() : { grant() {}, canOpen: () => false, roots: () => [] };
+  t2.grant('C:\\Junction\\Pics', 'D:\\data\\Pics');
+  ok('允许：授权根是联接点时，其真实路径下的文件可打开',
+    t2.canOpen('C:\\Junction\\Pics\\a.png', 'D:\\data\\Pics\\a.png'));
+  ok('拒绝：联接点根不会顺带授权真实路径的父目录',
+    !t2.canOpen('C:\\Junction\\Pics\\a.png', 'D:\\data\\secret.png'));
+  eq('授权根登记了原始与真实两条', t2.roots().length, 2);
+
+  /* 撤销：loadDir 不授予，所以授权只能靠对话框；clear 之后回到默认拒绝 */
+  T.clear();
+  ok('clear 之后又回到默认拒绝', !T.canOpen('C:\\Users\\me\\Pictures'));
+  void g;
+}
+
+/* ============================================================
+   4c) 真实文件系统上的联接点（Windows only，做不到就跳过）
+   ------------------------------------------------------------
+   上面那条是"注入一个假的真实路径"。这一段用**真的目录联接点**验证
+   fs.realpath 确实会把它解析出去 —— 否则上面的用例只是自证。
+   ============================================================ */
+{
+  const os = require('os');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'vf-link-'));
+  const outside = path.join(base, 'outside');
+  const inside = path.join(base, 'inside');
+  let made = false;
+  try {
+    fs.mkdirSync(outside); fs.mkdirSync(inside);
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'x');
+    fs.symlinkSync(outside, path.join(inside, 'link'), 'junction');
+    made = true;
+  } catch (e) { /* 没有建联接点的权限 → 跳过，不假装通过 */ }
+
+  if (made) {
+    const t = typeof A.createDirTrust === 'function'
+      ? A.createDirTrust()
+      : { grant() {}, canOpen: () => false };
+    t.grant(inside);
+    const rawPath = path.join(inside, 'link', 'secret.txt');
+    const realPath = fs.realpathSync(rawPath);
+    ok('联接点用例：原始路径确实在授权根之下', A.isUnder(rawPath, inside));
+    ok('联接点用例：真实路径确实跳出了授权根', !A.isUnder(realPath, inside),
+      realPath);
+    ok('拒绝：经目录联接点读授权根之外的文件', !t.canOpen(rawPath, realPath));
+
+    const own = path.join(inside, 'own.txt');
+    fs.writeFileSync(own, 'y');
+    ok('允许：授权根内的普通文件照常可读', t.canOpen(own, fs.realpathSync(own)));
+  } else {
+    ok('联接点用例：跳过（本机无法创建目录联接点）', true, 'skipped');
+  }
+  try { fs.rmSync(base, { recursive: true, force: true }); } catch (e) { /* 忽略 */ }
+}
+
+/* ============================================================
    5) 源级接线：main.js 的 vf://pic 真的走这套判定
    ============================================================ */
 {
