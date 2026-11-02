@@ -494,6 +494,37 @@
       const tr = now();
       const src = await blobOf(meta);
       readMs = msSince(tr);
+
+      /* EXIF 方向：`tw/th` 可能是**文件里存的**宽高，而 Orientation 5..8
+         的照片（手机竖拍）显示时宽高互换。createImageBitmap 传了
+         imageOrientation:'from-image'，解码结果是转正后的竖图，
+         若仍按文件头的横宽高给 resizeWidth/resizeHeight，就会把竖图压成横图。
+         实测：3840×2400 + Orientation=6 → 代理 1920×1200，而正确值是 1200×1920。
+
+         谁是"显示方向"由 meta.disp 判定（谁写 meta.w/h 谁负责标记）：
+           · Loader.imageSize()  → 写的就是显示方向，置 meta.disp
+           · 灯箱 _adoptNatural() → 取 rec.tw/th，也是显示方向，置 meta.disp
+           · 旧尺寸库里的记录     → 没有标记，是当年的原始宽高，这里就地纠正
+         优先用 meta.orient（Loader 读文件头时顺手记的），没有再自己从 blob 头认。 */
+      if (src) {
+        let o = (typeof meta.orient === 'number') ? meta.orient : 0;
+        if (!o && global.Util && Util.exifOrientation && src.slice) {
+          try {
+            const head = await src.slice(0, 65536).arrayBuffer();
+            o = Util.exifOrientation(head);
+            if (o) meta.orient = o;
+          } catch (e) { o = 0; }
+        }
+        /* 5..8 才是宽高互换（90°/270°）；1..4 只是镜像/正立，宽高不变 */
+        if (o >= 5 && o <= 8 && tw > 0 && th > 0 && !meta.disp) {
+          const t = tw; tw = th; th = t;
+          /* 顺手把条目上的尺寸也纠正过来：网格排版按 meta.w/h 算格子，
+             不纠正的话"图是竖的、格子是横的"，而且每张图每次都要重算一遍。 */
+          if (meta.w > 0 && meta.h > 0) { meta.w = tw; meta.h = th; }
+          meta.disp = true;
+        }
+      }
+
       if (src && isBitmap) {
         const opt = { imageOrientation: 'from-image', resizeQuality: 'medium' };
         if (tw > 0 && th > 0) {

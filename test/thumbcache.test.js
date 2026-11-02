@@ -38,7 +38,15 @@ function installEnv(opts) {
   globalThis.URL.revokeObjectURL = ledger.api.revokeObjectURL;
   globalThis.devicePixelRatio = o.dpr || 1;
   globalThis.performance = { now: () => Date.now() };
-  globalThis.Util = { can: { createImageBitmap: true } };
+  /* 用**真的** util.js（exifOrientation 这些是纯函数，没必要重写一份桩），
+     只把 `can` 换成"支持 createImageBitmap"。thumb.js 装载时就要读它，
+     所以必须在这里、loadScript('js/thumb.js') 之前装好。 */
+  if (!globalThis.Util || !globalThis.Util.exifOrientation) {
+    globalThis.CSS = globalThis.CSS || { supports: () => false };
+    H.loadScript('js/util.js');
+  }
+  globalThis.Util = globalThis.Util || {};
+  globalThis.Util.can = { createImageBitmap: true };
   globalThis.State = { bus: { emit() {} } };
   globalThis.Native = { active: false, url: () => null };
   globalThis.Loader = { imageSize: async () => null, recordDims() {}, recordRatio() {} };
@@ -242,6 +250,64 @@ async function testHAlpha() {
   A.ok('H1 透明格式的代理仍以支持 alpha 的格式编码', !!blob && blob.fakeBlob === true);
 }
 
+/* ============================================================
+   I. EXIF 方向：竖拍的图不能被压成横图
+   ------------------------------------------------------------
+   真实复现（打包 exe + 真图）：3840×2400 的 JPEG 只多一个
+   Orientation=6，代理产物是 1920×1200（横），而正确值是 1200×1920（竖）。
+   原因：createImageBitmap 传了 imageOrientation:'from-image'，
+   解码结果是转正后的竖图，却按文件头的横宽高给了 resizeWidth/resizeHeight。
+   ============================================================ */
+async function testIExif() {
+  installEnv();
+  H.loadScript('js/thumb.js');
+  const T = globalThis.Thumbs;
+  const at = (i) => decodeLog[i] || {};
+
+  /* I1 未标记 disp（旧尺寸库/文件头口径）+ Orientation=6 → 按竖图算目标 */
+  const raw = meta24('r1', { w: 6000, h: 4000, orient: 6 });
+  const r1 = await T.screenURL(raw, 1000);      // 1280 档
+  A.ok('I1 竖拍的代是竖的', at(0).rh > at(0).rw, '实测 ' + at(0).rw + '×' + at(0).rh);
+  A.eq('I1 长边正好等于档位', at(0).rh, 1280);
+  A.eq('I1 短边按显示方向的比例（4000/6000）', at(0).rw, Math.round(4000 * (1280 / 6000)));
+  A.ok('I1 顺手把条目尺寸纠正成显示方向', raw.w === 4000 && raw.h === 6000,
+    '实测 ' + raw.w + '×' + raw.h);
+
+  /* I2 已经标记 disp（Loader 写的就是显示方向）→ 不能再翻一次 */
+  const disp = meta24('r2', { w: 4000, h: 6000, orient: 6, disp: true });
+  await T.screenURL(disp, 1000);
+  A.eq('I2 显示方向的条目不再互换', at(1).rw + '×' + at(1).rh, at(0).rw + '×' + at(0).rh);
+
+  /* I3 没有方向的图完全不受影响（回归：不能把正常横图弄成竖的） */
+  const land = meta24('r3', { w: 6000, h: 4000 });
+  await T.screenURL(land, 1000);
+  A.ok('I3 普通横图仍是横的', at(2).rw > at(2).rh, '实测 ' + at(2).rw + '×' + at(2).rh);
+  A.eq('I3 长边是宽', at(2).rw, 1280);
+
+  /* I4 Orientation=1（不换宽高）不能被当成旋转 */
+  const o1 = meta24('r4', { w: 6000, h: 4000, orient: 1 });
+  await T.screenURL(o1, 1000);
+  A.eq('I4 Orientation=1 不改宽高', at(3).rw, 1280);
+
+  /* I5 没有 meta.orient 时，从 blob 头自己认（灯箱直调 / 测试路径） */
+  const app1 = (() => {
+    const payload = [
+      0x45, 0x78, 0x69, 0x66, 0x00, 0x00,                       // "Exif\0\0"
+      0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00,           // TIFF 头（小端）
+      0x01, 0x00,                                               // 1 个条目
+      0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+    ];
+    const seg = [0xFF, 0xE1, (payload.length + 2) >> 8, (payload.length + 2) & 0xFF];
+    return new Uint8Array([0xFF, 0xD8].concat(seg, payload, [0xFF, 0xDA, 0x00, 0x02]));
+  })();
+  const fileBlob = new Blob([app1]);
+  const fromBlob = meta24('r5', { w: 6000, h: 4000, file: fileBlob });
+  await T.screenURL(fromBlob, 1000);
+  A.ok('I5 从 blob 头认出了方向', at(4).rh > at(4).rw, '实测 ' + at(4).rw + '×' + at(4).rh);
+  A.eq('I5 认出来后记在条目上（下次不用再读）', fromBlob.orient, 6);
+}
+
 /* ============================================================ */
 (async () => {
   await testA();
@@ -252,5 +318,6 @@ async function testHAlpha() {
   await testCForget();
   await testGFormats();
   await testHAlpha();
-  process.exit(A.finish('thumb 缓存层（A/B/C/G）') ? 0 : 1);
+  await testIExif();
+  process.exit(A.finish('thumb 缓存层（A/B/C/G/I）') ? 0 : 1);
 })().catch((e) => { console.error(e); process.exit(1); });

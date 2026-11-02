@@ -568,10 +568,14 @@
       this.origW = knownW || (isFull ? natW : 0);
       this.origH = knownH || (isFull ? natH : 0);
       if (isFull) {
-        meta.w = natW; meta.h = natH;
+        /* <img> 的 naturalWidth 是**转正后**的尺寸（Chromium 会应用 EXIF 方向），
+           所以这里写进去的是"显示方向的宽高"，要打上 disp 标记 —— 否则
+           thumb.js 会把它当成"文件里存的原始宽高"再互换一次。 */
+        meta.w = natW; meta.h = natH; meta.disp = true;
         Loader.recordDims(meta, natW, natH);
       } else if (knownW > 0 && knownH > 0) {
         meta.w = knownW; meta.h = knownH;
+        if (rec && rec.tw) meta.disp = true;   // rec.tw/th 是解码时探到的显示方向尺寸
         Loader.recordDims(meta, knownW, knownH);
       }
     },

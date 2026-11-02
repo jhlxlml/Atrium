@@ -368,6 +368,71 @@
     } catch (e) { return false; }
   };
 
+  /* ---------- EXIF 方向（只读文件头） ----------
+     为什么需要它：`sizeFromHeader()` 给的是**文件里存的**像素宽高，
+     而手机竖着拍的照片通常存成 3840×2400（横），再用 EXIF Orientation=6
+     告诉显示端"顺时针转 90°"。浏览器画 <img> 时会自动转正，于是：
+       · 网格按 meta.w/h 排版 → 竖图被排进横格子
+       · 缩略图/屏幕代理按 meta.w/h 算缩放目标 → 把竖图压成横图（画面失真）
+     后一条是实测出来的：同一张图只多一个 Orientation=6，
+     代理产物是 1920×1200，而正确值应为 1200×1920。
+
+     返回值：1..8 表示 EXIF 方向（5..8 意味着宽高互换），0 表示没有/认不出。
+     **只认 JPEG(APP1 Exif) 与 TIFF**，其它格式一律 0（PNG/WebP 没有这个字段）。 */
+  U.exifOrientation = (input) => {
+    try {
+      let b;
+      if (input instanceof Uint8Array) b = input;
+      else if (typeof ArrayBuffer !== 'undefined' && input instanceof ArrayBuffer) b = new Uint8Array(input);
+      else if (input && input.buffer) b = new Uint8Array(input.buffer, input.byteOffset || 0, input.byteLength);
+      else return 0;
+      const n = b.length;
+      if (n < 8) return 0;
+
+      let tiff = -1;
+      if (b[0] === 0xFF && b[1] === 0xD8) {                 // JPEG：跳段找 APP1
+        let i = 2;
+        while (i + 4 <= n) {
+          if (b[i] !== 0xFF) { i++; continue; }
+          const m = b[i + 1];
+          if (m === 0xFF) { i++; continue; }                // 填充字节
+          if (m === 0xD8 || m === 0x01 || (m >= 0xD0 && m <= 0xD7)) { i += 2; continue; }
+          if (m === 0xDA || m === 0xD9) return 0;           // 到图像数据了，没 EXIF
+          const len = (b[i + 2] << 8) | b[i + 3];
+          if (len < 2) return 0;
+          /* APP1 的载荷必须以 "Exif\0\0" 开头才是 TIFF 结构；
+             XMP 也是 APP1（以 http://ns.adobe.com/xap/1.0/ 开头），要跳过。 */
+          if (m === 0xE1 && i + 10 <= n &&
+              b[i + 4] === 0x45 && b[i + 5] === 0x78 && b[i + 6] === 0x69 && b[i + 7] === 0x66 &&
+              b[i + 8] === 0x00 && b[i + 9] === 0x00) { tiff = i + 10; break; }
+          i += 2 + len;
+        }
+      } else if ((b[0] === 0x49 && b[1] === 0x49) || (b[0] === 0x4D && b[1] === 0x4D)) {
+        tiff = 0;                                            // 裸 TIFF
+      }
+      if (tiff < 0 || tiff + 8 > n) return 0;
+
+      const le = b[tiff] === 0x49;
+      const u16 = (p) => (le ? (b[p] | (b[p + 1] << 8)) : ((b[p] << 8) | b[p + 1]));
+      const u32 = (p) => (le
+        ? ((b[p] | (b[p + 1] << 8) | (b[p + 2] << 16) | (b[p + 3] << 24)) >>> 0)
+        : (((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) >>> 0));
+      if (u16(tiff + 2) !== 0x2A) return 0;                  // TIFF magic
+      const ifd = tiff + u32(tiff + 4);
+      if (ifd + 2 > n) return 0;
+      const cnt = u16(ifd);
+      if (cnt > 512) return 0;                               // 明显不对，别硬走
+      for (let k = 0; k < cnt; k++) {
+        const e = ifd + 2 + k * 12;
+        if (e + 12 > n) break;
+        if (u16(e) !== 0x0112) continue;                     // Orientation
+        const v = u16(e + 8);                                // SHORT，值内联在前 2 字节
+        return (v >= 1 && v <= 8) ? v : 0;
+      }
+      return 0;
+    } catch (e) { return 0; }
+  };
+
   /* ---------- HEIC/HEIF 可解码性探测（P1-2） ----------
      以前是无条件把 .heic/.heif 标成 bad，于是「机器上真的装了 HEVC 解码器、
      Chromium 能正常显示」的用户也被判死。现在改为运行时能力探测：

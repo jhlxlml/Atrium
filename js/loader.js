@@ -637,12 +637,24 @@
          会把内容栅格化成静态图，动图必须绕开它 —— 见 thumb.js 的 noProxy()。
          这里读的 buf 正好就是前 64KB，不额外读盘。 */
       if (buf && meta.anim === undefined) meta.anim = Util.looksAnimated(buf);
+      /* 顺手记下 EXIF 方向（同一份前 64KB，不额外读盘）。
+         手机竖拍的照片是「存成横的 + Orientation=6」，而 sizeFromHeader()
+         读到的是**文件里存的**宽高 —— 直接用它排版会把竖图排进横格子，
+         拿去算代理尺寸更会把画面压扁（实测 1920×1200 vs 正确 1200×1920）。
+         这里统一换成「显示方向的宽高」，下游（网格排版、代理目标、尺寸库）
+         就都按看得见的比例走。 */
       let sz = null;
       try { sz = buf ? Util.sizeFromHeader(buf) : null; }
       catch (e) { sz = null; meta._dimErr = String((e && e.message) || e); }
+      if (buf && Util.exifOrientation) {
+        const o = Util.exifOrientation(buf);
+        if (o) meta.orient = o;
+        /* 5..8 才是宽高互换（90°/270°）；1..4 只是镜像/正立 */
+        if (o >= 5 && o <= 8 && sz) sz = { w: sz.h, h: sz.w };
+      }
       if (!sz && !meta._dimErr) meta._dimErr = buf ? 'header-unparsed' : 'read-failed';
       meta._dimProbe = sz || null;
-      if (sz) this.recordDims(meta, sz.w, sz.h);
+      if (sz) { meta.disp = true; this.recordDims(meta, sz.w, sz.h); }
       return sz;
     },
 
