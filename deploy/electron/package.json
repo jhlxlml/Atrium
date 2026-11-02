@@ -6,6 +6,9 @@
   "main": "main.js",
   "license": "GPL-3.0-only",
   "private": true,
+  "scripts": {
+    "postinstall": "node node_modules/electron/install.js"
+  },
   "devDependencies": {
     "electron": "^45.0.0",
     "rcedit": "^5.0.2"
