@@ -39,12 +39,16 @@ if (!DIR) { console.error('用法: node perf_lb_fastnav.js <目录> [宽] [高] 
 if (!fs.existsSync(EXE)) { console.error('找不到 exe: ' + EXE); process.exit(2); }
 
 const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'vf-fastnav-'));
+/* 预置"上次目录"：应用已不再接受命令行里的 `--open-dir`（"命令行即授权"那条
+   后门关掉了，见 main.js 的 open-dir-ignored），所以这里直接写临时 userData 里的
+   last-dir.json（granted:true）—— 测试自己造的 userData，写什么是测试的事。 */
+fs.writeFileSync(path.join(ud, 'last-dir.json'),
+  JSON.stringify({ dir: DIR, ts: Date.now(), granted: true }), 'utf8');
 const env = Object.assign({}, process.env, { VF_USERDATA: ud });
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.NODE_OPTIONS;
 
 const child = spawn(EXE, [
-  '--open-dir', DIR,
   '--remote-debugging-port=' + PORT,
   '--no-sandbox',
   '--window-size=' + W + ',' + H,

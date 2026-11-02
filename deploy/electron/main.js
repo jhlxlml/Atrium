@@ -19,6 +19,7 @@ const updateLib = require('./updatelib.js');   // 更新检测的纯逻辑（版
 const trashLib = require('./trashlib.js');     // 回收站 $I 解析与匹配判据（纯逻辑，可单测）
 const pathAuth = require('./pathauth.js');     // vf://pic 的读盘授权（纯逻辑，可单测）
 const crashLib = require('./crashlib.js');     // 崩溃兜底页的 HTML（纯逻辑，可单测）
+const lastDirRec = require('./lastdir.js');    // 「上次目录」记录的解析/序列化（纯逻辑，可单测）
 const { createDesktop } = require('./desktop.js');   // 桌面集成（菜单/托盘/任务栏）
 const fs = fsx.promises;
 
@@ -278,14 +279,16 @@ async function restoreFromTrash(origPath, sizeHint, afterMs) {
   return { ok: true, size: st2.size };
 }
 
-/* ---------- 上次目录记忆 ---------- */
+/* ---------- 上次目录记忆 ----------
+   记录里带 `granted`：只有"用户真的在对话框里选过"才为 true。
+   解析规则在 lastdir.js 里（纯逻辑，可单测）。 */
 function lastFile() { return path.join(app.getPath('userData'), 'last-dir.json'); }
 async function readLast() {
-  try { const j = JSON.parse(await fs.readFile(lastFile(), 'utf8')); return (j && j.dir) ? j.dir : null; }
+  try { return lastDirRec.parse(await fs.readFile(lastFile(), 'utf8')); }
   catch (e) { return null; }
 }
-async function writeLast(dir) {
-  try { await fs.writeFile(lastFile(), JSON.stringify({ dir, ts: Date.now() }), 'utf8'); } catch (e) { /* 忽略 */ }
+async function writeLast(dir, granted) {
+  try { await fs.writeFile(lastFile(), lastDirRec.serialize(dir, granted), 'utf8'); } catch (e) { /* 忽略 */ }
 }
 
 /* ---------- 递归列目录（并发有界，只收集图片元数据，绝不复制内容） ---------- */
@@ -562,14 +565,22 @@ function wireIpc() {
   });
 
   ipcMain.handle('vf:autoDir', async () => {
-    const dir = await readLast();
-    if (!dir) return null;
+    const rec = await readLast();
+    if (!rec || !rec.dir) return null;
+    /* `granted` 是**授权来源**：只有"用户真的在对话框里选过"的目录才允许恢复授权。
+       缺这个标记（老记录、或被 `--open-dir` 洗过的记录）一律当未授权 ——
+       否则"谁启动一次 `Atrium.exe --open-dir C:\`"就能把整个盘变成合法来源，
+       下次启动自动授予读盘权限。宁可让用户重选一次文件夹。 */
+    if (rec.granted !== true) {
+      trace('autodir-untrusted ' + rec.dir);
+      return null;
+    }
+    const dir = rec.dir;
     try {
       const st = await fs.stat(dir);
       if (!st.isDirectory()) return null;
-      /* 上次目录是**我们自己**持久化的（写入时已校验过它来自对话框），
-         所以这里可以恢复授权 —— 否则重启后"自动打开上次文件夹"会因为没有
-         授权而失效。 */
+      /* 上次目录是**我们自己**持久化的、且带 granted 标记（写入时已校验它来自对话框），
+         所以这里可以恢复授权 —— 否则重启后"自动打开上次文件夹"会因为没有授权而失效。 */
       await grantDir(dir);
       return dir;
     } catch (e) { return null; }
@@ -584,7 +595,9 @@ function wireIpc() {
       trace('setlastdir-deny ' + dir);
       return;
     }
-    writeLast(typeof dir === 'string' && dir ? dir : null);
+    /* 能走到这里说明该目录在 dirTrust 里（即用户选过），所以 granted=true；
+       清除时写成 null + granted:false，parse 会返回 null。 */
+    writeLast(typeof dir === 'string' && dir ? dir : null, typeof dir === 'string' && !!dir);
   });
 
   /* 单个文件移入回收站 + 写删除日志（两条成功分支都要写，撤销才有依据）。
@@ -1446,7 +1459,9 @@ function showCrashFallback(reason, exitCode, detail) {
   } catch (e) { trace('crash-fallback-failed ' + ((e && e.message) || e)); }
 }
 
-/* ---------- 自检（--selftest + 可选 --open-dir <dir>；结果写入 VF_RESULT_FILE） ---------- */
+/* ---------- 自检（--selftest；要预置目录就由调用方往临时 userData 写
+   last-dir.json（granted:true），不再接受 --open-dir 这种"命令行即授权"的入口。
+   结果写入 VF_RESULT_FILE） ---------- */
 function finishSelfTest(payload, code) {
   trace('selftest-finish code=' + code);
   const s = 'SELFTEST_RESULT ' + JSON.stringify(payload);
@@ -2368,10 +2383,15 @@ if (!gotLock) {
     session.defaultSession.setPermissionCheckHandler(denyPerm);
     trace('permissions-denied-all');
 
-    // 支持 --open-dir 预置“上次目录”（首次运行引导/自测用）
-    const idx = argv.indexOf('--open-dir');
-    if (idx >= 0 && argv[idx + 1]) await writeLast(argv[idx + 1]);
-    trace('lastdir-seeded');
+    /* `--open-dir <path>` **不再**写「上次目录」，也不授予任何权限。
+       以前这里 `writeLast(argv[idx+1])`，于是命令行给个路径就等于"用户选过的目录"，
+       下次启动 autoDir 直接恢复读盘授权 —— 一条不经过对话框的授权后门
+       （而且会把授权**持久化**，一次启动就长期有效）。
+       现在命令行路径只被忽略（trace 里能看到），要打开目录就走「打开文件夹」对话框。
+       测试/自检需要预置目录时，直接往临时 userData 写带 granted:true 的
+       last-dir.json —— 那是测试自己造的 userData，不经过应用的任何入口。 */
+    const oi = argv.indexOf('--open-dir');
+    if (oi >= 0) trace('open-dir-ignored ' + String(argv[oi + 1] || ''));
 
     createWindow();
     trace('window-created');

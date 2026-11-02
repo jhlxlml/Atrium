@@ -244,6 +244,24 @@ ok('反向：只差一个尾部分隔符不算子目录（C:\\Users\\me\\Picture
       mainSrc.indexOf("const st = await fs.stat(real);"));
   ok('setLastDir 只接受已授权路径（否则 autoDir 会把任意目录授予出去）',
     /ipcMain\.on\('vf:setLastDir'[\s\S]{0,400}dirTrust\.has\(dir\)/.test(mainSrc));
+  /* ---- 「上次目录」必须是**有来源**的授权，而不是"谁写进去都算" ----
+     以前 `--open-dir <path>` 会直接 writeLast(该路径)，下次启动 autoDir 就
+     grantDir 它 —— 命令行给个路径 = 拿到整个盘的读权限，而且被持久化。
+     现在：记录里带 granted 标记，autoDir 只认 granted:true；命令行路径只 trace。
+
+     注意这里要**去掉注释**再判：代码里留着"以前是 writeLast(argv[idx+1])"这类
+     说明性注释，直接对全文做正则会把注释当成代码（第一版就这么误报过）。 */
+  const code = mainSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  ok('autoDir 必须先判 granted 才能 grantDir（顺序不能反）',
+    code.indexOf('if (rec.granted !== true)') >= 0 &&
+      code.indexOf('if (rec.granted !== true)') <
+        code.indexOf('await grantDir(dir);', code.indexOf("ipcMain.handle('vf:autoDir'")));
+  ok('--open-dir 不再写「上次目录」（命令行即授权那条后门已关）',
+    !/writeLast\(\s*argv/.test(code) && !/argv\[idx \+ 1\]/.test(code));
+  ok('--open-dir 只留一条 trace，不做任何授权动作',
+    /open-dir-ignored/.test(code));
+  ok('writeLast 的调用点必须显式传 granted（不许再出现单参数写法）',
+    !/writeLast\([^,)]*\)/.test(code.replace(/async function writeLast\(dir, granted\)/, '')));
   ok('vf://pic 在字面判定之后再复核真实路径（防目录联接点逃逸）',
     /await picAllowed\(abs\)/.test(mainSrc));
   ok('readHead 同样复核真实路径',

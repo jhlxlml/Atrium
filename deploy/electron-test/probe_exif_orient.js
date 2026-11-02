@@ -139,12 +139,15 @@ const PAGE = `(async () => {
   delete env.ELECTRON_RUN_AS_NODE;   // 本机环境里它是常驻的，不清掉会进 node 模式
   delete env.NODE_OPTIONS;
   env.VF_USERDATA = ud;
+  /* 预置"上次目录"：应用不再接受命令行里的 --open-dir（命令行即授权那条后门
+     已关掉），改为直接写临时 userData 的 last-dir.json（granted:true）。 */
+  fs.writeFileSync(path.join(ud, 'last-dir.json'),
+    JSON.stringify({ dir: DIR, ts: Date.now(), granted: true }), 'utf8');
 
   /* --no-sandbox 只用于测试环境：这台机器没有可用的 GPU 进程
      （GPU process isn't usable. Goodbye.），不开它窗口起不来。
      正式版不带这个参数 —— main.js 里有断言守着。 */
   const child = spawn(EXE, [
-    '--open-dir', DIR,
     '--remote-debugging-port=' + String(PORT),
     '--no-sandbox',
     '--window-size=' + W + ',' + H,

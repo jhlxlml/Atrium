@@ -127,9 +127,16 @@ function runAppSelftest(exe, opts) {
     ? (fs.mkdirSync(path.join(o.udRoot, 'userdata'), { recursive: true }), path.join(o.udRoot, 'userdata'))
     : fs.mkdtempSync(path.join(require('os').tmpdir(), 'vf-selftest-'));
   const rf = path.join(ud, 'result.txt');
-  // 自检里相框窗口要留一张截图（无边框 + 按比例，肉眼复核用）—— SHOTS 已在模块顶部建好
+  /* 自检里相框窗口要留一张截图（无边框 + 按比例，肉眼复核用）—— SHOTS 已在模块顶部建好 */
   const args = ['--selftest', '--no-sandbox'];
-  if (o.openDir) args.push('--open-dir', o.openDir);
+  /* 预置"上次目录"：直接写 userData 里的 last-dir.json（granted:true）。
+     以前是传 `--open-dir <dir>`，但那条路等于"命令行即授权" —— 应用已经把它关了
+     （见 main.js 里 open-dir-ignored 那段）。测试自己造的 userData，写什么是测试的事，
+     不经过应用的任何授权入口。 */
+  if (o.openDir) {
+    fs.writeFileSync(path.join(ud, 'last-dir.json'),
+      JSON.stringify({ dir: o.openDir, ts: Date.now(), granted: true }), 'utf8');
+  }
   const r = spawnSync(exe, args, {
     cwd: path.resolve(HERE, '..', '..'),
     env: cleanEnv({ VF_USERDATA: ud, VF_RESULT_FILE: rf, VF_SHOTDIR: SHOTS }),
