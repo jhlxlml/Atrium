@@ -329,6 +329,12 @@
   }
 
   /* ---------- 索引器 ---------- */
+  /** 文件大小归一：非数值/负数一律 0；**绝不**用位运算（会把 ≥2GiB 截断成负数） */
+  function safeSize(v) {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
   const Loader = {
     isIndexing: false,
 
@@ -344,12 +350,22 @@
         const path = e.path || null;
         if (!file && !path) continue;
         const key = e.rel;
-        if (byRel.has(key)) { // 去重：同一路径只保留一份
+        /* 大小一律走 safeSize，**不要**再写 `e.size | 0`。
+           位运算是 32 位有符号的：2GiB 及以上的文件会变成负数
+           （3e9 → -1294967296、5e9 → 705032704）。这不是"显示难看"而已 ——
+           条目 id 里含 size（Util.itemId），溢出会让同一张图在两次索引之间
+           算出两个不同的 id，缩略图/尺寸缓存整批失配；fmtBytes(负数) 返回空串，
+           界面上文件大小整块消失；按大小排序时它还会被排到最前面。
+           （同一类错误在 main.js 的删除日志里修过一次，见 doTrashOne。） */
+        const size = safeSize(file ? file.size : e.size);
+        if (byRel.has(key)) { // 去重：同一路径只保留一份（保留更大的那份）
           const old = byRel.get(key);
-          if (file ? (old.size >= file.size) : true) continue;
+          /* 原来这里写成 `file ? (old.size >= file.size) : true` —— 原生条目
+             （只有 path、没有 File）永远走 `true`，也就是"永远保留先到的"，
+             与注释里"保留一份"的意图不符。统一按 size 比。 */
+          if (old.size >= size) continue;
         }
         const name = file ? file.name : (e.name || key.split('/').pop() || key);
-        const size = file ? file.size : (e.size | 0);
         const lastModified = file ? (file.lastModified || 0) : (Math.round(e.lastModified) || 0);
         const heic = Util.isHeic(name);
         byRel.set(key, {
@@ -392,9 +408,13 @@
       }
     },
 
-    /* 核心加工：索引 + 分批提交到一个来源（同名文件夹视为刷新） */
-    async _ingest(folderName, entries, via, totalHint) {
-      const all = this.buildEntries(entries, folderName);
+    /* 核心加工：索引 + 分批提交到一个来源（同一目录视为刷新） */
+    async _ingest(folderName, entries, via, totalHint, dir) {
+      /* 条目 id 的前缀必须**先于** buildEntries 定下来（id 在那里算）。
+         前缀由 State 决定：首次占用这个名字 → 就是文件夹名（与旧版一致），
+         同名但不同路径 → 文件夹名 + 路径哈希（见 state.js 的来源身份注释）。 */
+      const prefix = State.sourcePrefix ? State.sourcePrefix(folderName, dir) : folderName;
+      const all = this.buildEntries(entries, prefix);
       if (!all.length) {
         State.bus.emit('index-done', { via, folderName, count: 0 });
         return 0; // 该来源没有可显示的图片
@@ -418,7 +438,7 @@
         State.bus.emit('index-progress', { done: items.length, total: totalHint || all.length });
       }
       State.bus.emit('index-progress', { done: items.length, total: items.length });
-      State.commitSource(folderName, items);
+      State.commitSource(folderName, items, dir);
       State.bus.emit('index-done', { via, folderName, count: items.length });
       return items.length;
     },
@@ -458,6 +478,9 @@
               ENOENT: '目录不存在', EACCES: '没有访问权限', EPERM: '没有访问权限',
               ENOTDIR: '这不是一个文件夹', 'bad-path': '路径无效',
               'not-dir': '这不是一个文件夹', ipc: '与主进程通信失败',
+              /* 主进程只接受"用户亲手选过 / 上次打开过"的目录。
+                 正常操作不会走到这里；出现即说明是外部传入的路径。 */
+              denied: '未授权的路径（请用「打开文件夹」选择）',
             }[code] || ('读取失败：' + code);
             global.App.toast('打开文件夹失败 —— ' + why, { urgent: true });
           }
@@ -474,7 +497,7 @@
           name: f.name, rel: f.rel, size: f.size, lastModified: f.mtime, path: f.path,
         }));
         const name = r.name || (r.dir ? (r.dir.split(/[\\/]/).filter(Boolean).pop() || '图片') : '图片');
-        const n = await this._ingest(name, entries, 'native', entries.length);
+        const n = await this._ingest(name, entries, 'native', entries.length, dirPath);
         /* 只有开着「记住上次位置」才写盘 —— 否则关掉开关后每次仍会被记住，设置形同虚设。 */
         if (n > 0 && State.settings.rememberLast) { const sd = N.setLastDir; if (sd) sd(dirPath); }
         return n;
@@ -547,6 +570,27 @@
       scheduleDimFlush();
     },
 
+    /**
+     * 这张图是不是动图（GIF / APNG / 动态 WebP）。
+     * 只对**可能是动图**的扩展名读文件头，且结果缓存在 meta.anim 上。
+     * 灯箱的屏幕代理必须绕开动图，否则动画会静止成第一帧。
+     */
+    async sniffAnim(meta) {
+      if (!meta) return false;
+      if (meta.anim !== undefined) return !!meta.anim;
+      const ext = Util.ext(meta.name || '');
+      if (ext !== 'png' && ext !== 'webp' && ext !== 'gif') { meta.anim = false; return false; }
+      let buf = null;
+      try {
+        if (meta.file) buf = await meta.file.slice(0, DIM_HEAD).arrayBuffer();
+        else if (meta.path && global.Native && global.Native.readHead) {
+          buf = await global.Native.readHead(meta.path, DIM_HEAD);
+        }
+      } catch (e) { buf = null; }
+      meta.anim = buf ? Util.looksAnimated(buf) : false;
+      return meta.anim;
+    },
+
     async _loadDimsFor(list) {
       const missing = [];
       for (const m of list) if (!dimsMem.has(m.id)) missing.push(m.id);
@@ -589,12 +633,28 @@
           buf = await global.Native.readHead(meta.path, DIM_HEAD);
         }
       } catch (e) { buf = null; meta._dimErr = String((e && e.message) || e); }
+      /* 顺手判一下"是不是动图"（PNG 的 acTL / WebP 的 ANIM）。灯箱的屏幕代理
+         会把内容栅格化成静态图，动图必须绕开它 —— 见 thumb.js 的 noProxy()。
+         这里读的 buf 正好就是前 64KB，不额外读盘。 */
+      if (buf && meta.anim === undefined) meta.anim = Util.looksAnimated(buf);
+      /* 顺手记下 EXIF 方向（同一份前 64KB，不额外读盘）。
+         手机竖拍的照片是「存成横的 + Orientation=6」，而 sizeFromHeader()
+         读到的是**文件里存的**宽高 —— 直接用它排版会把竖图排进横格子，
+         拿去算代理尺寸更会把画面压扁（实测 1920×1200 vs 正确 1200×1920）。
+         这里统一换成「显示方向的宽高」，下游（网格排版、代理目标、尺寸库）
+         就都按看得见的比例走。 */
       let sz = null;
       try { sz = buf ? Util.sizeFromHeader(buf) : null; }
       catch (e) { sz = null; meta._dimErr = String((e && e.message) || e); }
+      if (buf && Util.exifOrientation) {
+        const o = Util.exifOrientation(buf);
+        if (o) meta.orient = o;
+        /* 5..8 才是宽高互换（90°/270°）；1..4 只是镜像/正立 */
+        if (o >= 5 && o <= 8 && sz) sz = { w: sz.h, h: sz.w };
+      }
       if (!sz && !meta._dimErr) meta._dimErr = buf ? 'header-unparsed' : 'read-failed';
       meta._dimProbe = sz || null;
-      if (sz) this.recordDims(meta, sz.w, sz.h);
+      if (sz) { meta.disp = true; this.recordDims(meta, sz.w, sz.h); }
       return sz;
     },
 

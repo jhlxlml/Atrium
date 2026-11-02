@@ -32,9 +32,14 @@
     return MAX_THUMB;
   }
 
-  /* ---------- 简单 LRU（Map 序即访问序） ---------- */
+  /* ---------- 简单 LRU（Map 序即访问序） ----------
+     淘汰/覆盖时**必须**通知外部回收资源（Blob URL），否则每覆盖一次就漏一个。
+     以前 LRU 自己在 _evictN 里 revoke，而 set() 覆盖同 key 时直接 delete 掉旧值、
+     什么都不做 —— 灯箱的"代"每次尺寸升级就漏一个 URL（一个 1920 宽的 JPEG blob
+     约 0.3–1MB，长期浏览会一直涨）。
+     现在把"怎么释放"交给构造时传入的 dispose，set() 覆盖与淘汰走同一条路。 */
   class LRU {
-    constructor(cap) { this.cap = cap; this.map = new Map(); }
+    constructor(cap, dispose) { this.cap = cap; this.map = new Map(); this.dispose = dispose || null; }
     has(k) { return this.map.has(k); }
     get(k) {
       const v = this.map.get(k);
@@ -42,7 +47,11 @@
       return v;
     }
     set(k, v) {
-      if (this.map.has(k)) this.map.delete(k);
+      if (this.map.has(k)) {
+        const old = this.map.get(k);
+        this.map.delete(k);
+        if (this.dispose && old !== v) this.dispose(old);
+      }
       this.map.set(k, v);
       if (this.map.size > this.cap) this._evictN(this.map.size - this.cap);
     }
@@ -52,17 +61,62 @@
         const k = it.next().value;
         if (k === undefined) break;
         const v = this.map.get(k);
-        if (v && v.url) global.URL.revokeObjectURL(v.url);
         this.map.delete(k);
+        if (this.dispose && v) this.dispose(v);
       }
     }
-    clear() { for (const v of this.map.values()) if (v && v.url) global.URL.revokeObjectURL(v.url); this.map.clear(); }
+    clear() {
+      for (const v of this.map.values()) if (this.dispose && v) this.dispose(v);
+      this.map.clear();
+    }
   }
 
-  const thumbs = new LRU(THUMB_CAP);   // id -> {url, side}
-  const bigs = new LRU(BIG_CAP);       // id -> {url}
-  const screens = new LRU(8);          // id -> {url, side, w, h, tw, th, full}（灯箱的"屏幕尺寸代"）
-  const pending = new Map();           // id -> Promise<string|null>
+  /* ---------- Blob URL 的引用计数（"钉住"） ----------
+     被灯箱贴到 <img src> 上的那个 URL 不能在后台被 revoke ——
+     LRU 淘汰、尺寸升级覆盖都会"释放旧值"，可旧值可能正是用户此刻看到的那一帧。
+     Chromium 多数情况下已经解码过的图还能继续显示，但这是实现细节，不能依赖：
+     一旦它去重新取资源，画面就碎了。所以：
+       pin(url)   → 记一笔
+       unpin(url) → 记账减到 0 时，如果之前有"该回收但被钉着"的记录，补做回收
+     revoke 对非 blob: 地址（vf:// 磁盘流）无意义，直接忽略。 */
+  const pinned = new Map();          // url -> 引用计数
+  const deferred = new Set();        // 已判定该回收、但还被钉住的 URL
+  function rawRevoke(u) {
+    if (typeof u !== 'string' || u.indexOf('blob:') !== 0) return;
+    try { global.URL.revokeObjectURL(u); } catch (e) { /* 忽略 */ }
+  }
+  function revoke(u) {
+    if (typeof u !== 'string' || u.indexOf('blob:') !== 0) return;
+    if (pinned.has(u)) { deferred.add(u); return; }
+    rawRevoke(u);
+  }
+  function pinURL(u) {
+    if (typeof u !== 'string' || !u) return;
+    pinned.set(u, (pinned.get(u) || 0) + 1);
+  }
+  function unpinURL(u) {
+    if (typeof u !== 'string' || !u) return;
+    const n = (pinned.get(u) || 0) - 1;
+    if (n > 0) { pinned.set(u, n); return; }
+    pinned.delete(u);
+    if (deferred.delete(u)) rawRevoke(u);
+  }
+  const disposeURL = (v) => { if (v && v.url) revoke(v.url); };
+
+  const thumbs = new LRU(THUMB_CAP, disposeURL);   // id -> {url, side}
+  const bigs = new LRU(BIG_CAP, disposeURL);       // id -> {url}
+  const screens = new LRU(8, disposeURL);          // id -> {url, side, w, h, tw, th, full}（灯箱的"屏幕尺寸代"）
+  const pending = new Map();           // id -> Promise<string|null>（缩略图在途）
+  /* 屏幕代的在途请求：id -> {side, p}。
+     同一张图同尺寸的并发请求必须共用一次解码 —— 否则 ①重复解码抢 CPU；
+     ②各自 createObjectURL，后完成的那份覆盖缓存、前一份的 URL 再没人放；
+     ③两份结果互相覆盖，可能出现"小档顶掉大档"。 */
+  const screenPending = new Map();
+  /* 「代」的版本号。切目录 / 删图 / 清缓存 / 关灯箱都 +1。
+     排队中的旧任务醒来先看版本，对不上就直接放弃 —— 不再往缓存里写、
+     也不再为一张已经不在列表里的图解码。 */
+  let epoch = 0;
+  const bumpEpoch = () => { epoch++; };
   /* 「代」的生成串成一条链，一次只跑一个 —— 理由见 preloadScreen 的注释 */
   let screenChain = Promise.resolve();
 
@@ -101,13 +155,63 @@
   const screenOk = (rec, side) => !!rec && (!!rec.full || rec.side >= side);
 
   /**
+   * 这一代比缓存里那代更好吗？（决定要不要覆盖）
+   * 规则：原图永远最好；否则边长更大者胜。**绝不允许降级覆盖** ——
+   * 一次小窗口的请求不该把已经备好的大代顶掉，否则用户一放大就要重算。
+   */
+  function betterRec(a, b) {
+    if (!b) return true;
+    if (b.full && !a.full) return false;
+    if (a.full && !b.full) return true;
+    return (a.side || 0) > (b.side || 0);
+  }
+
+  /**
+   * 这个条目能不能走"屏幕尺寸代"。
+   *
+   * GIF / SVG / APNG / 动态 WebP **不能**：代理的做法是 createImageBitmap 取一帧、
+   * 画进 canvas、再编码成静态图 —— 动图会静止成第一帧，SVG 会被栅格化成固定像素
+   * （放大就糊）。这类文件直接给原图，宁可慢一点，也不能把内容改掉。
+   * meta.anim 由 Loader.imageSize() 在读文件头时顺手标出（PNG 的 acTL / WebP 的 ANIM）。
+   */
+  function noProxy(meta) {
+    const ext = String(meta.ext || '').toLowerCase();
+    if (ext === 'gif' || ext === 'svg') return true;
+    return !!meta.anim;
+  }
+
+  /** 原图直通记录（缓存住，避免每次重新 createObjectURL 又没人回收） */
+  function fullRec(meta, ow, oh) {
+    const url = elURL(meta);
+    if (!url) return null;
+    return { url, side: Math.max(ow || 0, oh || 0), w: ow || 0, h: oh || 0, tw: ow || 0, th: oh || 0, full: true };
+  }
+
+  /**
+   * 把生成结果写进缓存。三道闸门：
+   *   ① 代过期（切目录/删图/清缓存/关灯箱之后才跑完）→ 立刻回收，不入缓存；
+   *   ② 不比缓存里那代更好 → 回收自己，返回已有的那代（不降级覆盖）；
+   *   ③ 正常写入 → LRU.set 会把被覆盖的旧 URL 交给 disposeURL 回收
+   *      （若旧 URL 正被灯箱钉着，回收会延后到 unpin）。
+   */
+  function commitScreen(id, rec, ep) {
+    if (!rec) return null;
+    if (ep !== epoch) { revoke(rec.url); return null; }
+    const cur = screens.get(id);
+    if (cur && !betterRec(rec, cur)) { if (cur.url !== rec.url) revoke(rec.url); return cur; }
+    screens.set(id, rec);
+    return rec;
+  }
+
+  /**
    * 取一张"够屏幕显示"的位图 URL。
    * @param {object} meta 条目
    * @param {number} cssW 图片将要占的 CSS 像素宽（会乘 dpr 再向上取档）
+   * @param {number} [prio] 解码优先级（见 aquireSlot 的分级；不传按"可视区"=2）
    * @returns {Promise<{url:string,side:number,w:number,h:number,tw:number,th:number,full:boolean}|null>}
    *   tw/th 是**原图**尺寸（0 = 没探到）；full=true 表示这本来就是原图。
    */
-  async function screenURL(meta, cssW) {
+  async function screenURL(meta, cssW, prio) {
     if (!meta || meta.bad) return null;
     const dpr = Math.min(global.devicePixelRatio || 1, 2);
     const need = Math.max(320, Math.round((cssW || 1200) * dpr));
@@ -115,45 +219,95 @@
     const hit = screens.get(meta.id);
     if (screenOk(hit, side)) { stats.screenHits++; return hit; }
 
+    /* 在途去重：同一张图已经有请求在路上时，**等它**，不要另起一次解码。
+       它可能比这次要的小 —— 那就等它回来再看缓存够不够，不够才继续往上做一代。
+       这样同一张图任何时刻最多只有一次解码在跑。 */
+    const inflight = screenPending.get(meta.id);
+    if (inflight) {
+      const got = await inflight.p.catch(() => null);
+      const h2 = screens.get(meta.id);
+      if (screenOk(h2, side)) { stats.screenHits++; return h2; }
+      if (got && got.side >= side) return got;
+    }
+
+    const ep = epoch;
+    const p = screenMake(meta, side, ep, prio);
+    screenPending.set(meta.id, { side, p });
+    try { return await p; }
+    finally { if (screenPending.get(meta.id) && screenPending.get(meta.id).p === p) screenPending.delete(meta.id); }
+  }
+
+  /** 真正生成一代（不含去重/缓存判定，那些在 screenURL / commitScreen 里） */
+  async function screenMake(meta, side, ep, prio) {
+    const t0 = now();
+
+    /* 先确认"是不是动图"。只有 png/webp/gif 需要读文件头（几十 KB，
+       且结果缓存在 meta.anim 上），JPEG 之类直接跳过。 */
+    if (global.Loader && global.Loader.sniffAnim) {
+      try { await global.Loader.sniffAnim(meta); } catch (e) { /* 判不出来就按静态处理 */ }
+      if (ep !== epoch) return null;
+    }
+
+    /* 动图 / 矢量：直接给原图（见 noProxy 的注释）。这条也要缓存，
+       否则每次 peek 未命中都会新建一个 blob URL 且无人回收。 */
+    if (noProxy(meta)) {
+      const rec = fullRec(meta, meta.w | 0, meta.h | 0);
+      return commitScreen(meta.id, rec, ep);
+    }
+
     // 先知道原图多大：原图本来就不比目标档大，就直接给原图，省一次 canvas 编码
     let ow = meta.w > 0 ? meta.w : 0;
     let oh = meta.h > 0 ? meta.h : 0;
     if (!ow && global.Loader && global.Loader.imageSize) {
       const sz = await global.Loader.imageSize(meta).catch(() => null);
       if (sz && sz.w > 0) { ow = sz.w; oh = sz.h; }
+      /* imageSize 顺手会把 PNG/WebP 的动画标记写进 meta.anim —— 那时要重新判一次 */
+      if (noProxy(meta)) return commitScreen(meta.id, fullRec(meta, ow, oh), ep);
     }
     const maxSide = Math.max(ow, oh);
     if (maxSide > 0 && maxSide <= side) {
-      const url = elURL(meta);
-      if (!url) return null;
-      const old = screens.get(meta.id);
-      const rec = { url, side: maxSide, w: ow, h: oh, tw: ow, th: oh, full: true };
-      screens.set(meta.id, rec);
-      /* 覆盖同一个键时 LRU 不会 revoke 旧值 —— File 条目每跑一次这里就多一个
-         blob URL（旧的那个再也没人放得掉）。 */
-      if (old && old.url && old.url !== url) revoke(old.url);
-      return rec;
+      return commitScreen(meta.id, fullRec(meta, ow, oh), ep);
     }
 
-    const res = await decodeThumb(meta, side);
+    const res = await decodeThumb(meta, side, prio);
+    if (ep !== epoch) { stats.screenDropped++; return null; }   // 白做了一次，但绝不能回写
     if (!res || !res.blob) {
       // 降级：拿原图。慢，但保证"一定能显示"
-      const url = elURL(meta);
-      return url ? { url, side: 0, w: 0, h: 0, tw: 0, th: 0, full: true } : null;
+      stats.screenDropped++;
+      return commitScreen(meta.id, fullRec(meta, ow, oh), ep);
     }
     const url = global.URL.createObjectURL(res.blob);
     const rec = {
       url, side: Math.max(res.dw, res.dh), w: res.dw, h: res.dh,
       tw: res.tw, th: res.th, full: false,
     };
-    screens.set(meta.id, rec);   // LRU 淘汰时会把旧 URL revoke 掉
-    stats.screenMakes++;
-    return rec;
+    const out = commitScreen(meta.id, rec, ep);
+    if (out === rec) stats.screenMakes++;
+    noteScreen(meta.id, side, res, msSince(t0));
+    return out;
   }
 
 
   /* 计数供性能探针断言（不参与业务逻辑） */
-  const stats = { decodes: 0, memHits: 0, diskHits: 0, misses: 0, viaBitmap: 0, viaImg: 0, lastMs: 0, maxMs: 0, screenHits: 0, screenMakes: 0 };
+  const stats = {
+    decodes: 0, memHits: 0, diskHits: 0, misses: 0, viaBitmap: 0, viaImg: 0,
+    lastMs: 0, maxMs: 0, screenHits: 0, screenMakes: 0, screenDropped: 0,
+  };
+  /* ---------- 阶段耗时（灯箱性能改造的"可测量"部分） ----------
+     每一代都记一条：排队等了多久、读盘多久、解码多久、编码多久、总共多久。
+     只保留最近 TIMING_KEEP 条（探针取最近若干条做 P50/P95），不参与业务逻辑。
+     没有这些数，任何"变快了"的说法都只能靠感觉。 */
+  const TIMING_KEEP = 64;
+  const timings = [];
+  function noteScreen(id, side, res, totalMs) {
+    timings.push({
+      id, side, totalMs,
+      readMs: res.readMs | 0, decodeMs: res.decodeMs | 0, encodeMs: res.encodeMs | 0,
+      queueMs: res.queueMs | 0, via: res.via || 'bitmap',
+      w: res.dw, h: res.dh,
+    });
+    if (timings.length > TIMING_KEEP) timings.splice(0, timings.length - TIMING_KEEP);
+  }
   function noteDecode(via, ms) {
     stats.lastMs = ms;
     if (ms > stats.maxMs) stats.maxMs = ms;
@@ -162,31 +316,74 @@
   const now = () => (global.performance && global.performance.now) ? global.performance.now() : Date.now();
   const msSince = (t0) => Math.round(now() - t0);
 
-  /* ---------- 解码槽：可视区优先的优先队列 ---------- */
+  /* ---------- 解码槽：统一优先级调度 ----------
+     所有解码（网格缩略图、灯箱的"代"、灯箱条带缩略图）都从这里拿槽位，
+     于是"谁先解"只有一个地方决定，不会出现"条带填充把当前这张堵在后面"。
+
+     优先级（数字越小越急）：
+       0  当前正在看的那张（灯箱当前张的缩略图 / 用户刚按下的下一张）
+       1  紧邻预取（±1）
+       2  可视区（网格当前视口、条带里靠近当前张的）
+       3  后台（远端条带、隔一张的预取）
+
+     **后台不能占满全部槽位**：3 级（条带远端、隔一张的预取）最多同时跑 BG_CONC 个，
+     于是前台永远至少剩 DECODE_CONCURRENCY - BG_CONC 个空槽，不必等后台解码结束。
+     这条是"当前图片最高优先级、后台不得长期占满解码资源"的落地方式 ——
+     不是靠调大并发，而是靠给前台留出固定余量。
+
+     为什么不是"等前台排队了才让路"（v1.20.9 第一版就是这样，实测是死代码）：
+     调度器是**严格按优先级出队**的，3 级任务只有在队列里没有 0/1 级任务时才会被选中，
+     "选中它的时候前台正好在等"这件事永远不会发生。所以必须给 3 级一个独立的额度。 */
+  const BG_CONC = 2;
   let activeDecodes = 0;
-  const queue = [];              // { id, resolve }
+  let activeBg = 0;              // 其中 3 级（后台）占了几个
+  const queue = [];              // { id, prio, seq, resolve }
   let desired = new Set();       // 网格当前可视区 id 集合
+  let seqNo = 0;
 
   /** 网格同步可视区后调用：让即将出现在屏幕上的图先解码 */
   function setDesired(ids) {
     desired = new Set(ids || []);
   }
-  function aquireSlot(id) {
-    return new Promise((resolve) => { queue.push({ id, resolve }); pump(); });
-  }
-  /** 优先挑视口内的请求；一个都没有时退回队首（保持首屏的原有顺序） */
-  function pick() {
-    if (desired.size) {
-      for (let i = 0; i < queue.length; i++) if (desired.has(queue[i].id)) return i;
-    }
-    return 0;
+  /** 取一个解码槽。prio 见上面的分级；不传按"可视区"算。 */
+  function aquireSlot(id, prio) {
+    const p = (typeof prio === 'number') ? prio : 2;
+    return new Promise((resolve) => {
+      queue.push({ id, prio: p, seq: ++seqNo, resolve });
+      pump();
+    });
   }
   function pump() {
-    while (activeDecodes < DECODE_CONCURRENCY && queue.length) {
-      const job = queue.splice(pick(), 1)[0];
+    for (;;) {
+      if (activeDecodes >= DECODE_CONCURRENCY) return;
+      /* 在"此刻允许开工"的任务里挑最急的（同级按先来后到，seq 保证 FIFO 不饿死）：
+         后台额度已满就跳过 3 级 —— 跳过最不紧急的那一级，不会挡住任何更急的活。 */
+      let best = -1;
+      for (let i = 0; i < queue.length; i++) {
+        const j = queue[i];
+        if (j.prio >= 3 && activeBg >= BG_CONC) continue;
+        const b = best >= 0 ? queue[best] : null;
+        if (!b || j.prio < b.prio || (j.prio === b.prio && j.seq < b.seq)) best = i;
+      }
+      if (best < 0) return;
+      const job = queue.splice(best, 1)[0];
       activeDecodes++;
-      job.resolve(() => { activeDecodes--; pump(); });
+      if (job.prio >= 3) activeBg++;
+      job.resolve(() => {
+        activeDecodes--;
+        if (job.prio >= 3) activeBg--;
+        pump();
+      });
     }
+  }
+  /** 调度器状态（探针用）：在跑的、排队的、按优先级分组 */
+  function schedStats() {
+    const byPrio = [0, 0, 0, 0];
+    for (const j of queue) byPrio[Math.min(3, j.prio)]++;
+    return {
+      active: activeDecodes, activeBg, waiting: queue.length, byPrio,
+      cap: DECODE_CONCURRENCY, bgConc: BG_CONC,
+    };
   }
 
   /* ---------- 媒体源抽象：兼容 File（浏览器）与磁盘 path（Electron vf://） ---------- */
@@ -200,12 +397,6 @@
   const elURL = (meta) => meta.file
     ? global.URL.createObjectURL(meta.file)
     : (global.Native && global.Native.active ? global.Native.url(meta) : null);
-  /** 只回收 blob: URL（vf:// 等非 blob 地址 revoke 无意义） */
-  const revoke = (u) => {
-    if (typeof u === 'string' && u.startsWith('blob:')) {
-      try { global.URL.revokeObjectURL(u); } catch (e) { /* 忽略 */ }
-    }
-  };
 
   /**
    * 取图片原始字节。
@@ -278,9 +469,14 @@
    * dw/dh = 实际解码输出尺寸；tw/th = 原图真实尺寸（0 = 没探到）。
    * 注意 dw/dh 是缩小后的尺寸，绝不能用它当「原图尺寸」写进尺寸库。
    */
-  async function decodeThumb(meta, side) {
-    const release = await aquireSlot(meta.id);
+  async function decodeThumb(meta, side, prio) {
+    /* 排队时间单独量：它衡量的是"调度有没有把人堵在后面"，
+       和解码本身快不快是两件事（混在一起就分不清该优化哪一头）。 */
+    const tq = now();
+    const release = await aquireSlot(meta.id, prio);
+    const queueMs = msSince(tq);
     const t0 = now();
+    let readMs = 0, decodeMs = 0, encodeMs = 0;
     try {
       stats.decodes++;
       const mime = alphaMime(meta);
@@ -295,7 +491,40 @@
         if (sz && sz.w > 0) { tw = sz.w; th = sz.h; }
       }
 
+      const tr = now();
       const src = await blobOf(meta);
+      readMs = msSince(tr);
+
+      /* EXIF 方向：`tw/th` 可能是**文件里存的**宽高，而 Orientation 5..8
+         的照片（手机竖拍）显示时宽高互换。createImageBitmap 传了
+         imageOrientation:'from-image'，解码结果是转正后的竖图，
+         若仍按文件头的横宽高给 resizeWidth/resizeHeight，就会把竖图压成横图。
+         实测：3840×2400 + Orientation=6 → 代理 1920×1200，而正确值是 1200×1920。
+
+         谁是"显示方向"由 meta.disp 判定（谁写 meta.w/h 谁负责标记）：
+           · Loader.imageSize()  → 写的就是显示方向，置 meta.disp
+           · 灯箱 _adoptNatural() → 取 rec.tw/th，也是显示方向，置 meta.disp
+           · 旧尺寸库里的记录     → 没有标记，是当年的原始宽高，这里就地纠正
+         优先用 meta.orient（Loader 读文件头时顺手记的），没有再自己从 blob 头认。 */
+      if (src) {
+        let o = (typeof meta.orient === 'number') ? meta.orient : 0;
+        if (!o && global.Util && Util.exifOrientation && src.slice) {
+          try {
+            const head = await src.slice(0, 65536).arrayBuffer();
+            o = Util.exifOrientation(head);
+            if (o) meta.orient = o;
+          } catch (e) { o = 0; }
+        }
+        /* 5..8 才是宽高互换（90°/270°）；1..4 只是镜像/正立，宽高不变 */
+        if (o >= 5 && o <= 8 && tw > 0 && th > 0 && !meta.disp) {
+          const t = tw; tw = th; th = t;
+          /* 顺手把条目上的尺寸也纠正过来：网格排版按 meta.w/h 算格子，
+             不纠正的话"图是竖的、格子是横的"，而且每张图每次都要重算一遍。 */
+          if (meta.w > 0 && meta.h > 0) { meta.w = tw; meta.h = th; }
+          meta.disp = true;
+        }
+      }
+
       if (src && isBitmap) {
         const opt = { imageOrientation: 'from-image', resizeQuality: 'medium' };
         if (tw > 0 && th > 0) {
@@ -307,15 +536,20 @@
           opt.resizeWidth = side;
         }
         let bmp = null;
+        const td = now();
         try { bmp = await global.createImageBitmap(src, opt); } catch (e) { bmp = null; }
+        decodeMs = msSince(td);
         if (bmp) {
           const dw = bmp.width, dh = bmp.height;
           const c = canvasFor(dw, dh);
+          const te = now();
           const out = await drawAndEncode(c, bmp, dw, dh, mime, q);
+          encodeMs = msSince(te);
           if (bmp.close) bmp.close();
           if (out) {
             noteDecode('bitmap', msSince(t0));
-            return { blob: out, dw, dh, tw, th, scaled: !(tw === dw && th === dh), via: 'bitmap' };
+            return { blob: out, dw, dh, tw, th, scaled: !(tw === dw && th === dh), via: 'bitmap',
+              queueMs, readMs, decodeMs, encodeMs };
           }
         }
       }
@@ -330,10 +564,13 @@
       const s = Math.min(1, side / Math.max(iw, ih));
       const ow = Math.max(1, Math.round(iw * s));
       const oh = Math.max(1, Math.round(ih * s));
+      const te2 = now();
       const out = await drawAndEncode(canvasFor(ow, oh), img, ow, oh, mime, q);
+      encodeMs = msSince(te2);
       if (!out) return null;
       noteDecode('img', msSince(t0));
-      return { blob: out, dw: ow, dh: oh, tw: iw, th: ih, scaled: true, via: 'img' };
+      return { blob: out, dw: ow, dh: oh, tw: iw, th: ih, scaled: true, via: 'img',
+        queueMs, readMs, decodeMs, encodeMs };
     } finally { release(); }
   }
 
@@ -350,7 +587,7 @@
      * 请求的显示宽度会先向上取档，档内变化不触发重解；
      * 若之后请求到更大档，会重新解码并替换缓存（旧 URL 立即 revoke）。
      */
-    async thumbURL(meta, cssW) {
+    async thumbURL(meta, cssW, prio) {
       if (meta.bad) return null;
       const dpr = Math.min(global.devicePixelRatio || 1, 2);
       const side = bucketOf(Math.min(MAX_THUMB, Math.max(96, Math.round((cssW || 200) * dpr))));
@@ -369,15 +606,15 @@
                 cached = await store.get(meta.id);
                 if (cached && cached.blob && cached.side >= side) {
                   const url = global.URL.createObjectURL(cached.blob);
-                  const old = thumbs.get(meta.id);
+                  /* 旧值交给 LRU.set 的 dispose 回收（同 key 覆盖也要回收，
+                     这里以前是手写 revoke，容易在别的分支漏掉）。 */
                   thumbs.set(meta.id, { url, side: cached.side });
-                  if (old && old.url && old.url !== url) revoke(old.url);
                   stats.diskHits++;
                   return url;
                 }
               }
               stats.misses++;
-              const res = await decodeThumb(meta, side);
+              const res = await decodeThumb(meta, side, prio);
               if (!res || !res.blob) throw new Error('decode-fail');
               // 尺寸记录：能拿到原图真实尺寸就写绝对值，否则只写比例
               // （缩略图是被降采样过的，它的像素尺寸绝不是原图尺寸）
@@ -385,10 +622,8 @@
                 if (res.tw > 0 && res.th > 0 && res.tw !== res.dw) global.Loader.recordDims(meta, res.tw, res.th);
                 else if (res.dw > 0) global.Loader.recordRatio(meta, res.dw, res.dh);
               }
-              const old = thumbs.get(meta.id);
               const url = global.URL.createObjectURL(res.blob);
               thumbs.set(meta.id, { url, side });
-              if (old && old.url && old.url !== url) revoke(old.url);
               // 只留「见过的最大的那份」：否则一次小尺寸布局会把高清缓存降级掉
               if (store && (!cached || cached.side < side)) store.put(meta.id, res.blob, side);
               return url;
@@ -482,10 +717,21 @@
      */
     preloadScreen(meta, cssW, near) {
       if (!meta || meta.bad) return;
+      /* 记下"排这个任务时是哪一代"。醒来先比一次：切目录 / 删图 / 清缓存 /
+         关灯箱之后版本已经变了，这个任务就不该再跑（更不该再往缓存里写）。
+         以前只检查 meta.bad —— 切目录后排队中的任务照样会为一张已经不在列表里的
+         图解码、建 blob URL、写进刚被清空的缓存。 */
+      const ep = epoch;
+      /* 预取也要标优先级：near=true 是"用户下一步很可能要的"（1 级，与当前张同级梯队），
+         near=false 是隔一张的后备（3 级后台）—— 于是只要前台有活，
+         后台预取就自动让出 BG_CONC 个额度以外的那部分槽位，不会把"正在等的那一帧"堵在队列里。 */
+      const prio = near ? 1 : 3;
       const run = () => {
+        if (ep !== epoch) { stats.screenDropped++; return Promise.resolve(null); }
         screenChain = screenChain.then(() => {
+          if (ep !== epoch) { stats.screenDropped++; return null; }
           if (!meta || meta.bad) return null;
-          return screenURL(meta, cssW).catch(() => null);
+          return screenURL(meta, cssW, prio).catch(() => null);
         });
         return screenChain;
       };
@@ -509,6 +755,11 @@
     /** 彻底丢弃某个条目的缩略图/原图缓存（文件被删除后调用） */
     forget(id) {
       if (!id) return;
+      /* 代 +1：让"为这张图排队/在跑"的任务作废。否则删掉一张图之后，
+         排队中的预取醒来还会把它重新解码、重新写进缓存（文件已经不在磁盘上了，
+         结果是每删一张就多一次必然失败的读盘 + 一个没人用的 blob URL）。 */
+      bumpEpoch();
+      screenPending.delete(id);
       const t = thumbs.get(id);
       if (t && t.url) revoke(t.url);
       thumbs.map.delete(id);
@@ -523,9 +774,26 @@
 
     /** 切换文件夹时清空内存缓存（磁盘缓存保留，供下次直接命中） */
     clearAll() {
+      bumpEpoch();                 // 排队中的旧任务全部作废
+      screenPending.clear();
       thumbs.clear(); bigs.clear(); screens.clear(); pending.clear();
       desired = new Set();
     },
+
+    /** 灯箱关闭：只作废"还没跑"的后台预取，不动已有缓存（下次打开还要用） */
+    cancelPrefetch() { bumpEpoch(); },
+
+    /* ---------- Blob URL 的钉住 / 解钉（灯箱正在显示的那一张） ----------
+       被 <img src> 引用的 URL 不能在后台被回收：LRU 淘汰、尺寸升级覆盖都会
+       "释放旧值"，而旧值可能正是用户此刻看到的那一帧。 */
+    pinURL, unpinURL,
+
+    /** 调度器状态（探针用） */
+    schedStats,
+    /** 最近若干次"代"生成的分段耗时（探针用） */
+    timings: () => timings.slice(),
+    /** 当前代（探针用：判断任务有没有被作废） */
+    epoch: () => epoch,
   };
 
   global.Thumbs = Thumbs;

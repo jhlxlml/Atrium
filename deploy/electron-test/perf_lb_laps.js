@@ -28,16 +28,27 @@ if (!DIR) { console.error('用法: node perf_lb_laps.js <目录> [宽] [高] [�
 if (!fs.existsSync(EXE)) { console.error('找不到 exe: ' + EXE); process.exit(2); }
 
 const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'vf-laps-'));
+/* 预置"上次目录"：应用已不再接受命令行里的 `--open-dir`（"命令行即授权"那条
+   后门关掉了，见 main.js 的 open-dir-ignored），所以这里直接写临时 userData 里的
+   last-dir.json（granted:true）—— 测试自己造的 userData，写什么是测试的事。 */
+fs.writeFileSync(path.join(ud, 'last-dir.json'),
+  JSON.stringify({ dir: DIR, ts: Date.now(), granted: true }), 'utf8');
 const env = Object.assign({}, process.env, { VF_USERDATA: ud });
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.NODE_OPTIONS;
 
 const child = spawn(EXE, [
-  '--open-dir', DIR,
   '--remote-debugging-port=' + PORT,
   '--no-sandbox',
   '--window-size=' + W + ',' + H,
-], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+], {
+  env,
+  /* stdout 必须 ignore：这三个脚本从不读 child.stdout，接了管道就等于给它
+     64KB 的窗口 —— Electron 一旦多打几行（DevTools 提示、GPU 警告），
+     子进程就卡在 write 上，脚本永远等不到 CDP 目标。stderr 仍然收着，出错时打印。 */
+  stdio: ['ignore', 'ignore', 'pipe'],
+  windowsHide: true,
+});
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

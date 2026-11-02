@@ -14,6 +14,11 @@
   const MAX_FIT = 3;      // “适应”放大上限（小图最大放到 3 倍原始像素）
   const PLAY_MS = 3800;   // 幻灯片间隔
   const INFO_W = 300;     // 信息面板宽
+  /* 条带缩略图的在途并发。取 2 而不是更大：条带是纯后台活，
+     而"你正在等的那一帧"用的是浏览器自己的解码器（不经过我们的调度槽），
+     这里多发一个请求就是实打实多抢一份 CPU。实测（1000 张目录）：
+     2 个在途时可见段 20 格 60ms 内填满，再往上加对可见段没有可测收益。 */
+  const STRIP_CONC = 2;
 
   const Lightbox = {
     el: null, stage: null, img: null, spin: null, errBox: null,
@@ -88,8 +93,12 @@
         e.preventDefault();
         this.nav(dy < 0 ? -1 : 1);
       }, { passive: false });
-      // 缩略图条滚动位置检测：滚到最右端时添加 strip-at-end 类（沉浸模式下可据此显现）
-      this.strip.addEventListener('scroll', () => this._checkStripEnd(), { passive: true });
+      // 缩略图条滚动位置检测：滚到最右端时添加 strip-at-end 类（沉浸模式下可据此显现）；
+      // 同时把"此刻可见的那一段"纳入填充窗口 —— 否则用户滚到第 800 张，那里永远是空白。
+      this.strip.addEventListener('scroll', () => {
+        this._checkStripEnd();
+        this._fillStripVisible();
+      }, { passive: true });
       if (this.infoBtn) this.infoBtn.addEventListener('click', () => this.toggleInfo());
       this.playBtn.addEventListener('click', () => this.togglePlay());
       if (this.delBtn) this.delBtn.addEventListener('click', () => { if (this.onDelete && this.meta) this.onDelete(this.meta); });
@@ -187,8 +196,19 @@
       if (this._spinT) { clearTimeout(this._spinT); this._spinT = 0; }
       if (this._settleT) { clearTimeout(this._settleT); this._settleT = 0; }
       if (this._stripT) { clearTimeout(this._stripT); this._stripT = 0; }
+      this._stripGen = (this._stripGen || 0) + 1;   // 旧世代的在途结果作废
+      this._stripBusy = 0;
+      this._stripWant = null;
+      this._lastNavAt = 0;
       this._stripOrder = null;
       this._stripSlots = null;
+      /* 关灯箱：把正在显示的那个 URL 解钉（这时才允许缓存层回收它），
+         并作废"还没跑"的后台预取 —— 用户已经走了，没必要再为几张图解码。 */
+      if (this._pinnedURL && global.Thumbs && global.Thumbs.unpinURL) {
+        global.Thumbs.unpinURL(this._pinnedURL);
+        this._pinnedURL = null;
+      }
+      if (global.Thumbs && global.Thumbs.cancelPrefetch) global.Thumbs.cancelPrefetch();
       // 若处于全屏，先退出全屏（异步），再隐藏
       if (document.fullscreenElement === this.el) {
         const done = () => {
@@ -347,6 +367,10 @@
       if (this._settleT) { clearTimeout(this._settleT); this._settleT = 0; }
       this._updateStripSel();
       this._checkStripEnd();
+      /* 条带的填充窗口要跟着当前张走：翻到第 500 张时，第 500±30 这一段才值得解码。
+         连翻期间这里会被 _fillStrip 里的"让路"分支挡住（延后 140ms 再来），
+         正好实现"快速连翻时不生成无关的后台缩略图"。 */
+      this._fillStrip();
 
       if (meta.bad) { this._showErr(this._badReason(meta)); return; }
 
@@ -412,7 +436,7 @@
           if (rec && rec.thumb) { start(null); return; }
           this._showErr('浏览器无法解码这张图片');
         };
-        this.img.src = url;
+        this._setSrc(url);
       };
 
       this.scale = 1; this.tx = 0; this.ty = 0; this.base = 1;
@@ -509,6 +533,22 @@
     },
 
     /**
+     * 换图统一入口：钉住新 URL、放掉旧 URL，再写 src。
+     *
+     * 为什么要"钉"：缓存层（thumbs/bigs/screens 三个 LRU）在淘汰或尺寸升级时
+     * 会 revoke 掉被替换的 blob URL，而那个 URL 可能正是此刻屏幕上这一帧。
+     * 被 revoke 的 blob 一旦需要重新取资源，画面就碎了。
+     * pinURL/unpinURL 让"正在显示"的 URL 延后回收，换图/关闭时再补做。
+     */
+    _setSrc(url) {
+      const T = global.Thumbs;
+      if (this._pinnedURL && this._pinnedURL !== url && T && T.unpinURL) T.unpinURL(this._pinnedURL);
+      this._pinnedURL = url || null;
+      if (url && T && T.pinURL) T.pinURL(url);
+      this.img.src = url;
+    },
+
+    /**
      * 记下当前这张图的尺寸。
      * 关键：屏幕上那张**可能是缩小过的"代"**，它的 naturalWidth 绝不是原图尺寸 ——
      * 直接写进尺寸库会污染网格（thumbURL 那边专门为此加了 `res.tw !== res.dw` 判断）。
@@ -528,10 +568,14 @@
       this.origW = knownW || (isFull ? natW : 0);
       this.origH = knownH || (isFull ? natH : 0);
       if (isFull) {
-        meta.w = natW; meta.h = natH;
+        /* <img> 的 naturalWidth 是**转正后**的尺寸（Chromium 会应用 EXIF 方向），
+           所以这里写进去的是"显示方向的宽高"，要打上 disp 标记 —— 否则
+           thumb.js 会把它当成"文件里存的原始宽高"再互换一次。 */
+        meta.w = natW; meta.h = natH; meta.disp = true;
         Loader.recordDims(meta, natW, natH);
       } else if (knownW > 0 && knownH > 0) {
         meta.w = knownW; meta.h = knownH;
+        if (rec && rec.tw) meta.disp = true;   // rec.tw/th 是解码时探到的显示方向尺寸
         Loader.recordDims(meta, knownW, knownH);
       }
     },
@@ -565,7 +609,7 @@
         if (Loader && Loader.recordDims) Loader.recordDims(meta, newNat, this.nh);
         this.apply();          // 只重算 transform：不动类名、不动 src 之外的东西 → 视觉零跳变
       };
-      this.img.src = url;
+      this._setSrc(url);
     },
 
     /** 灯箱里「为什么打不开」的人话解释（P1-2：区分格式不支持 / 文件损坏 / 环境缺解码器） */
@@ -600,6 +644,10 @@
       if (n <= 1) return;
       this.i = (this.i + delta + n) % n;
       this.meta = this.list[this.i];
+      /* 只有**真正的切图**才打这个点：条带的"连翻让路"看它（见 _fillStrip）。
+         render() 里那个 _navAt 是给"连翻判定"用的，打开灯箱时也会被写，
+         拿它当"刚切过图"会让条带在打开瞬间白等 140ms。 */
+      this._lastNavAt = (global.performance && performance.now) ? performance.now() : Date.now();
       this.render();
     },
 
@@ -611,6 +659,18 @@
       // 同步移除缩略图条中对应的一项（保持 children 索引与 list 对齐）
       const el = this.strip.children[idx];
       if (el && el.parentNode) el.parentNode.removeChild(el);
+      /* 槽位数组必须**跟着左移**，否则 `slots[k]` 与 `list[k]` 从此错位：
+         删掉第 3 张之后，条带上第 4 格会拿到第 3 张的缩略图，
+         越往后越错 —— 而且因为槽位被标成 filled，错了就再也不会自愈。
+         （v1.20.9 之前只挪了 list 和 DOM，没挪这个数组。） */
+      if (this._stripSlots && idx < this._stripSlots.length) {
+        this._stripSlots.splice(idx, 1);
+        if (this._stripWant) this._stripWant.clear();   // 索引整体左移，旧位置作废
+        for (let k = idx; k < this._stripSlots.length; k++) {
+          const s = this._stripSlots[k];
+          if (s) { s.filled = false; s.m = this.list[k] || s.m; }   // 重新取（多半是内存/磁盘命中）
+        }
+      }
       if (!this.list.length) { this.close(); return; }
       if (this.list.length < 2) this.stripBtn.classList.add('disabled');
       this.i = idx < this.list.length ? idx : 0;  // 顺位显示“下一张”，末位则回到首张
@@ -1091,7 +1151,9 @@
         }
         b.appendChild(ic);
         b.addEventListener('click', () => {
-          this.i = k; this.meta = m; this.render();
+          this.i = k; this.meta = m;
+          this._lastNavAt = (global.performance && performance.now) ? performance.now() : Date.now();
+          this.render();
           b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: Util.scrollBehavior() });
         });
         b._idx = k;
@@ -1099,41 +1161,119 @@
         slots[k] = { b: b, ic: ic, img: img, m: m };
       }
       this._stripSlots = slots;
-      /* 填充顺序：**当前这张和它的邻居先来**，然后向两侧展开。
-         用户打开灯箱第一眼看的是当前张，接着最可能按下一张 —— 让这些先出图，
-         远处的等有空再说。 */
-      const order = [];
-      const seen = new Set();
-      const push = (k) => {
-        if (k >= 0 && k < shown && !seen.has(k)) { seen.add(k); order.push(k); }
-      };
-      push(this.i);
-      for (let d = 1; d < shown; d++) { push(this.i + d); push(this.i - d); }
-      this._stripOrder = order;
+      this._stripGen = (this._stripGen || 0) + 1;   // 世代：旧世代的在途结果不再回写
+      this._stripBusy = 0;
+      this._stripWant = new Set();      // 本窗口内"想要"的槽位（按需扩展）
       this._updateStripSel();
       this._checkStripEnd();
-      this._fillStrip(0);
+      this._fillStrip();
     },
 
-    /** 分批填条带缩略图：每批 6 张，填完让出主线程再填下一批 */
-    _fillStrip(pos) {
-      const order = this._stripOrder, slots = this._stripSlots;
-      if (!order || !slots) return;
-      const end = Math.min(pos + 6, order.length);
-      for (let p = pos; p < end; p++) {
-        const s = slots[order[p]];
-        if (!s || !s.img || s.filled) continue;
-        s.filled = true;
-        Thumbs.thumbURL(s.m, 148).then((url) => {
-          if (url && s.b.isConnected) { s.img.src = url; s.ic.remove(); }
-        }).catch(() => {});
+    /* ---------- 条带缩略图：有背压的按需填充 ----------
+       旧实现：每批 6 个请求，setTimeout(...,0) 接着发下一批，**不等上一批完成**。
+       两个后果：
+         ① 没有背压 —— 1200 个槽位在几十毫秒内全部发起，等于同时排 1200 份
+            「读盘 + 解码 + 编码」，把解码槽和主线程一起打满；
+         ② 不分远近 —— 1000 张的目录里，用户只看第一张，也要为全部 1000 张
+            各读一遍文件（实测 3 秒内已解 98 张、填了 119 个槽位，而且还会继续）。
+
+       现在：
+         · **背压**：同时最多 STRIP_CONC 个在途，回来一个才发下一个；
+         · **按需**：只填"当前张 ± STRIP_WIN"这个窗口 + 条带此刻**真正可见**的那一段，
+           用户翻到别处 / 滚到别处时窗口跟着走；
+         · **优先**：距离 0（当前张）走 0 级、1（邻张）走 1 级、近处 2 级、远处 3 级后台
+           （分级见 thumb.js 的调度器注释）；
+         · **连翻让路**：两次切图间隔 < 120ms（按住方向键）时暂停发新请求，
+           免得条带填充去抢"你正在等的那一帧"；
+         · **条带收起时不填**：看不见的东西不值得解码（按 H 展开时才开工）。 */
+    _stripWin() { return 30; },
+
+    /** 启动/续跑填充：一直补到"在途数 = STRIP_CONC"为止，回来一个再补一个 */
+    _fillStrip() {
+      if (!this.openFlag) return;
+      const slots = this._stripSlots;
+      if (!slots || !slots.length) return;
+      if (this.strip.hidden) return;                     // 条带收起：不填
+      /* 连翻期间不发新请求：此刻 CPU 应该全给"当前这一张"。
+         判据是**真正的切图**（nav / 点条带），不是每次 render —— 打开灯箱时的
+         首次 render 也走 render()，拿它当"刚切过图"会让条带白等 140ms。
+         用一个定时器延后重试，而不是每次 nav 都新起一条链。 */
+      const nowMs = (global.performance && performance.now) ? performance.now() : Date.now();
+      if (nowMs - (this._lastNavAt || 0) < 120) {
+        if (this._stripT) clearTimeout(this._stripT);
+        this._stripT = setTimeout(() => { this._stripT = 0; this._fillStrip(); }, 140);
+        return;
       }
-      if (end < order.length) {
-        this._stripT = setTimeout(() => {
-          this._stripT = 0;
-          if (this.openFlag) this._fillStrip(end);
-        }, 0);
+      while (this._stripBusy < STRIP_CONC) {
+        const k = this._nextStripSlot();
+        if (k < 0) return;
+        this._issueStrip(k);
       }
+    },
+
+    /** 发一个条带缩略图请求（背压计数 + 世代校验都在这里） */
+    _issueStrip(k) {
+      const slots = this._stripSlots;
+      const s = slots && slots[k];
+      if (!s || !s.img || s.filled) return;
+      s.filled = true;
+      const d = Math.abs(k - this.i);
+      const prio = d === 0 ? 0 : (d === 1 ? 1 : (d <= 6 ? 2 : 3));
+      const gen = this._stripGen;
+      this._stripBusy++;
+      const m = this.list[k] || s.m;   // 以 list 为准（删图后槽位与 list 已重新对齐）
+      Thumbs.thumbURL(m, 148, prio).then((url) => {
+        /* 期间条带被重建/关闭过（gen 变了）→ 这一份结果作废，也别去改 DOM */
+        if (gen !== this._stripGen) return;
+        if (url && s.b && s.b.isConnected) { s.img.src = url; s.ic.remove(); }
+      }).catch(() => {}).then(() => {
+        if (gen !== this._stripGen) return;              // 旧世代的计数不再回写
+        this._stripBusy--;
+        if (this.openFlag) this._fillStrip();
+      });
+    },
+
+    /** 下一个该填的槽位：可见区优先，其次离当前张由近及远 */
+    _nextStripSlot() {
+      const slots = this._stripSlots;
+      if (!slots || !slots.length) return -1;
+      const n = slots.length;
+      const usable = (k) => { const s = slots[k]; return !!s && !!s.img && !s.filled; };
+      /* ① 先补"此刻真在条带视口里"的槽位 —— 用户把条带滚到哪儿就填哪儿。
+         顺手把已填/已无 img 的项从 _stripWant 里剔掉（否则集合只增不减）。 */
+      let best = -1, bestD = Infinity;
+      for (const k of this._stripWant) {
+        if (!usable(k)) { this._stripWant.delete(k); continue; }
+        const d = Math.abs(k - this.i);
+        if (d < bestD || (d === bestD && k < best)) { best = k; bestD = d; }
+      }
+      if (best >= 0) return best;
+      /* ② 否则按"离当前张由近及远"补窗口（先左后右，和视觉上的接近程度一致） */
+      const win = this._stripWin();
+      const lo = Math.max(0, this.i - win);
+      const hi = Math.min(n - 1, this.i + win);
+      for (let d = 0; d <= win; d++) {
+        const a = this.i - d, b = this.i + d;
+        if (a >= lo && a < n && usable(a)) return a;
+        if (d && b <= hi && b < n && usable(b)) return b;
+      }
+      return -1;
+    },
+
+    /** 条带被滚动到别处：把那里的槽位也纳入窗口（否则远端永远是空白） */
+    _fillStripVisible() {
+      const slots = this._stripSlots;
+      if (!slots || !slots.length || this.strip.hidden) return;
+      const el = this.strip;
+      const avg = el.scrollWidth / slots.length || 64;
+      const first = Math.max(0, Math.floor(el.scrollLeft / avg) - 4);
+      const last = Math.min(slots.length - 1, Math.ceil((el.scrollLeft + el.clientWidth) / avg) + 4);
+      let added = false;
+      for (let k = first; k <= last; k++) {
+        const s = slots[k];
+        if (s && s.img && !s.filled && !this._stripWant.has(k)) { this._stripWant.add(k); added = true; }
+      }
+      if (added) this._fillStrip();
     },
 
     _updateStripSel() {
@@ -1153,7 +1293,7 @@
       this.strip.hidden = !this.stripOn;
       this.el.classList.toggle('with-strip', this.stripOn);
       this.stripBtn.classList.toggle('is-on', this.stripOn);
-      if (this.stripOn) { this._updateStripSel(); this._checkStripEnd(); }
+      if (this.stripOn) { this._updateStripSel(); this._checkStripEnd(); this._fillStrip(); }
     },
 
     /** 检测缩略图条是否滚到最右端，切换 strip-at-end 类 */
