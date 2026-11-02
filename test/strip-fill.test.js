@@ -285,6 +285,48 @@ async function testF8() {
   A.eq('F8 触发了重新渲染', h.rendered, 1);
 }
 
+/* ============================================================
+   F9. 大目录的远端：窗口是"以当前张为原点"，不是"从头开始"
+   ------------------------------------------------------------
+   审计里我把这条列成未测风险（"±30 窗口在 10 万张的远端会不会退化成
+   从 0 开始"）。读代码看它按 `this.i` 算绝对区间，所以这里直接把 10 万张
+   的极端情况钉成断言 —— 读代码得出的结论也得有门禁守着。
+   ============================================================ */
+async function testF9() {
+  installEnv();
+  const N = 100000, I = N - 100;
+  const h = host(N, I);
+
+  fill(h);
+  A.eq('F9 10 万张里也只并发 2 个', log.length, STRIP_CONC_EXPECT);
+  A.ok('F9 首批请求就在当前张附近（不是从 0 开始）',
+    log.every((x) => Math.abs(x.k - I) <= 1),
+    '实测 ' + log.map((x) => x.k).join(','));
+
+  await drain(h, 4000);
+  const ks = log.map((x) => x.k);
+  /* 窗口是 ±30，所以中段一张图对应 **61** 个槽位（F2 在 i=0 的边界上只有 31 个） */
+  A.eq('F9 中段只填 ±30 的 61 个槽位', ks.length, 61);
+  A.eq('F9 最小索引 = 当前张 - 30', Math.min.apply(null, ks), I - 30);
+  A.eq('F9 最大索引 = 当前张 + 30', Math.max.apply(null, ks), I + 30);
+  A.eq('F9 没有任何"回头补前面"的请求', ks.filter((k) => k < I - 30).length, 0);
+  A.eq('F9 首尾都不越界', ks.filter((k) => k < 0 || k >= N).length, 0);
+
+  /* 条带被滚到中段：可见区要能"接管"，否则远端永远空白 */
+  log = [];
+  const avg = h.strip.scrollWidth / h._stripSlots.length;
+  h.strip.scrollLeft = 50000 * avg;
+  visible(h);
+  const want = Array.from(h._stripWant);
+  A.ok('F9 滚到中段后可见区被纳入', want.length > 0 && want.every((k) => k > 49000 && k < 51000),
+    'want=' + want.length + ' 范围 ' + Math.min.apply(null, want) + '..' + Math.max.apply(null, want));
+
+  await drain(h, 4000);
+  const ks2 = log.map((x) => x.k);
+  A.ok('F9 中段的槽位真的被请求了', ks2.length > 0 && ks2.every((k) => k > 49000 && k < 51000),
+    '实测 ' + (ks2.length ? Math.min.apply(null, ks2) + '..' + Math.max.apply(null, ks2) : '无'));
+}
+
 /* ============================================================ */
 (async () => {
   await testF1();
@@ -295,6 +337,7 @@ async function testF8() {
   await testF6();
   await testF7();
   await testF8();
+  await testF9();
   const ok = A.finish('灯箱缩略图条（按需 + 背压）');
   process.exit(ok ? 0 : 1);
 })();
