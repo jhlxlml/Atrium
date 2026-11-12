@@ -59,7 +59,11 @@ console.log('exe   :', exe);
 console.log('sandbox:', sandbox);
 console.log('超时  :', timeoutS + 's');
 const t0 = Date.now();
-const r = spawnSync(exe, ['--selftest', '--no-sandbox', '--open-dir', openDir], {
+/* 预置"上次目录"：应用不再接受命令行里的 --open-dir（命令行即授权那条后门
+   已关掉），改为直接写临时 userData 的 last-dir.json（granted:true）。 */
+fs.writeFileSync(path.join(ud, 'last-dir.json'),
+  JSON.stringify({ dir: openDir, ts: Date.now(), granted: true }), 'utf8');
+const r = spawnSync(exe, ['--selftest', '--no-sandbox'], {
   cwd: ROOT, env, encoding: 'utf8', timeout: timeoutS * 1000, maxBuffer: 32 * 1024 * 1024,
 });
 console.log('用时  :', ((Date.now() - t0) / 1000).toFixed(1) + 's', '| status=', r.status,

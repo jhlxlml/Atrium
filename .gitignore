@@ -26,6 +26,10 @@ node_modules/
 deploy/dist-electron/
 # 离线单文件版产物目录。该交付形态已于 v1.13.0 退役，此规则保留以防重建。
 deploy/dist/
+# 便携包被摊到**项目根**的副本（打包/验证链路里会这么做，含 249MB 的 exe）。
+# 之前没这条规则：`git add -A` 会把 373MB 的产物整个塞进提交，
+# 而且 `git status` 从此永远挂着一个未跟踪目录。npm run build 再生。
+Atrium_Electron版*/
 
 # ---------- 2b. 应用运行期数据目录 ----------
 # v1.14.0 起 userData 落在「应用本体所在目录/data」下（便携化：拷走整个文件夹

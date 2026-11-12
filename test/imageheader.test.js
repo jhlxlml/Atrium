@@ -193,6 +193,148 @@ isNull('尺寸溢出上限 → null（明显是坏头）', size(png(9999999, 10)
 }
 
 /* ============================================================
+   动图探测（Util.looksAnimated）
+   ------------------------------------------------------------
+   灯箱的"屏幕尺寸代"会把内容栅格化成一张静态图。对动图来说这是毁灭性的：
+   GIF 停在第一帧、APNG / 动态 WebP 同样。而"动不动"从扩展名看不出来
+   （.png / .webp 都可能动），所以必须读文件头判。
+   ============================================================ */
+{
+  const anim = U.looksAnimated;
+  ok('looksAnimated 存在', typeof anim === 'function');
+
+  // 静态 PNG（IHDR 之后直接 IDAT）
+  const staticPng = cat([
+    [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+    be32(13), [0x49, 0x48, 0x44, 0x52], be32(4), be32(4), [8, 6, 0, 0, 0],
+    be32(0), [0x49, 0x44, 0x41, 0x54],
+  ]);
+  ok('静态 PNG 不判为动图', anim(staticPng) === false);
+
+  // APNG：IHDR 之后有 acTL
+  const apng = cat([
+    [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+    be32(13), [0x49, 0x48, 0x44, 0x52], be32(4), be32(4), [8, 6, 0, 0, 0],
+    be32(8), [0x61, 0x63, 0x54, 0x4C], [0, 0, 0, 2, 0, 0, 0, 0],
+    be32(0), [0x49, 0x44, 0x41, 0x54],
+  ]);
+  ok('APNG（带 acTL）判为动图', anim(apng) === true);
+
+  // GIF 一律按动图处理
+  ok('GIF 判为动图', anim(gif(10, 10)) === true);
+
+  // WebP：RIFF....WEBP + ANIM 块
+  const webpAnim = cat([
+    [0x52, 0x49, 0x46, 0x46], le32(64), [0x57, 0x45, 0x42, 0x50],
+    [0x41, 0x4E, 0x49, 0x4D],
+  ]);
+  ok('动态 WebP（带 ANIM）判为动图', anim(webpAnim) === true);
+
+  // 静态 WebP（VP8X，无 ANIM）
+  const webpStill = cat([
+    [0x52, 0x49, 0x46, 0x46], le32(64), [0x57, 0x45, 0x42, 0x50],
+    [0x56, 0x50, 0x38, 0x58],
+  ]);
+  ok('静态 WebP 不判为动图', anim(webpStill) === false);
+
+  // JPEG / 垃圾数据 / 空
+  ok('JPEG 不判为动图', anim(cat([[0xFF, 0xD8], be16(0xFFE0), [0, 0]])) === false);
+  ok('空输入不抛错', anim(null) === false && anim(new Uint8Array(0)) === false);
+}
+
+/* ============================================================
+   EXIF 方向（Util.exifOrientation）
+   ------------------------------------------------------------
+   为什么值得单测：手机竖拍的照片是「存成横的 + Orientation=6」。
+   这个值决定两件事 —— 网格格子的宽高比、缩略图/屏幕代理的缩放目标。
+   判错就是"竖图排进横格子"和"画面被压扁"，而且看着像"图本来就长这样"。
+   真实复现：同一张 3840×2400 的 JPEG 只多一个 Orientation=6，
+   修前代理产物 1920×1200（横），正确值 1200×1920（竖）。
+   ============================================================ */
+{
+  const orient = U.exifOrientation;
+  ok('exifOrientation 存在', typeof orient === 'function');
+
+  /* 造一个 APP1(Exif) 段：载荷 = "Exif\0\0" + TIFF，IFD0 里只有一个 Orientation */
+  function exifApp1(o, little) {
+    const le = little !== false;
+    const u16 = (v) => (le ? le16(v) : be16(v));
+    const u32 = (v) => (le ? le32(v) : be32(v));
+    const tiff = cat([
+      le ? [0x49, 0x49] : [0x4D, 0x4D],
+      u16(0x2A), u32(8),                    // magic + IFD0 偏移
+      u16(1),                               // 1 个条目
+      u16(0x0112), u16(3), u32(1), u16(o), u16(0),   // Orientation: SHORT ×1
+      u32(0),                               // 无下一个 IFD
+    ]);
+    const payload = cat([[0x45, 0x78, 0x69, 0x66, 0x00, 0x00], tiff]);   // "Exif\0\0"
+    return cat([[0xFF, 0xE1], be16(payload.length + 2), payload]);
+  }
+  /* 完整 JPEG：SOI + [前置段…] + SOF0 + SOS */
+  function jpegWith(segs, w, h) {
+    return cat([[0xFF, 0xD8]].concat(segs || []).concat([
+      [0xFF, 0xC0], be16(17), [0x08], be16(h), be16(w), [0x03],
+      [0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01],
+      [0xFF, 0xDA], be16(12), [0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3F, 0x00],
+    ]));
+  }
+
+  ok('小端 Orientation=6 读出 6', orient(jpegWith([exifApp1(6)], 3840, 2400)) === 6);
+  ok('小端 Orientation=1 读出 1', orient(jpegWith([exifApp1(1)], 3840, 2400)) === 1);
+  ok('大端（MM）Orientation=8 读出 8', orient(jpegWith([exifApp1(8, false)], 3840, 2400)) === 8);
+  ok('Orientation=9（越界）当作没有', orient(jpegWith([exifApp1(9)], 100, 100)) === 0);
+  ok('Orientation=0（未定义）当作没有', orient(jpegWith([exifApp1(0)], 100, 100)) === 0);
+
+  /* XMP 也是 APP1，但不是 TIFF 结构：必须跳过它继续找 Exif */
+  const xmp = cat([[0xFF, 0xE1], be16(2 + 29),
+    [0x68, 0x74, 0x74, 0x70, 0x3A, 0x2F, 0x2F, 0x6E, 0x73, 0x2E, 0x61, 0x64,
+     0x6F, 0x62, 0x65, 0x2E, 0x63, 0x6F, 0x6D, 0x2F, 0x78, 0x61, 0x70, 0x2F,
+     0x31, 0x2E, 0x30, 0x2F, 0x00]]);
+  ok('跳过 XMP 的 APP1，仍能找到后面的 Exif',
+    orient(jpegWith([xmp, exifApp1(6)], 3840, 2400)) === 6);
+  /* Exif 在前、XMP 在后也一样 */
+  ok('Exif 在 XMP 之前也能读到',
+    orient(jpegWith([exifApp1(3), xmp], 3840, 2400)) === 3);
+
+  /* 没有 EXIF 的 JPEG / 其它格式 */
+  ok('普通 JPEG 返回 0', orient(jpegWith([], 800, 600)) === 0);
+  ok('PNG 返回 0（没有这个字段）', orient(png(800, 600)) === 0);
+  ok('GIF 返回 0', orient(gif(100, 100)) === 0);
+  ok('空输入返回 0', orient(null) === 0 && orient(new Uint8Array(0)) === 0);
+
+  /* 截断：只有 SOI + 半个 APP1 头，不能抛错也不能瞎猜 */
+  const full = jpegWith([exifApp1(6)], 3840, 2400);
+  ok('截断到 12 字节返回 0', orient(full.subarray(0, 12)) === 0);
+  ok('截断到 APP1 头之后返回 0', orient(full.subarray(0, 4 + 10)) === 0);
+
+  /* 裸 TIFF（有些扫描/相机直出就是 .tif） */
+  const bareTiff = cat([
+    [0x49, 0x49], le16(0x2A), le32(8),
+    le16(1), le16(0x0112), le16(3), le32(1), le16(7), le16(0), le32(0),
+  ]);
+  ok('裸 TIFF 的 Orientation=7 能读出', orient(bareTiff) === 7);
+
+  /* 条目数明显不合理（损坏/伪造）时不要顺着读下去 */
+  const bogus = cat([
+    [0xFF, 0xD8], [0xFF, 0xE1], be16(2 + 6 + 8 + 2),
+    [0x45, 0x78, 0x69, 0x66, 0x00, 0x00],
+    [0x49, 0x49], le16(0x2A), le32(8), le16(0xFFFF),
+  ]);
+  ok('IFD 条目数异常时返回 0（不硬走）', orient(bogus) === 0);
+
+  /* 带 byteOffset 的视图（Buffer 切片）不能读错位置 */
+  const padded = Buffer.concat([Buffer.alloc(9), Buffer.from(jpegWith([exifApp1(6)], 3840, 2400))]);
+  ok('接受带 byteOffset 的视图', orient(padded.subarray(9)) === 6);
+
+  /* 宽高互换的判据写死在调用点（thumb.js / loader.js 里都是 `o >= 5 && o <= 8`），
+     这里只钉住"哪些方向该换"的语义边界，防止以后有人改成 >= 4 或 <= 7。 */
+  const swaps = (o) => (o >= 5 && o <= 8);
+  ok('方向 6 / 8 需要互换宽高', swaps(6) && swaps(8));
+  ok('方向 1 / 4 不互换', !swaps(1) && !swaps(4));
+  ok('方向 0（没有）不互换', !swaps(0));
+}
+
+/* ============================================================
    汇总
    ============================================================ */
 console.log('\n' + '='.repeat(64));
