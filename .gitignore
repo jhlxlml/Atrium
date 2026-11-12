@@ -51,6 +51,8 @@ data/
 deploy/electron-test/logs/
 # 探针截图与几何 JSON。
 deploy/electron-test/shots/
+# 10 万张占位图夹具（97MB，由 gen_mp.py 可再生，不入库）。
+deploy/electron-test/fixtures/pile100k/
 *.log
 
 # ---------- 5. 本机调试残留 ----------

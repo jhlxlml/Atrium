@@ -640,6 +640,7 @@
 
     /* ---------- 切换与预载 ---------- */
     nav(delta) {
+      if (!this.openFlag) return;   // 灯箱已关闭时不翻页（防止定时器在 close 后继续 pin URL）
       const n = this.list.length;
       if (n <= 1) return;
       this.i = (this.i + delta + n) % n;

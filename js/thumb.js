@@ -794,6 +794,14 @@
     timings: () => timings.slice(),
     /** 当前代（探针用：判断任务有没有被作废） */
     epoch: () => epoch,
+    /** Blob URL 生命周期计数器（探针用：长时间压测判断有没有泄漏） */
+    urlStats: () => ({
+      pinned: pinned.size,
+      deferred: deferred.size,
+      thumbs: thumbs.map.size,
+      bigs: bigs.map.size,
+      screens: screens.map.size,
+    }),
   };
 
   global.Thumbs = Thumbs;
