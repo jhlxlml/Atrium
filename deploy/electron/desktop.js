@@ -423,8 +423,9 @@ function createDesktop(ctx) {
       return popupContextMenu(nodes, win || ctx.getMainWin());
     }));
 
-    ipcMain.handle('vf:showInFolder', guard((p) => {
+    ipcMain.handle('vf:showInFolder', guard(async (p) => {
       if (!p || typeof p !== 'string') return false;
+      if (typeof ctx.canAccessPath === 'function' && !(await ctx.canAccessPath(p))) return false;
       try { shell.showItemInFolder(p); return true; }
       catch (err) { return false; }
     }));

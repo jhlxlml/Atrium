@@ -42,8 +42,8 @@ const FULL = process.argv.indexOf('--full') >= 0;
 
 /* 遍历时**不进**这些目录：要么不是源码（依赖 / 产物 / 运行期日志），
    要么本来就整体忽略（`.workbuddy/` 是本机工具状态，不是项目内容）。 */
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.stage', '.workbuddy',
-  'dist', 'dist-electron', 'logs', 'shots']);
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.stage', '.workbuddy', '.workbuddy-ai',
+  'dist', 'dist-electron', 'logs', 'shots', 'pile100k', 'data']);
 
 /* 允许被忽略的文件（相对仓库根，POSIX 分隔符）。凡不在这张表里的命中都是**意外**。
    每一项都要能说出"为什么忽略它不会影响构建/运行"。
@@ -55,6 +55,9 @@ const IGNORE_OK = [
   { mustHit: true, test: (p) => /^[^/]+\.zip$/.test(p), why: '根目录发布 ZIP（构建产物）' },
   // 设计探索稿：候选命名页用的位图，`brand/` 里的矢量源与 icon.ico 才是必需的
   { mustHit: true, test: (p) => /^brand\/cand-.*\.png$/.test(p), why: '品牌候选稿（探索用，非构建输入）' },
+  // .gitignore §12 内部设计评审与审计文档（非公开产物，工作区留存）
+  { test: (p) => /^Atrium_(UI设计系统|UI审查_.*|UI设计评审与优化方案|现状分析与迭代建议|问题清单与修复优先级|剩余风险清单_.*)\.md$/.test(p), why: '内部设计/审计文档（.gitignore §12）' },
+  { test: (p) => /^audit(_.*)?\.md$/.test(p), why: '内部审计报告（.gitignore §12）' },
   // 本机调试残留
   { test: (p) => /^deploy\/logs-.*\.txt$/.test(p), why: '本机一次性调试转储' },
   // OS / 编辑器杂物
@@ -111,7 +114,7 @@ function walk(dir, out) {
     try { st = fs.lstatSync(abs); } catch (e) { continue; }
     if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) {
-      if (SKIP_DIRS.has(name)) continue;
+      if (SKIP_DIRS.has(name) || name.startsWith('Atrium_Electron版')) continue;
       walk(abs, out);
     } else if (st.isFile()) {
       out.push(path.relative(ROOT, abs).replace(/\\/g, '/'));
@@ -131,10 +134,20 @@ function staticCheck() {
   const files = walk(ROOT, []);
   ok('源码树遍历到了文件', files.length > 50, 'walk 得到 ' + files.length + ' 个文件');
 
-  /* 一次把全部路径交给 git check-ignore（当参数传，不走 stdin）。
-     注意退出码：**1 = 没有任何路径被忽略**，那是正常结果，不是错误。 */
-  const r = git(['check-ignore'].concat(files));
-  const ignored = r.out ? r.out.split('\n').filter(Boolean).map((p) => p.replace(/\\/g, '/')) : [];
+  /* 分批传给 git check-ignore，避免文件数较多时触发 Windows CreateProcess 命令行长度限制。
+     注意退出码：0 = 有命中，1 = 本批没有任何路径被忽略；其它退出码必须显式报错，不能静默当作 0 个。 */
+  const ignored = [];
+  for (let i = 0; i < files.length; i += 150) {
+    const chunk = files.slice(i, i + 150);
+    const r = git(['check-ignore'].concat(chunk));
+    ok('git check-ignore 执行成功（批 ' + Math.floor(i / 150 + 1) + '）',
+      r.code === 0 || r.code === 1, 'exit=' + r.code + ' ' + (r.err || ''));
+    if (r.out) {
+      for (const p of r.out.split('\n').filter(Boolean)) {
+        ignored.push(p.replace(/\\/g, '/'));
+      }
+    }
+  }
 
   const unexpected = ignored.filter((p) => !IGNORE_OK.some((e) => e.test(p)));
   ok('被忽略的文件都落在白名单内（没有源码被顺手忽略）',
@@ -150,7 +163,7 @@ function staticCheck() {
     '未命中=' + JSON.stringify(dead.map((e) => e.why)));
 
   /* 忽略集合有界：白名单没有退化成"什么都放行"。 */
-  ok('忽略集合有界（白名单没变成 catch-all）', ignored.length <= 30,
+  ok('忽略集合有界（白名单没变成 catch-all）', ignored.length <= 50,
     '被忽略 ' + ignored.length + ' 个');
 
   /* 点名必需文件：既没被忽略，也确实在版本控制里。 */

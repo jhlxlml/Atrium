@@ -31,6 +31,8 @@ jobs:
         run: node --version && npm --version
       - name: 跑全部纯 Node 单测
         run: npm run test:unit
+      - name: 跑纯 Node 源级门禁套件
+        run: node deploy/electron-test/run_all.js frozen buildsafe ipcchain secboot icon typescale
 
   build:
     name: Windows 组装校验
@@ -81,6 +83,8 @@ jobs:
             if (-not $txt.Contains($c.needle)) { throw "$($c.file) 里找不到 $($c.needle)：产物没跟上源码" }
           }
           Write-Host '产物校验通过'
+      - name: 跑打包清单门禁（packlist）
+        run: node deploy/electron-test/run_all.js packlist
       - name: 上传构建戳
         if: always()
         uses: actions/upload-artifact@v4

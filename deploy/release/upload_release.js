@@ -43,7 +43,7 @@ const { parseDigest, decide } = require('./releaselib.js');
 const VER = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const TAG = 'v' + VER;
 const ZIP = path.join(ROOT, 'Atrium_Electron版_v' + VER + '.zip');
-const NOTES = path.join(ROOT, 'Atrium_v' + VER + '_更新说明.md');
+const NOTES = path.join(ROOT, 'docs', 'Atrium_v' + VER + '_更新说明.md');
 
 /* 发布资产的**显式 ASCII 名**（带架构后缀）。
    为什么不直接用本地 ZIP 的 basename：GitHub 会把资产名里的非 ASCII 字符

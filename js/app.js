@@ -40,7 +40,7 @@
 
   const App = {
     /* 版本号唯一来源：界面（设置面板底部）与构建脚本共用，报障时可一眼确认版本 */
-    VERSION: '1.20.9',
+    VERSION: '1.21.1',
     el: {},
     resizeToken: null,
     /** 弹层标题 id 的自增序号（可及名称用，见 modal()） */
@@ -2269,7 +2269,7 @@
           this._harvestPending = 0;
           /* 还有没送出去的 —— 重新走一遍 applyView，它会再调一次本函数，
              把下一批 2000 条接上。每轮都盖一批章，所以一定会收敛。 */
-          if (State.settings.sortKey === 'shot') this.applyView(true);
+          if (State.settings.sortKey === 'shot') this.applyView(false);
           return;
         }
         if (State.settings.sortKey === 'shot') this.applyView(false);

@@ -203,7 +203,7 @@
         const m = list[k];
         if (!m || m.bad) continue;
         try {
-          const r = await parse(m.file);
+          const r = await parse(m);
           if (r && r.ok && r.ts) { m.shotTs = r.ts; changed++; }
         } catch (e) { /* 单文件失败忽略 */ }
       }

@@ -20,6 +20,7 @@ const trashLib = require('./trashlib.js');     // 回收站 $I 解析与匹配�
 const pathAuth = require('./pathauth.js');     // vf://pic 的读盘授权（纯逻辑，可单测）
 const crashLib = require('./crashlib.js');     // 崩溃兜底页的 HTML（纯逻辑，可单测）
 const lastDirRec = require('./lastdir.js');    // 「上次目录」记录的解析/序列化（纯逻辑，可单测）
+const { pathToFileURL } = require('url');
 const { createDesktop } = require('./desktop.js');   // 桌面集成（菜单/托盘/任务栏）
 const fs = fsx.promises;
 
@@ -151,6 +152,7 @@ const desktop = createDesktop({
   send: (cmd) => sendCommand(cmd),
   isQuitting: () => quitting,
   setQuitting: (v) => { quitting = !!v; },
+  canAccessPath: (p) => canAccessUserPath(p),
   log: (m) => { trace(m); console.log(m); },
 });
 
@@ -387,6 +389,20 @@ async function picAllowed(p) {
    又把能力收窄到"用户亲手点过的地方"。 */
 const exportAuth = pathAuth.createAllowlist();
 
+/** 校验导出路径是否已由用户通过目录选择框授权，且 realpath 仍在白名单内 */
+async function exportAllowed(p) {
+  if (!exportAuth.has(p)) return false;
+  let real;
+  try { real = await fs.realpath(p); } catch (e) { return false; }
+  return exportAuth.has(real);
+}
+
+/** 判断路径是否属于已授权图库或导出目录（openPath / showInFolder 共用） */
+async function canAccessUserPath(p) {
+  if (!p || typeof p !== 'string') return false;
+  return (await picAllowed(p)) || (await exportAllowed(p));
+}
+
 function toResponse(resp, status) {
   return resp && resp.ok ? resp : new Response(null, { status: status || 404 });
 }
@@ -431,7 +447,6 @@ async function handleVf(req) {
     return new Response('error', { status: 500 });
   }
 }
-const { pathToFileURL } = require('url');
 
 /* ============================================================
    IPC 发送方校验（默认拒绝）
@@ -505,6 +520,10 @@ function wireIpc() {
     /* 授权写盘 —— 这是 exportAuth 的**唯一**入口，与"用户真的选过这个目录"
        严格对应。前端每次导出都会先弹这个对话框，所以不会误伤正常流程。 */
     exportAuth.add(r.filePaths[0]);
+    try {
+      const realDir = await fs.realpath(r.filePaths[0]);
+      if (realDir) exportAuth.add(realDir);
+    } catch (e) { /* 目录刚选出，极少失败；失败时保持原路径已授权 */ }
     return r.filePaths[0];
   });
 
@@ -691,11 +710,26 @@ function wireIpc() {
      afterMs 变成远早于真实删除时刻的数，"只认这一次"的护栏就静默失效了；
      `(rec.size) | 0` 还会把 ≥2GiB 的文件截成负数，导致大文件永远还原失败。
      校验不过时 fail closed（bad-hint），而不是退回"不限制"——那等于悄悄拆护栏。 */
+  /** 验证还原/预览请求确实对应 trash-log.json 中的一条真实删除记录。
+   *  h 是调用方已经从 trashLib.hintsOf(rec) 取得的 {size,ts}，这里不再重复调用。 */
+  function matchTrashLog(rec, h, logItems) {
+    if (!rec || !h || !Array.isArray(logItems)) return false;
+    const p = rec.path;
+    if (!p) return false;
+    return logItems.some((item) => {
+      if (!item || item.path !== p) return false;
+      if (rec.id && item.id && item.id !== rec.id) return false;
+      return Number(item.size) === h.size && Number(item.ts) === h.ts;
+    });
+  }
+
   ipcMain.handle('vf:restoreFile', async (e, rec) => {
     const p = rec && rec.path;
     if (!p || typeof p !== 'string') return { ok: false, reason: 'bad-path' };
     const h = trashLib.hintsOf(rec);
     if (!h) return { ok: false, reason: 'bad-hint', path: p };
+    const logItems = await readTrashLog();
+    if (!matchTrashLog(rec, h, logItems)) return { ok: false, reason: 'forbidden', path: p };
     const r = await restoreFromTrash(p, h.size, h.ts);
     if (r && r.ok && rec && rec.id) await trashDrop(rec.id);
     return r;
@@ -704,12 +738,14 @@ function wireIpc() {
   /* 批量撤销删除：逐条还原，返回等长结果数组 {ok,path,size?} | {ok:false,reason,path} */
   ipcMain.handle('vf:restoreFiles', async (e, recs) => {
     if (!Array.isArray(recs) || !recs.length) return [];
+    const logItems = await readTrashLog();
     const out = [];
     for (const rec of recs.slice(0, 2000)) {
       const p = rec && rec.path;
       if (!p) { out.push({ ok: false, reason: 'bad-path' }); continue; }
       const h = trashLib.hintsOf(rec);
       if (!h) { out.push({ ok: false, reason: 'bad-hint', path: p }); continue; }
+      if (!matchTrashLog(rec, h, logItems)) { out.push({ ok: false, reason: 'forbidden', path: p }); continue; }
       const r = await restoreFromTrash(p, h.size, h.ts);
       if (r && r.ok && rec.id) await trashDrop(rec.id);
       out.push(Object.assign({ path: p }, r || { ok: false, reason: 'failed' }));
@@ -724,6 +760,8 @@ function wireIpc() {
     if (!p) return { ok: false, reason: 'bad-path' };
     const h = trashLib.hintsOf(rec);
     if (!h) return { ok: false, reason: 'bad-hint' };
+    const logItems = await readTrashLog();
+    if (!matchTrashLog(rec, h, logItems)) return { ok: false, reason: 'forbidden' };
     const hit = await findTrashed(p, h.size, h.ts);
     if (!hit) return { ok: false, reason: 'not-found' };
     try {
@@ -751,10 +789,12 @@ function wireIpc() {
 
   /* 用系统文件管理器打开某个目录（导出完成后的「打开文件夹」入口） */
   ipcMain.handle('vf:openPath', async (e, p) => {
-    if (!p || typeof p !== 'string') return false;
+    if (!(await canAccessUserPath(p))) return false;
     try {
-      const st = await fs.stat(p);
-      const target = st.isDirectory() ? p : path.dirname(p);
+      const real = await fs.realpath(p);
+      const st = await fs.stat(real);
+      const target = st.isDirectory() ? real : path.dirname(real);
+      if (!(await canAccessUserPath(target))) return false;
       const err = await shell.openPath(target);
       return !err;
     } catch (err) { return false; }
@@ -2395,7 +2435,6 @@ if (!gotLock) {
 
     createWindow();
     trace('window-created');
-    mainWin.webContents.on('render-process-gone', (e, d) => trace('render-gone reason=' + d.reason + ' exit=' + d.exitCode));
     /* 主框架没加载出来 = 用户看到一块**纯白窗口**，没有任何提示与入口。
        以前这里只往日志写一行，用户那边就是"打开就白屏，也不知道是不是还在加载"。
        现在接兜底页：至少告诉他发生了什么、以及点哪里能重来。

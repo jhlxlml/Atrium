@@ -258,6 +258,97 @@ const SUITES = [
     },
   },
 
+  {
+    id: 'lastdir',
+    title: '纯函数 · 「上次目录」记录解析 / 序列化 / 容错（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'lastdir.test.js'),
+    run: function (ctx) {
+      ctx.check('上次目录纯逻辑测试全部通过', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+  {
+    id: 'thumbcache',
+    title: '纯函数 · 缩略图缓存上限 / 驱逐策略（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'thumbcache.test.js'),
+    run: function (ctx) {
+      ctx.check('缩略图缓存测试全部通过', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+  {
+    id: 'statesources',
+    title: '纯函数 · State 多目录 / 源筛选与撤销状态（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'state-sources.test.js'),
+    run: function (ctx) {
+      ctx.check('State 多目录状态测试全部通过', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+  {
+    id: 'loaderindex',
+    title: '纯函数 · Loader 索引合并 / 去重 / 元数据规范化（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'loader-index.test.js'),
+    run: function (ctx) {
+      ctx.check('Loader 索引测试全部通过', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+  {
+    id: 'sched',
+    title: '纯函数 · 解码调度器统一优先级（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'sched.test.js'),
+    run: function (ctx) {
+      ctx.check('解码调度器优先级测试全部通过', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+  {
+    id: 'stripfill',
+    title: '纯函数 · 灯箱胶片条填充裁剪（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'strip-fill.test.js'),
+    run: function (ctx) {
+      ctx.check('灯箱胶片条测试全部通过', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+  {
+    id: 'mainipc',
+    title: '源级 · main.js / desktop.js IPC 安全接线断言（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'main-ipc.test.js'),
+    run: function (ctx) {
+      ctx.check('main.js IPC 安全接线测试全部通过', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+  {
+    id: 'gridlayout',
+    title: '纯函数 · 网格视图定位 / 布局测量（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'grid-layout.test.js'),
+    run: function (ctx) {
+      ctx.check('网格布局测试全部通过', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+  {
+    id: 'exif',
+    title: '纯函数 · EXIF 拍摄时间解析与原生条目批量采集（Node）',
+    kind: 'node',
+    script: path.join(ROOT, 'test', 'exif.test.js'),
+    run: function (ctx) {
+      ctx.check('Exif 单元测试全部通过（14 断言）', ctx.code === 0,
+        '退出码 ' + ctx.code + (ctx.tail ? ' | ' + ctx.tail : ''));
+    },
+  },
+
   /* ---------- 1b4. 冻结标识：改名会清空用户数据的那些字符串 ----------
      这是一条**源级不变量**（只读文件、不起 Electron），因为要锁的东西散在四处：
      `main.js`（源 origin / 任务栏身份）、`state.js`（三个 localStorage 键）、

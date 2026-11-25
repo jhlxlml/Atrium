@@ -196,6 +196,32 @@ A.ok('main.js: require lastdir.js',
   'main.js 必须 require lastdir.js'
 );
 
+/* ---------- openPath / showInFolder / 回收站日志归属校验 ---------- */
+
+A.ok('main.js: vf:openPath 先走 canAccessUserPath 校验',
+  /ipcMain\.handle\(\s*'vf:openPath'[\s\S]*?canAccessUserPath\(p\)/.test(stripped),
+  'vf:openPath 必须经由 canAccessUserPath 检查'
+);
+
+A.ok('main.js: createDesktop 注入 canAccessPath',
+  /createDesktop\(\{[\s\S]*?canAccessPath\s*:/.test(stripped),
+  'main.js 必须向 createDesktop 传入 canAccessPath'
+);
+
+const desktopSrc = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'electron', 'desktop.js'), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+A.ok('desktop.js: vf:showInFolder 校验 ctx.canAccessPath',
+  /ipcMain\.handle\(\s*'vf:showInFolder'[\s\S]*?ctx\.canAccessPath/.test(desktopSrc),
+  'vf:showInFolder 必须校验 ctx.canAccessPath'
+);
+
+A.ok('main.js: 回收站还原与预览校验 trash-log 记录',
+  /ipcMain\.handle\(\s*'vf:restoreFile'[\s\S]*?matchTrashLog/.test(stripped)
+  && /ipcMain\.handle\(\s*'vf:restoreFiles'[\s\S]*?matchTrashLog/.test(stripped)
+  && /ipcMain\.handle\(\s*'vf:trashPreview'[\s\S]*?matchTrashLog/.test(stripped),
+  'vf:restoreFile / vf:restoreFiles / vf:trashPreview 必须校验 matchTrashLog'
+);
+
 /* ---------- 汇总 ---------- */
 const ok = A.finish('main.js IPC 安全接线断言');
 process.exit(ok ? 0 : 1);

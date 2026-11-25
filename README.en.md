@@ -73,16 +73,16 @@ Update checking is **off by default** — it is the only feature in the whole ap
 
 ### Using the portable build
 
-1. Download **`Atrium_Electron_v1.20.2_x64.zip`** (Windows x64) and the matching **`.sha256`** from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
+1. Download **`Atrium_Electron_v1.21.1_x64.zip`** (Windows x64) and the matching **`.sha256`** from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
 2. Unzip it, then double-click **`Atrium.cmd`** (**not** `Atrium.exe`).
 3. Click "添加文件夹" (Add folder), or drag a folder / images straight into the window.
 
 > **Why a `.cmd` and not the exe**: WorkBuddy and some Node environments inject `NODE_OPTIONS`, which makes a packaged Electron app **exit immediately on launch**. The launcher clears that variable first, then starts the app. It looks for `Atrium.exe` by name and only falls back to "the first exe in the folder" if it is missing.
 
 > **Verify the checksum** (since v1.20.1 the release script uploads a `.sha256` alongside the ZIP):
-> `sha256sum -c Atrium_Electron_v1.20.2_x64.zip.sha256` (PowerShell: `Get-FileHash`).
+> `sha256sum -c Atrium_Electron_v1.21.1_x64.zip.sha256` (PowerShell: `Get-FileHash`).
 
-> The downloadable asset is named `Atrium_Electron_v1.20.2_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
+> The downloadable asset is named `Atrium_Electron_v1.21.1_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
 
 > **Where your data lives**: a `data/` folder appears automatically next to the app (settings / favourites / rotation records / thumbnail cache).
 > It is **portable** — copy the whole folder and you take your entire configuration with you, no re-configuring on another machine.
@@ -115,9 +115,9 @@ npm test
 
 | Command | Purpose |
 |---|---|
-| `npm test` | Full regression: **47 suites / 619 assertions**, roughly 300 s |
-| `npm run test:unit` | Pure Node unit tests only: **12 files**, zero dependencies, ~3 s (what CI should run) |
-| `npm run test:fast` | Quick pass: 13 suites / 61 assertions, ~8 s (**includes `tf`, which needs electron**) |
+| `npm test` | Full regression: **56 suites** (30 pure-Node suites + Electron probes), roughly 300 s |
+| `npm run test:unit` | Pure Node unit tests only: **21 files**, zero dependencies, ~3 s (CI core) |
+| `npm run test:fast` | Quick pass: all pure-Node suites + `tf` probe, ~8 s (**includes `tf`, which needs electron**) |
 | `npm run build` | Build the portable Electron package |
 | `npm run pack` | Produce the release ZIP |
 | `npm run verify:zip` | Independent ZIP verification (CRC / structure / third-party re-check) |
@@ -171,7 +171,7 @@ platform      native.js (renderer-side adapter) ──IPC──▶ preload.js (a
 
 A few deliberate decisions:
 
-- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation), the update-check rules (version comparison, URL allow-list), the recycle-bin `$I` matching rules, the `vf://pic` read authorisation and the crash-fallback page builder are factored into pure functions that depend on neither the DOM nor Electron, so **1385** fine-grained assertions run in milliseconds under Node without opening a window.
+- **Pure functions pushed downwards**: all geometry (layout, zoom, centring, rotation), the update-check rules (version comparison, URL allow-list), the recycle-bin `$I` matching rules, the `vf://pic` read authorisation and the crash-fallback page builder are factored into pure functions that depend on neither the DOM nor Electron, covered by **21 pure-Node unit test files** running in milliseconds without opening a window.
 - **`desktop-spec.js` is pure data** (menu template, accelerators, command vocabulary) and is **not allowed to `require('electron')`** — which is why 76 assertions can test it directly under Node.
 - **Security baseline**: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, a strict CSP (no `bypassCSP`, no `unsafe-inline`), a custom privileged `vf://` protocol, a preload allow-list, and new windows / external navigation refused. Every IPC channel **verifies the sender** in one place, and untrusted calls throw; **permission requests are denied explicitly** rather than left to Electron's defaults. **Opening external links also goes through an allow-list** — only the official repository is let through, locked down by 21 reverse cases.
 
@@ -181,8 +181,8 @@ The project tries hard to turn "potholes we fell into" into **mechanisms**. Curr
 
 | Metric | Value |
 |---|---|
-| Regression | **47 suites / 619 assertions**, non-zero exit on any failure |
-| Source size | `js/` 10,400 lines across 16 modules · `css/` 2,414 lines across 3 files · `index.html` 444 lines · main-process side 3,393 lines across 8 files · `test/` 2,759 lines across 12 files |
+| Regression | **56 suites** (30 pure-Node + 26 Electron / artefact gates), non-zero exit on any failure |
+| Source size | `js/` 11,645 lines across 16 modules · `css/` 2,437 lines across 3 files · `index.html` 444 lines · main-process side 4,090 lines across 10 files · `test/` 5,083 lines across 21 test files |
 | IPC | 37 invoke + 1 renderer→main + 3 main→renderer = **41 unique channel names** |
 | Runtime dependencies | **0** (`electron` and `rcedit` are build-time only) |
 
@@ -195,12 +195,12 @@ Several layers of the regression are **mutually independent lines of defence**:
 - **Security criteria go into the regression too**: the `update` suite locks the `openExternal` URL allow-list with **21 reverse cases** (subdomain spoofing, userinfo spoofing, non-default port, path traversal, `file://`, `javascript:` …) — testing only that "the official link passes" would be an always-true gate.
 - **Failures explain themselves**: assertion messages carry field evidence such as "how many announcements fired, and what the last one said", instead of just `false`.
 
-> **On the number**: `619` counts **suite-level entries**, and it is *not* a stable coverage metric — it moves for three reasons:
-> ① Twelve pure-function suites expand into far more fine-grained assertions internally (1385 in total) but are counted as one entry each — so **do not add them up**;
+> **On the number**: suite-level entry count is *not* a fixed coverage metric — it moves for three reasons:
+> ① The 21 pure-function test files expand into far more fine-grained assertions internally, while the aggregator counts each file as one entry — so **do not add them up**;
 > ② the `zip` suite has **2 conditional assertions** that only run when the **delivery ZIP is present** (fewer in a source-only checkout);
 > ③ once the `appself` suite fails "the self-check as a whole passed" it **returns early**, and the 31 frame assertions after it never execute;
 > likewise a probe that times out makes its suite count only 2 entries ("process exited normally" + "returned data") and skip the rest —
-> which is why a load-starved run reports noticeably fewer entries, while a healthy environment reports `619`.
+> which is why a load-starved run reports noticeably fewer entries than a healthy full run.
 > **A smaller number does not mean fewer tests** — first find which step produced no output.
 >
 > One more thing: every Electron probe creates its own `ud_*` user-data directory under
@@ -214,7 +214,7 @@ Several layers of the regression are **mutually independent lines of defence**:
 ```
 Atrium/
 ├─ index.html            App shell (with an inline SVG icon sprite)
-├─ js/                   All renderer logic (15 modules, IIFEs attached to window)
+├─ js/                   All renderer logic (16 modules, IIFEs attached to window)
 │   ├─ app.js            Events, command dispatch, modals, toasts
 │   ├─ state.js          Single source of truth + event bus
 │   ├─ grid.js           Grid rendering and virtualisation
@@ -255,18 +255,26 @@ Atrium/
 
 | File | Contents |
 |---|---|
-| [`Atrium_开发上手手册.md`](Atrium_开发上手手册.md) | **Handbook**: commands, the five layers, landmine list, standard procedures for adding a setting or an IPC channel, frozen identifiers |
-| [`Atrium_v1.20.2_更新说明.md`](Atrium_v1.20.2_更新说明.md) | This version: failures are now visible (startup exceptions are logged and shown in a dialog, a crashed renderer gets a reloadable fallback page, permissions are denied explicitly, delete/export gained path authorisation, version consistency gate) |
-| [`Atrium_v1.20.1_更新说明.md`](Atrium_v1.20.1_更新说明.md) | Previous release: security & data-reliability fixes (builds no longer delete `data/`, packaging allow-list, 32-bit truncation in undo-delete, CSP, no silent sandbox downgrade, `vf://pic` read authorisation, Electron 33→45) |
-| [`Atrium_v1.20.0_更新说明.md`](Atrium_v1.20.0_更新说明.md) | Previous release: customisable accent colour (one colour derived into a whole token set) / lightbox follows the theme |
-| [`Atrium_v1.19.0_更新说明.md`](Atrium_v1.19.0_更新说明.md) | Older: site-wide contrast audit / clipped focus rings / 24 px hit targets / Settings pushed off-screen in narrow windows |
-| [`Atrium_v1.18.0_更新说明.md`](Atrium_v1.18.0_更新说明.md) | Older: icons unified on Lucide / type scale collapsed to 8 steps / colour semantics split / selection-bar text no longer wraps |
-| [`Atrium_v1.17.2_更新说明.md`](Atrium_v1.17.2_更新说明.md) | Older: in single-column view the previous image no longer shows through the top bar |
-| [`Atrium_v1.17.1_更新说明.md`](Atrium_v1.17.1_更新说明.md) | Older: single-column view no longer hides the top of images behind the chrome (regression fix) |
-| [`Atrium_v1.17.0_更新说明.md`](Atrium_v1.17.0_更新说明.md) | Previous release: Apple HIG rebuild / sources moved to a left rail / two grid views / 10 UI fixes |
-| [`Atrium_v1.14.0_更新说明.md`](Atrium_v1.14.0_更新说明.md) | Older: portable data directory / About panel / update check |
-| [`Atrium_v1.13.0_更新说明.md`](Atrium_v1.13.0_更新说明.md) | Older: rename to Atrium / desktop integration / Electron only |
+| [`Atrium_开发上手手册.md`](docs/Atrium_开发上手手册.md) | **Handbook**: commands, the five layers, landmine list, standard procedures for adding a setting or an IPC channel, frozen identifiers |
 | [`deploy/release/RELEASE.md`](deploy/release/RELEASE.md) | Release process: fixed order, acceptance criteria, packaging landmines |
+
+<details>
+<summary>Release notes by version (click to expand)</summary>
+
+| Version | Summary |
+|---|---|
+| [`v1.21.1`](docs/Atrium_v1.21.1_更新说明.md) | Folder path persistence & multi-source import fixes, library indexing & thumbnail scheduling stability |
+| [`v1.21.0`](docs/Atrium_v1.21.0_更新说明.md) | Multi-directory sources, recent-directory persistence, grid layout & filmstrip cropping rework |
+| [`v1.20.2`](docs/Atrium_v1.20.2_更新说明.md) | Failures are now visible (startup dialog, crash fallback page, explicit permission denial, path authorisation, version gate) |
+| [`v1.20.1`](docs/Atrium_v1.20.1_更新说明.md) | Security & data-reliability fixes (build no longer deletes `data/`, undo-delete 32-bit truncation, CSP, read authorisation, Electron 33→45) |
+| [`v1.20.0`](docs/Atrium_v1.20.0_更新说明.md) | Customisable accent colour / lightbox follows the theme |
+| [`v1.19.0`](docs/Atrium_v1.19.0_更新说明.md) | Site-wide contrast audit / clipped focus rings / 24 px hit targets |
+| [`v1.18.0`](docs/Atrium_v1.18.0_更新说明.md) | Icons unified on Lucide / type scale collapsed to 8 steps / colour semantics |
+| [`v1.17.0`](docs/Atrium_v1.17.0_更新说明.md) – [`v1.17.2`](docs/Atrium_v1.17.2_更新说明.md) | Apple HIG rebuild / sources to left rail / two grid views |
+| [`v1.14.0`](docs/Atrium_v1.14.0_更新说明.md) | Portable data directory / About panel / update check |
+| [`v1.13.0`](docs/Atrium_v1.13.0_更新说明.md) | Rename to Atrium / desktop integration / Electron only |
+
+</details>
 
 ## License
 
