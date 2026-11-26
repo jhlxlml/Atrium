@@ -867,8 +867,10 @@ body.marquee-on .tile { cursor: default; }
 .selbar .btn-danger:hover:not(:disabled) { background: var(--danger-hover); }
 .selbar .btn:disabled { opacity: .45; cursor: not-allowed; }
 .selbar .btn svg { width: var(--ic-s); height: var(--ic-s); }
-@media (max-width: 720px) {
+@media (max-width: 1080px) {
   .selbar .sb-tip { display: none; }
+}
+@media (max-width: 720px) {
   .selbar { gap: 5px; bottom: 68px; }
 }
 
@@ -1690,6 +1692,10 @@ body.privacy-blur .tile::after {
      后者是唯一入口，被横滚裁出屏幕就等于功能消失（用户也看不出右边还有东西）。 */
   .sizectl > .ico-btn { display: none; }
   .search.is-open input { width: 150px; max-width: 150px; }
+}
+@media (max-width: 900px) {
+  .sizectl input[type="range"] { width: 72px; }
+  .select-wrap select { padding-left: 8px; padding-right: 22px; }
 }
 @media (max-width: 720px) {
   :root { --gutter: 12px; }

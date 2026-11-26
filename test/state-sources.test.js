@@ -193,6 +193,29 @@ function testBatchRotate() {
   if (typeof off === 'function') off();
 }
 
+function testOrientFilter() {
+  const src = State.commitSource('方向筛选', [
+    { name: 'land.jpg', rel: 'land.jpg', size: 100, lastModified: 1, w: 1600, h: 900 },
+    { name: 'port.jpg', rel: 'port.jpg', size: 100, lastModified: 2, w: 900, h: 1600 },
+    { name: 'sq.jpg', rel: 'sq.jpg', size: 100, lastModified: 3, w: 1000, h: 1020 },
+    { name: 'nodim.jpg', rel: 'nodim.jpg', size: 100, lastModified: 4, w: 0, h: 0 },
+  ], 'D:\\O\\方向筛选');
+  State.active = src.id;
+  State.orientFilter = 'land';
+  A.eq('F8 横图筛选命中 1 张', State.viewList().map((x) => x.name).join(','), 'land.jpg');
+  State.orientFilter = 'port';
+  A.eq('F8 竖图筛选命中 1 张', State.viewList().map((x) => x.name).join(','), 'port.jpg');
+  State.orientFilter = 'sq';
+  A.eq('F8 方图筛选命中 1 张', State.viewList().map((x) => x.name).join(','), 'sq.jpg');
+  // 竖图旋转 90° 后应归入横图
+  const port = State.activeItems().find((x) => x.name === 'port.jpg');
+  State.setRotation(port, 90);
+  State.orientFilter = 'land';
+  A.eq('F8 竖图旋转 90° 后归入横图', State.viewList().length, 2);
+  State.orientFilter = 'all';
+  State.active = 'all';
+}
+
 /* ============================================================ */
 testSameNameDifferentDir();
 testNoDirStillMerges();
@@ -200,4 +223,5 @@ testRemoveSourceFavs();
 testRemoveItemFav();
 testBatchFavs();
 testBatchRotate();
+testOrientFilter();
 process.exit(A.finish('来源与收藏归属（E/F）') ? 0 : 1);

@@ -230,6 +230,12 @@ svg.flip-x { transform: scaleX(-1); }
 }
 
 .lb-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+@media (max-width: 1180px) {
+  .lb-hud { gap: 8px; padding: 6px 8px 6px 12px; }
+  .lb-file { gap: 8px; }
+  .lb-actions .ico-btn { width: 28px; height: 28px; }
+  .lb-actions .lb-sep { display: none; }
+}
 .lb-actions .ico-btn {
   color: var(--lb-icon); width: 34px; height: 34px; border-radius: var(--r-s);
   border: 0; background: transparent;

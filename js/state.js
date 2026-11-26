@@ -294,6 +294,7 @@
     active: 'all',        // 'all' 或某个 source.id
     filterText: '',       // 文件名过滤
     favOnly: false,       // 只看收藏
+    orientFilter: 'all',  // 画面方向筛选：all / land / port / sq
     errCount: 0,          // 无法解码计数（展示用）
 
     settings,             // 会话/持久设置
@@ -350,6 +351,7 @@
       rots.delete(k);                 // delete + set = 移到 Map 队尾（LRU 淘汰用）
       if (d) rots.set(k, d);
       saveRots();
+      rev++;
       Events.emit('rotation-changed', { meta: meta, deg: d, key: k });
       return d;
     },
@@ -373,6 +375,7 @@
       }
       if (changed) {
         saveRots();
+        rev++;
         Events.emit('rotation-changed', { meta: null, deg: 0, all: true, count: changed });
       }
       return changed;
@@ -605,16 +608,29 @@
      * 输入未变时直接复用上一次的结果，避免重复的 O(n log n) 排序。
      * 返回的数组是缓存对象，调用方只读。
      */
+    /** 按画面尺寸与已记住的旋转角判定当前方向：land / port / sq / unknown */
+    orientOf(it) {
+      let w = (it && it.w > 0) ? it.w : 0;
+      let h = (it && it.h > 0) ? it.h : 0;
+      if (!w || !h) return 'unknown';
+      const rot = this.rotationOf(it);
+      if (rot % 180 !== 0) { const tmp = w; w = h; h = tmp; }
+      if (Math.abs(w - h) <= Math.max(2, Math.min(w, h) * 0.05)) return 'sq';
+      return w > h ? 'land' : 'port';
+    },
+
     viewList() {
       const s = this.settings;
       const q = this.filterText.trim().toLowerCase();
-      const key = [this.active, q, this.favOnly ? 1 : 0, s.sortKey, s.sortDir, rev, favRev].join('\u0000');
+      const of = this.orientFilter || 'all';
+      const key = [this.active, q, this.favOnly ? 1 : 0, of, s.sortKey, s.sortDir, rev, favRev].join('\u0000');
       if (this._vlKey === key && this._vlList) return this._vlList;
 
       const srcList = this.activeItems();
       const list = [];
       for (const it of srcList) {
         if (this.favOnly && !favs.has(it.id)) continue;
+        if (of !== 'all' && this.orientOf(it) !== of) continue;
         if (q && !it.name.toLowerCase().includes(q)) continue;
         list.push(it);
       }

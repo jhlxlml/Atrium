@@ -62,6 +62,7 @@
       E.sizeRange = $('#sizeRange');
       E.sortKey = $('#sortKey');
       E.sortDir = $('#sortDir');
+      E.orientFilter = $('#orientFilter');
       E.searchInput = $('#searchInput');
       E.searchBox = $('#searchBox');
       E.searchToggle = $('#searchToggle');
@@ -756,11 +757,20 @@
       // 收藏过滤（逻辑收敛到 toggleFavOnly：原生菜单 Ctrl+L 也要走同一份）
       E.favOnlyBtn.addEventListener('click', () => this.toggleFavOnly());
 
+      if (E.orientFilter) {
+        E.orientFilter.addEventListener('change', () => {
+          State.orientFilter = E.orientFilter.value || 'all';
+          this.applyView(true);
+        });
+      }
+
       // 清除过滤
       E.clearFilters.addEventListener('click', () => {
         E.searchInput.value = '';
         State.filterText = '';
         State.favOnly = false;
+        State.orientFilter = 'all';
+        if (E.orientFilter) E.orientFilter.value = 'all';
         E.favOnlyBtn.classList.remove('is-active', 'is-on');
         if (E.searchClear) E.searchClear.hidden = true;
         this.closeSearch();
@@ -1756,6 +1766,7 @@
       // P1-4：旋转被记住 → 网格里那张的朝向随之更新（横竖互换、重排行布局）
       bus.on('rotation-changed', ({ meta }) => {
         if (Grid.N) Grid.refreshRotation(meta);
+        if (State.orientFilter && State.orientFilter !== 'all') this.applyView(false);
       });
 
       bus.on('index-start', () => {
@@ -2247,7 +2258,7 @@
     updateNoResult() {
       const total = State.items.length;
       const viewed = this._view ? this._view.length : State.viewList().length;
-      const hasFilter = !!(State.filterText || State.favOnly);
+      const hasFilter = !!(State.filterText || State.favOnly || (State.orientFilter && State.orientFilter !== 'all'));
       if (total === 0 || viewed === 0) {
         this.el.noResult.hidden = false;
         this.el.clearFilters.hidden = !hasFilter;
