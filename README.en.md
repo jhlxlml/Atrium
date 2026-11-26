@@ -73,16 +73,16 @@ Update checking is **off by default** — it is the only feature in the whole ap
 
 ### Using the portable build
 
-1. Download **`Atrium_Electron_v1.23.0_x64.zip`** (Windows x64) and the matching **`.sha256`** from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
+1. Download **`Atrium_Electron_v1.23.1_x64.zip`** (Windows x64) and the matching **`.sha256`** from [Releases](https://github.com/jhlxlml/Atrium/releases/latest).
 2. Unzip it, then double-click **`Atrium.cmd`** (**not** `Atrium.exe`).
 3. Click "添加文件夹" (Add folder), or drag a folder / images straight into the window.
 
 > **Why a `.cmd` and not the exe**: WorkBuddy and some Node environments inject `NODE_OPTIONS`, which makes a packaged Electron app **exit immediately on launch**. The launcher clears that variable first, then starts the app. It looks for `Atrium.exe` by name and only falls back to "the first exe in the folder" if it is missing.
 
 > **Verify the checksum** (since v1.20.1 the release script uploads a `.sha256` alongside the ZIP):
-> `sha256sum -c Atrium_Electron_v1.23.0_x64.zip.sha256` (PowerShell: `Get-FileHash`).
+> `sha256sum -c Atrium_Electron_v1.23.1_x64.zip.sha256` (PowerShell: `Get-FileHash`).
 
-> The downloadable asset is named `Atrium_Electron_v1.23.0_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
+> The downloadable asset is named `Atrium_Electron_v1.23.1_x64.zip` in ASCII (the suffix marks the architecture, so a future arm64 build can live in the same release) — GitHub release asset names **cannot contain non-ASCII characters** (they get replaced with `.`), so this name is used for the upload. The ZIP produced locally by `npm run pack` still carries the Chinese character in its name; the **contents are identical**.
 
 > **Where your data lives**: a `data/` folder appears automatically next to the app (settings / favourites / rotation records / thumbnail cache).
 > It is **portable** — copy the whole folder and you take your entire configuration with you, no re-configuring on another machine.
@@ -263,6 +263,7 @@ Atrium/
 
 | Version | Summary |
 |---|---|
+| [`v1.23.1`](docs/Atrium_v1.23.1_更新说明.md) | Drag-and-drop RAW preview, file kind filter, 2-up sync/independent zoom & badge actions, update download link & SHA-256 |
 | [`v1.23.0`](docs/Atrium_v1.23.0_更新说明.md) | Batch favorite/rotate, lightbox 2-up compare, camera RAW preview & EXIF parsing, orientation filter & context-menu fix |
 | [`v1.22.0`](docs/Atrium_v1.22.0_更新说明.md) | Lightbox double-buffering & directional prefetch, hover auto-hide & fullscreen fixes, EXIF persistence & grid multi-select |
 | [`v1.21.1`](docs/Atrium_v1.21.1_更新说明.md) | Folder path persistence & multi-source import fixes, library indexing & thumbnail scheduling stability |
