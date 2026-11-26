@@ -143,6 +143,13 @@ async function run() {
   await Exif.harvestTimes([{ name: 'plain.jpg', path: 'C:\\photos\\plain.jpg', file: null, bad: false }]);
   A.eq('harvestTimes 无任何写入时不调用 State.touch()', touched, 0);
 
+  /* 5. TIFF-based RAW（如 .dng / .orf）应直接解析出拍摄时间 */
+  const jpgWrap = makeJpegWithExif('2025:03:04 05:06:07');
+  const rawTiff = jpgWrap.slice(12, jpgWrap.length - 2);
+  const dngRes = await Exif.parse({ name: 'photo.dng', file: makeFakeFile(rawTiff, 'photo.dng') });
+  A.ok('RAW (.dng) EXIF 解析成功', dngRes.ok === true);
+  A.eq('RAW (.dng) 解析出拍摄时间戳', dngRes.ts, new Date(2025, 2, 4, 5, 6, 7).getTime());
+
   const ok = A.finish('Exif 单元测试');
   process.exit(ok ? 0 : 1);
 }

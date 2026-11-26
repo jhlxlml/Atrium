@@ -228,6 +228,24 @@ A.ok('main.js: 权限处理器仅对 vf://app 放行 fullscreen',
   'main.js 必须仅对 vf://app/ 放行 fullscreen 权限'
 );
 
+const appSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+const gridCtxIdx = appSrc.indexOf('async gridContext(');
+const lbCtxIdx = appSrc.indexOf('async lightboxContext(');
+const gridCtxBlock = gridCtxIdx >= 0 && lbCtxIdx > gridCtxIdx ? appSrc.slice(gridCtxIdx, lbCtxIdx) : '';
+const lbCtxEnd = lbCtxIdx >= 0 ? appSrc.indexOf('runCtx(id)', lbCtxIdx) : -1;
+const lbCtxBlock = lbCtxIdx >= 0 && lbCtxEnd > lbCtxIdx ? appSrc.slice(lbCtxIdx, lbCtxEnd) : '';
+A.ok('app.js: gridContext 先执行 runCtx 再清空 ctxTarget',
+  gridCtxBlock.includes('this.runCtx(cmd)')
+  && gridCtxBlock.indexOf('this.runCtx(cmd)') < gridCtxBlock.indexOf('this.ctxTarget = null'),
+  'gridContext 不能在 runCtx(cmd) 之前清空 ctxTarget'
+);
+A.ok('app.js: lightboxContext 先执行 runCtx 再清空 ctxTarget',
+  lbCtxBlock.includes('this.runCtx(cmd)')
+  && lbCtxBlock.indexOf('this.runCtx(cmd)') < lbCtxBlock.indexOf('this.ctxTarget = null'),
+  'lightboxContext 不能在 runCtx(cmd) 之前清空 ctxTarget'
+);
+
 /* ---------- 汇总 ---------- */
 const ok = A.finish('main.js IPC 安全接线断言');
 process.exit(ok ? 0 : 1);

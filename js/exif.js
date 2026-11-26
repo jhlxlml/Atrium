@@ -12,7 +12,7 @@
 
   const HEAD_LIMIT = 256 * 1024; // JPEG EXIF 绝大多数位于前 256KB
 
-  const EXT_OK = /^(jpe?g|tiff?)$/;
+  const EXT_OK = /^(jpe?g|tiff?|dng|cr2|nef|arw|orf|rw2|pef|srw)$/;
 
   function readHead(src) {
     // 兼容两种输入：File 本体 或 {file?/path?/name/size} 的条目 meta
@@ -78,7 +78,8 @@
       const d = gU32(o + 4);
       return d ? gU32(o) / d : 0;
     };
-    if (gU16(2) !== 42 || end < 10) return null;
+    const magic = gU16(2);
+    if ((magic !== 42 && magic !== 0x4f52 && magic !== 0x5352 && magic !== 0x0055) || end < 10) return null;
     const ifd0 = gU32(4);
     if (ifd0 + 2 > end) return null;
 
