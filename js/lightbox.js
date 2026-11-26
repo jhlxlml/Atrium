@@ -79,7 +79,9 @@
       this.cmpPane = Util.$('#lbCmpPane');
       this.cmpImg = Util.$('#lbCmpImg');
       this.cmpNameEl = Util.$('#lbCmpName');
+      this.cmpFavBtn = Util.$('#lbCmpFav');
       this.cmpSwapBtn = Util.$('#lbCmpSwap');
+      this.cmpCloseBtn = Util.$('#lbCmpClose');
       this.wheelBtn = Util.$('#lbWheel');
       /* v1.20.3：这一行以前**漏了**。`#lbDel` 在 index.html 里存在、可点、可聚焦、
          标题还写着「删除（Delete）」，但 `this.delBtn` 从未被赋值，于是下面
@@ -97,7 +99,9 @@
       Util.$('#lbFit').addEventListener('click', () => this.fit(true));
       if (this.rotRBtn) this.rotRBtn.addEventListener('click', () => this.rotate(1));
       if (this.cmpBtn) this.cmpBtn.addEventListener('click', () => this.toggleCompare());
+      if (this.cmpFavBtn) this.cmpFavBtn.addEventListener('click', () => this.toggleCompareFav());
       if (this.cmpSwapBtn) this.cmpSwapBtn.addEventListener('click', () => this.swapCompare());
+      if (this.cmpCloseBtn) this.cmpCloseBtn.addEventListener('click', () => this.toggleCompare());
       if (this.wheelBtn) this.wheelBtn.addEventListener('click', () => this.toggleWheel());
       this.pctEl.addEventListener('click', () => this.toggleScale());
       this.favBtn.addEventListener('click', () => this.toggleFav());
@@ -989,6 +993,7 @@
       this.cmpMeta = meta;
       this.cmpPane.hidden = false;
       if (this.cmpNameEl) this.cmpNameEl.textContent = meta.name || '';
+      this._syncCompareFav();
       const T = global.Thumbs;
       const cssW = this._needPx(meta);
       const rec = (!meta.bad && T && T.screenPeek) ? T.screenPeek(meta, cssW) : null;
@@ -1066,6 +1071,27 @@
         global.Thumbs.unpinURL(this._cmpPinnedURL);
       }
       this._cmpPinnedURL = null;
+    },
+
+    /** 切换并同步左侧对比参考图的收藏状态 */
+    toggleCompareFav() {
+      if (!this.compareOn || !this.cmpMeta) return;
+      State.toggleFav(this.cmpMeta.id);
+      this._syncCompareFav();
+      if (this.meta === this.cmpMeta && this.favBtn) {
+        const on = State.isFav(this.meta.id);
+        this.favBtn.classList.toggle('is-fav', on);
+        this.favBtn.innerHTML = Util.icon(on ? 'i-star-fill' : 'i-star');
+        this.favBtn.setAttribute('aria-pressed', String(on));
+      }
+    },
+
+    _syncCompareFav() {
+      if (!this.cmpFavBtn || !this.cmpMeta) return;
+      const on = State.isFav(this.cmpMeta.id);
+      this.cmpFavBtn.classList.toggle('is-fav', on);
+      this.cmpFavBtn.innerHTML = Util.icon(on ? 'i-star-fill' : 'i-star');
+      this.cmpFavBtn.setAttribute('aria-pressed', String(on));
     },
 
     /** 当前图片显示中心（舞台坐标系）；未平移时即舞台中心 */

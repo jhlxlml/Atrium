@@ -760,6 +760,9 @@
       if (E.orientFilter) {
         E.orientFilter.addEventListener('change', () => {
           State.orientFilter = E.orientFilter.value || 'all';
+          if (E.orientFilter.parentElement) {
+            E.orientFilter.parentElement.classList.toggle('is-on', State.orientFilter !== 'all');
+          }
           this.applyView(true);
         });
       }
@@ -770,7 +773,10 @@
         State.filterText = '';
         State.favOnly = false;
         State.orientFilter = 'all';
-        if (E.orientFilter) E.orientFilter.value = 'all';
+        if (E.orientFilter) {
+          E.orientFilter.value = 'all';
+          if (E.orientFilter.parentElement) E.orientFilter.parentElement.classList.remove('is-on');
+        }
         E.favOnlyBtn.classList.remove('is-active', 'is-on');
         if (E.searchClear) E.searchClear.hidden = true;
         this.closeSearch();
@@ -983,19 +989,20 @@
       if (inv) inv.addEventListener('click', () => Grid.invert());
       if (none) none.addEventListener('click', () => Grid.clearSel());
       if (E.sbFav) E.sbFav.addEventListener('click', () => this.favSelected(Grid.selected()));
-      if (E.sbRot) E.sbRot.addEventListener('click', () => this.rotateSelected(Grid.selected()));
+      if (E.sbRot) E.sbRot.addEventListener('click', (e) => this.rotateSelected(Grid.selected(), e && e.shiftKey ? -1 : 1));
       if (E.sbExport) E.sbExport.addEventListener('click', () => this.exportSelected(Grid.selected()));
       if (E.sbDel) E.sbDel.addEventListener('click', () => this.requestDeleteMany(Grid.selected()));
     },
 
-    /** 批量顺时针旋转所选图片 90° */
-    rotateSelected(list) {
+    /** 批量旋转所选图片 90°（dir = 1 顺时针 / -1 逆时针） */
+    rotateSelected(list, dir = 1) {
       const arr = (Array.isArray(list) && list.length ? list : Grid.selected())
         .filter((m) => m && !m.bad && m.state !== 'error');
       if (!arr.length) return;
-      const changed = State.rotateMany(arr, 1);
+      const step = dir < 0 ? -1 : 1;
+      const changed = State.rotateMany(arr, step);
       if (!changed) return;
-      this.toast(`已顺时针旋转 ${changed} 张图片`);
+      this.toast(step < 0 ? `已逆时针旋转 ${changed} 张图片` : `已顺时针旋转 ${changed} 张图片`);
       this.onSelChanged(Grid.selectedCount(), Grid.selected());
     },
 
@@ -1040,7 +1047,7 @@
       }
       if (E.sbRot) {
         E.sbRot.disabled = valid === 0;
-        E.sbRot.title = valid ? `将所选 ${valid} 张图片顺时针旋转 90°` : '没有可旋转的图片';
+        E.sbRot.title = valid ? `顺时针旋转所选 ${valid} 张图片 90°（按住 Shift 点击逆时针）` : '没有可旋转的图片';
       }
       E.sbDel.disabled = !canDel;
       E.sbDel.title = canDel ? '把选中的图片移入回收站' : '这些图片所在来源不支持删除';
@@ -2317,6 +2324,7 @@
       if (this._harvestBusy) { this._harvestPending = (this._harvestPending || 0) + list.length; return; }
       for (const m of list) m._shotTried = true;
       this._harvestBusy = true;
+      if (this.el && this.el.footNote) this.el.footNote.textContent = '正在后台补全拍摄时间…';
       global.Exif.harvestTimes(list).then(() => {
         this._harvestBusy = false;
         if (this._harvestPending) {

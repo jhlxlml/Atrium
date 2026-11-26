@@ -270,7 +270,7 @@
       </div>
       <p class="empty-hint">也可以直接把一个或多个文件夹 <strong>拖拽</strong> 到这里</p>
       <ul class="empty-points">
-        <li>支持 JPG / PNG / GIF / WebP / BMP / AVIF / SVG 等</li>
+        <li>支持 JPG / PNG / WebP / HEIC 及相机 RAW（DNG / CR2 / NEF / ARW / RAF 等）</li>
         <li>可同时加载多个文件夹 · 全部 / 分文件夹查看</li>
         <li>大图查看 · 居中最大化 · 全屏幻灯片</li>
         <li>小图 / 中图 / 瀑布流 / 单列整屏 四种浏览模式</li>
@@ -349,7 +349,7 @@
     <span class="sb-sp"></span>
     <button class="btn btn-ghost btn-sm" id="sbAll">全选本页</button>
     <button class="btn btn-ghost btn-sm" id="sbInv">反选</button>
-    <button class="btn btn-ghost btn-sm" id="sbNone">取消</button>
+    <button class="btn btn-ghost btn-sm" id="sbNone" title="取消选择（Esc）">取消</button>
     <button class="btn btn-ghost btn-sm" id="sbFav"><svg><use href="#i-star"/></svg><span>收藏所选</span></button>
     <button class="btn btn-ghost btn-sm" id="sbRot"><svg><use href="#i-rotate"/></svg><span>旋转 90°</span></button>
     <button class="btn btn-ghost btn-sm" id="sbExport"><svg><use href="#i-download"/></svg><span>导出所选</span></button>
@@ -390,7 +390,9 @@
     <div class="lb-cmp-badge" id="lbCmpBadge">
       <span class="lb-cmp-tag">参考</span>
       <span class="lb-cmp-name" id="lbCmpName"></span>
+      <button type="button" class="lb-cmp-ico" id="lbCmpFav" title="收藏参考图" aria-label="收藏参考图" aria-pressed="false"><svg><use href="#i-star"/></svg></button>
       <button type="button" class="lb-cmp-btn" id="lbCmpSwap" title="交换左右图片（X）">交换</button>
+      <button type="button" class="lb-cmp-ico" id="lbCmpClose" title="退出双图对比（C）" aria-label="退出双图对比"><svg><use href="#i-x"/></svg></button>
     </div>
   </div>
 

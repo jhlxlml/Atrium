@@ -541,6 +541,8 @@ input[type="range"]::-moz-range-thumb {
 }
 .select-wrap select:hover { background: var(--fill-2); }
 .select-wrap select:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.select-wrap.is-on select { background: var(--accent-soft); color: var(--accent); }
+.select-wrap.is-on::after { border-right-color: var(--accent); border-bottom-color: var(--accent); }
 
 /* 搜索框 — 默认只显示搜索图标，点击后展开输入框。
    用 max-width 过渡（而非 width:0）避免展开过程中父容器宽度抖动导致裁切/闪烁。 */
