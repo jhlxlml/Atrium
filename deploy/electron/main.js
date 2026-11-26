@@ -58,7 +58,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const APPDIR = __dirname;                       // resources/app（index.html 所在）
-const IMG_EXT = new Set(['jpg','jpeg','png','gif','webp','bmp','avif','svg','ico','tif','tiff','heic','heif','jfif']);
+const rawLib = require('./rawlib.js');
+const IMG_EXT = new Set(['jpg','jpeg','png','gif','webp','bmp','avif','svg','ico','tif','tiff','heic','heif','jfif','dng','cr2','nef','arw','raf','orf','rw2','pef','srw']);
 
 /* Windows 任务栏身份（AppUserModelID）。
    不设置时，Windows 会按 exe 的**路径**给窗口归组：把应用固定到任务栏、
@@ -432,6 +433,19 @@ async function handleVf(req) {
       if (!(await picAllowed(abs))) return new Response('forbidden', { status: 403 });
       try { const st = await fs.stat(abs); if (!st.isFile()) return new Response('not found', { status: 404 }); }
       catch (e) { return new Response('not found', { status: 404 }); }
+      const ext = extOf(abs);
+      if (rawLib.isRawExt(ext)) {
+        const preview = await rawLib.extractFilePreview(abs);
+        if (!preview) return new Response('no raw preview', { status: 415 });
+        return new Response(preview, {
+          status: 200,
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'Access-Control-Allow-Origin': 'vf://app',
+            'Cache-Control': u.searchParams.has('v') ? 'private, max-age=120' : 'no-store',
+          },
+        });
+      }
       const resp = await net.fetch(pathToFileURL(abs).toString());
       /* 渲染进程要用 fetch 把图片读成 Blob 才能走「解码即降采样」，
          而 vf://app 与 vf://pic 是两个源，跨源取必须显式放行。

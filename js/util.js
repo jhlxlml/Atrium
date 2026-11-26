@@ -235,7 +235,7 @@
   };
 
   /** 允许索引的图片扩展名（浏览器可解码集合 + 常见补充；HEIC 会被识别但标记不可用） */
-  const IMG_EXT = new Set(['jpg','jpeg','png','gif','webp','bmp','avif','svg','ico','tif','tiff','heic','heif','jfif']);
+  const IMG_EXT = new Set(['jpg','jpeg','png','gif','webp','bmp','avif','svg','ico','tif','tiff','heic','heif','jfif','dng','cr2','nef','arw','raf','orf','rw2','pef','srw']);
   U.isImageExt = (name) => IMG_EXT.has(U.ext(name));
   U.isHeic = (name) => { const e = U.ext(name); return e === 'heic' || e === 'heif'; };
 
