@@ -79,16 +79,16 @@ Atrium（中庭）是面向 Windows 的本地图片浏览器：选一个文件�
 
 ### 使用便携包
 
-1. 从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载 **`Atrium_Electron_v1.21.1_x64.zip`**（Windows x64）和同名的 **`.sha256`**；
+1. 从 [Releases](https://github.com/jhlxlml/Atrium/releases/latest) 下载 **`Atrium_Electron_v1.22.0_x64.zip`**（Windows x64）和同名的 **`.sha256`**；
 2. 解压后双击 **`Atrium.cmd`**（**不是** `Atrium.exe`）；
 3. 点「添加文件夹」，或者直接把文件夹 / 图片拖进窗口。
 
 > **建议核对校验和**（v1.20.1 起发布脚本会一并上传 `.sha256`）：
-> `sha256sum -c Atrium_Electron_v1.21.1_x64.zip.sha256`（PowerShell：`Get-FileHash`）。
+> `sha256sum -c Atrium_Electron_v1.22.0_x64.zip.sha256`（PowerShell：`Get-FileHash`）。
 
 > **为什么是 `.cmd` 而不是 exe**：WorkBuddy 及部分 Node 环境会注入 `NODE_OPTIONS`，Electron 打包版遇到它会**启动即退出**。启动器负责先清掉这个变量，再拉起主程序。它优先按名找 `Atrium.exe`，找不到才退回「目录里第一个 exe」。
 
-> 下载到的资产名是 ASCII 的 `Atrium_Electron_v1.21.1_x64.zip`（后缀标架构，将来出 arm64 包可在同一 release 里共存）
+> 下载到的资产名是 ASCII 的 `Atrium_Electron_v1.22.0_x64.zip`（后缀标架构，将来出 arm64 包可在同一 release 里共存）
 > —— GitHub 的 release 资产名**不支持非 ASCII 字符**（会被替换成 `.`），所以发布时用这个名字；
 > 本地 `npm run pack` 生成的 ZIP 仍按构建链的命名带「版」字，两者**内容完全一致**。
 
@@ -268,6 +268,7 @@ Atrium/
 
 | 版本 | 概要 |
 |---|---|
+| [`v1.22.0`](docs/Atrium_v1.22.0_更新说明.md) | 灯箱双缓冲与定向预取加速、控件防误隐与全屏适配、EXIF 缓存持久化与网格键盘多选 |
 | [`v1.21.1`](docs/Atrium_v1.21.1_更新说明.md) | 修复首次/后续「打开文件夹」路径丢失与多源导入、优化图库索引与缩略图调度稳定 |
 | [`v1.21.0`](docs/Atrium_v1.21.0_更新说明.md) | 多目录源并入、最近目录记忆、网格布局与胶片条裁剪重构 |
 | [`v1.20.2`](docs/Atrium_v1.20.2_更新说明.md) | 出错时用户能知道（启动异常弹框、崩溃兜底页、权限显式全拒、路径授权、版本一致性门禁） |
