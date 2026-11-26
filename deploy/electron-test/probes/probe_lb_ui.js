@@ -241,6 +241,7 @@ app.whenReady().then(async () => {
     const stage = document.getElementById('lbStage');
     const cmpImg = document.getElementById('lbCmpImg');
     const favBtn = document.getElementById('lbCmpFav');
+    const syncBtn = document.getElementById('lbCmpSync');
     const swapBtn = document.getElementById('lbCmpSwap');
     const closeBtn = document.getElementById('lbCmpClose');
     if (!btn || !pane || !stage || !cmpImg || L.list.length < 2) return { skipped: true };
@@ -259,6 +260,9 @@ app.whenReady().then(async () => {
     L.zoomAt(2, c.x, c.y);
     const tfAfter = cmpImg.style.transform;
     const syncMoved = !!tfAfter && tfAfter !== tfBefore;
+    if (syncBtn) syncBtn.click();
+    const tfUnsynced = cmpImg.style.transform;
+    const unsyncReset = !L.cmpSync && tfUnsynced === tfBefore;
     if (favBtn) favBtn.click();
     const favToggled = !!(favBtn && favBtn.classList.contains('is-fav'));
     if (favBtn) favBtn.click();
@@ -268,7 +272,7 @@ app.whenReady().then(async () => {
     const swapped = L.cmpMeta === curBeforeSwap && L.meta === ref0;
     if (closeBtn) closeBtn.click();
     const closed = !L.el.classList.contains('is-compare') && pane.hidden;
-    return { onOpen, noOverlap, keptRef, syncMoved, favToggled, swapped, closed };
+    return { onOpen, noOverlap, keptRef, syncMoved, unsyncReset, favToggled, swapped, closed };
   })()`);
 
   console.log('LBUI ' + JSON.stringify(Object.assign(R, { swap: swap }), null, 1));

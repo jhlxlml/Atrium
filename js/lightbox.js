@@ -24,8 +24,8 @@
     el: null, stage: null, img: null, spin: null, errBox: null,
     nameEl: null, countEl: null, pctEl: null, favBtn: null, stripBtn: null, strip: null,
     fsBtn: null, playBtn: null, cmpBtn: null,
-    cmpPane: null, cmpImg: null, cmpNameEl: null, cmpSwapBtn: null,
-    compareOn: false, cmpMeta: null, _cmpPinnedURL: null, _cmpNw: 0, _cmpNh: 0,
+    cmpPane: null, cmpImg: null, cmpNameEl: null, cmpFavBtn: null, cmpSyncBtn: null, cmpSwapBtn: null, cmpCloseBtn: null,
+    compareOn: false, cmpSync: true, cmpMeta: null, _cmpPinnedURL: null, _cmpNw: 0, _cmpNh: 0,
     fsSupported: false,
     list: [],          // 快照（打开时的展示列表）
     i: -1,
@@ -80,6 +80,7 @@
       this.cmpImg = Util.$('#lbCmpImg');
       this.cmpNameEl = Util.$('#lbCmpName');
       this.cmpFavBtn = Util.$('#lbCmpFav');
+      this.cmpSyncBtn = Util.$('#lbCmpSync');
       this.cmpSwapBtn = Util.$('#lbCmpSwap');
       this.cmpCloseBtn = Util.$('#lbCmpClose');
       this.wheelBtn = Util.$('#lbWheel');
@@ -100,6 +101,7 @@
       if (this.rotRBtn) this.rotRBtn.addEventListener('click', () => this.rotate(1));
       if (this.cmpBtn) this.cmpBtn.addEventListener('click', () => this.toggleCompare());
       if (this.cmpFavBtn) this.cmpFavBtn.addEventListener('click', () => this.toggleCompareFav());
+      if (this.cmpSyncBtn) this.cmpSyncBtn.addEventListener('click', () => this.toggleCompareSync());
       if (this.cmpSwapBtn) this.cmpSwapBtn.addEventListener('click', () => this.swapCompare());
       if (this.cmpCloseBtn) this.cmpCloseBtn.addEventListener('click', () => this.toggleCompare());
       if (this.wheelBtn) this.wheelBtn.addEventListener('click', () => this.toggleWheel());
@@ -1032,7 +1034,9 @@
         availW: this.availW(), availH: this.availH(),
         min: 0.05, max: MAX_FIT,
       });
-      const ratio = this.base ? (this.scale / this.base) : 1;
+      const ratio = (this.cmpSync && this.base) ? (this.scale / this.base) : 1;
+      const panX = this.cmpSync ? this.tx : 0;
+      const panY = this.cmpSync ? this.ty : 0;
       const r = this.isFs() ? null : (this.cmpPane.getBoundingClientRect ? this.cmpPane.getBoundingClientRect() : null);
       const fw = global.innerWidth, fh = global.innerHeight;
       const cg = this.isFs()
@@ -1045,14 +1049,30 @@
           };
       const t = T.computeTransform({
         baseW: cw, baseH: ch, scale: cmpBase * ratio, rot: cmpRot,
-        tx: this.tx, ty: this.ty, stageCx: cg.x, stageCy: cg.y,
+        tx: panX, ty: panY, stageCx: cg.x, stageCy: cg.y,
         originX: cg.left, originY: cg.top,
       });
       this.cmpImg.style.transform = t.transform;
     },
 
+    /** 切换双图对比时是否同步缩放与平移 */
+    toggleCompareSync() {
+      if (!this.openFlag || !this.compareOn) return;
+      this.cmpSync = !this.cmpSync;
+      if (this.cmpSyncBtn) {
+        this.cmpSyncBtn.classList.toggle('is-on', this.cmpSync);
+        this.cmpSyncBtn.setAttribute('aria-pressed', String(this.cmpSync));
+      }
+      this._syncCompareTransform();
+    },
+
     _clearCompare() {
       this.compareOn = false;
+      this.cmpSync = true;
+      if (this.cmpSyncBtn) {
+        this.cmpSyncBtn.classList.add('is-on');
+        this.cmpSyncBtn.setAttribute('aria-pressed', 'true');
+      }
       this.cmpMeta = null;
       this._cmpNw = 0;
       this._cmpNh = 0;
@@ -1625,6 +1645,7 @@
         case 'i': case 'I': this.toggleInfo(); break;
         case 'h': case 'H': this.toggleStrip(); break;
         case 'c': case 'C': this.toggleCompare(); break;
+        case 's': case 'S': if (this.compareOn) this.toggleCompareSync(); break;
         case 'x': case 'X': if (this.compareOn) this.swapCompare(); break;
         case 'p': case 'P': this.togglePlay(); break;
         case 'r': case 'R': this.rotate(e.shiftKey ? -1 : 1); break;
