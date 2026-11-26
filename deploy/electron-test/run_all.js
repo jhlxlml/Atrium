@@ -1487,6 +1487,11 @@ const SUITES = [
         'open=' + sw.fadeOnOpen + ' afterNav=' + sw.fadeAfterNav);
       check('切图确实换了张（断言没空跑）', sw.moved === true && sw.n > 1,
         'moved=' + sw.moved + ' n=' + sw.n);
+
+      const cmp = d.compare || {};
+      check('双图对比可开启且左右分屏不重叠', cmp.onOpen === true && cmp.noOverlap === true, JSON.stringify(cmp));
+      check('双图对比切图时左侧参考图保持固定且缩放同步', cmp.keptRef === true && cmp.syncMoved === true, JSON.stringify(cmp));
+      check('双图对比支持参考图收藏、左右交换与退出', cmp.favToggled === true && cmp.swapped === true && cmp.closed === true, JSON.stringify(cmp));
     },
   },
 

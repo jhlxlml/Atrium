@@ -233,6 +233,44 @@ app.whenReady().then(async () => {
   })()`);
   swap.fadeOnOpen = fadeOnOpen;
 
+  // ---- 双图对比（2-up）：分屏几何 / 切图保留参考 / 缩放联动 / 收藏 / 交换 / 退出 ----
+  R.compare = await w.webContents.executeJavaScript(`(async () => {
+    const L = window.Lightbox;
+    const btn = document.getElementById('lbCompare');
+    const pane = document.getElementById('lbCmpPane');
+    const stage = document.getElementById('lbStage');
+    const cmpImg = document.getElementById('lbCmpImg');
+    const favBtn = document.getElementById('lbCmpFav');
+    const swapBtn = document.getElementById('lbCmpSwap');
+    const closeBtn = document.getElementById('lbCmpClose');
+    if (!btn || !pane || !stage || !cmpImg || L.list.length < 2) return { skipped: true };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 150));
+    const onOpen = L.el.classList.contains('is-compare') && !pane.hidden;
+    const pr = pane.getBoundingClientRect();
+    const sr = stage.getBoundingClientRect();
+    const noOverlap = sr.left >= pr.right - 1 && pr.width > 100 && sr.width > 100;
+    const ref0 = L.cmpMeta;
+    L.nav(1);
+    await new Promise((r) => setTimeout(r, 150));
+    const keptRef = L.cmpMeta === ref0 && L.meta !== ref0;
+    const tfBefore = cmpImg.style.transform;
+    const c = L._center();
+    L.zoomAt(2, c.x, c.y);
+    const tfAfter = cmpImg.style.transform;
+    const syncMoved = !!tfAfter && tfAfter !== tfBefore;
+    if (favBtn) favBtn.click();
+    const favToggled = !!(favBtn && favBtn.classList.contains('is-fav'));
+    if (favBtn) favBtn.click();
+    const curBeforeSwap = L.meta;
+    if (swapBtn) swapBtn.click();
+    await new Promise((r) => setTimeout(r, 150));
+    const swapped = L.cmpMeta === curBeforeSwap && L.meta === ref0;
+    if (closeBtn) closeBtn.click();
+    const closed = !L.el.classList.contains('is-compare') && pane.hidden;
+    return { onOpen, noOverlap, keptRef, syncMoved, favToggled, swapped, closed };
+  })()`);
+
   console.log('LBUI ' + JSON.stringify(Object.assign(R, { swap: swap }), null, 1));
   app.quit();
 });

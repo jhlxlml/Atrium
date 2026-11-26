@@ -236,8 +236,79 @@
 
   /** 允许索引的图片扩展名（浏览器可解码集合 + 常见补充；HEIC 会被识别但标记不可用） */
   const IMG_EXT = new Set(['jpg','jpeg','png','gif','webp','bmp','avif','svg','ico','tif','tiff','heic','heif','jfif','dng','cr2','nef','arw','raf','orf','rw2','pef','srw']);
+  const RAW_EXT = new Set(['dng','cr2','nef','arw','raf','orf','rw2','pef','srw']);
   U.isImageExt = (name) => IMG_EXT.has(U.ext(name));
+  U.isRawExt = (name) => RAW_EXT.has(U.ext(name));
   U.isHeic = (name) => { const e = U.ext(name); return e === 'heic' || e === 'heif'; };
+
+  /** 从浏览器拖拽的 RAW File 中提取内嵌 JPEG 预览 Blob（零依赖，仅读头部与切片） */
+  U.extractRawJpegBlob = async (file) => {
+    if (!file || typeof file.slice !== 'function' || !file.size) return null;
+    const headLen = Math.min(file.size, 262144);
+    const headAb = await file.slice(0, headLen).arrayBuffer();
+    const u8 = new Uint8Array(headAb);
+    const dv = new DataView(headAb);
+    const cands = [];
+    const push = (offset, length) => {
+      if (offset > 0 && length >= 512 && length <= 32 * 1024 * 1024 && offset + length <= file.size) {
+        cands.push({ offset, length });
+      }
+    };
+    if (u8.length >= 0x5c && String.fromCharCode(...u8.subarray(0, 16)) === 'FUJIFILMCCD-RAW ') {
+      push(dv.getUint32(0x54, false), dv.getUint32(0x58, false));
+    } else if (u8.length >= 10 && ((u8[0] === 0x49 && u8[1] === 0x49) || (u8[0] === 0x4d && u8[1] === 0x4d))) {
+      const le = u8[0] === 0x49;
+      const g16 = (o) => dv.getUint16(o, le);
+      const g32 = (o) => dv.getUint32(o, le);
+      const magic = g16(2);
+      if (magic === 42 || magic === 0x4f52 || magic === 0x5352 || magic === 0x0055) {
+        const TSIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8, 13: 4 };
+        const readArr = (e, type, cnt) => {
+          const step = TSIZE[type] || 4;
+          const dOff = step * cnt <= 4 ? e + 8 : g32(e + 8);
+          if (dOff < 0 || dOff + step * cnt > u8.length) return [];
+          const arr = [];
+          for (let i = 0; i < cnt; i++) {
+            const p = dOff + i * step;
+            arr.push(type === 3 ? g16(p) : g32(p));
+          }
+          return arr;
+        };
+        const q = [g32(4)], seen = new Set();
+        while (q.length && seen.size < 24) {
+          const off = q.shift();
+          if (!off || seen.has(off) || off + 2 > u8.length) continue;
+          seen.add(off);
+          const cnt = g16(off);
+          if (cnt > 256 || off + 2 + cnt * 12 > u8.length) continue;
+          let jO = 0, jL = 0, sO = 0, sL = 0, comp = 0;
+          for (let i = 0; i < cnt; i++) {
+            const e = off + 2 + i * 12, tag = g16(e), type = g16(e + 2), c = g32(e + 4);
+            if (tag === 0x0201) jO = readArr(e, type, 1)[0] || 0;
+            else if (tag === 0x0202) jL = readArr(e, type, 1)[0] || 0;
+            else if (tag === 0x0111 && c === 1) sO = readArr(e, type, 1)[0] || 0;
+            else if (tag === 0x0117 && c === 1) sL = readArr(e, type, 1)[0] || 0;
+            else if (tag === 0x0103) comp = readArr(e, type, 1)[0] || 0;
+            else if (tag === 0x014a && c > 0 && c <= 8) for (const sub of readArr(e, type, c)) q.push(sub);
+            else if (tag === 0x8769) { const ex = readArr(e, type, 1)[0]; if (ex) q.push(ex); }
+          }
+          if (jO && jL) push(jO, jL);
+          if (sO && sL && (comp === 6 || comp === 7 || comp === 1)) push(sO, sL);
+          if (off + 2 + cnt * 12 + 4 <= u8.length) {
+            const nxt = g32(off + 2 + cnt * 12);
+            if (nxt) q.push(nxt);
+          }
+        }
+      }
+    }
+    cands.sort((a, b) => b.length - a.length);
+    for (const c of cands) {
+      const slice = file.slice(c.offset, c.offset + c.length);
+      const sig = new Uint8Array(await slice.slice(0, 2).arrayBuffer());
+      if (sig[0] === 0xff && sig[1] === 0xd8) return new Blob([await slice.arrayBuffer()], { type: 'image/jpeg' });
+    }
+    return null;
+  };
 
   /* ---------- 从文件头读原始像素尺寸（不解码） ----------
      缩略图解码改成「解码即降采样」之后，解码产物已经是被缩小过的位图，

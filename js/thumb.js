@@ -435,7 +435,12 @@
    * 才能走「解码即降采样」。拿不到时上层会退回 <img> 全解路径。
    */
   async function blobOf(meta) {
-    if (meta.file) return meta.file;
+    if (meta.file) {
+      if (global.Util && global.Util.isRawExt && global.Util.isRawExt(meta.name) && global.Util.extractRawJpegBlob) {
+        return await global.Util.extractRawJpegBlob(meta.file);
+      }
+      return meta.file;
+    }
     const url = elURL(meta);
     if (!url) return null;
     try {
