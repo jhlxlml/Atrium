@@ -120,10 +120,12 @@ async function run() {
   /* 3. harvestTimes：核心回归 —— 必须传 m 而不是 m.file，否则 nativeMeta.shotTs 永远写不上 */
   touched = 0;
   readHeadCalls = 0;
-  const hNative = { name: 'shot.jpg', path: 'C:\\photos\\shot.jpg', file: null, bad: false };
-  const hBrowser = { name: 'b.jpg', file: makeFakeFile(makeJpegWithExif('2022:01:02 03:04:05')), bad: false };
-  const hNoExif = { name: 'plain.jpg', path: 'C:\\photos\\plain.jpg', file: null, bad: false };
-  const hBad = { name: 'bad.jpg', path: 'C:\\photos\\shot.jpg', file: null, bad: true };
+  const recorded = [];
+  globalThis.Loader = { recordExif(m, r) { recorded.push({ id: m.id, ok: !!(r && r.ok), ts: (r && r.ts) || 0 }); } };
+  const hNative = { id: 'n1', name: 'shot.jpg', path: 'C:\\photos\\shot.jpg', file: null, bad: false };
+  const hBrowser = { id: 'b1', name: 'b.jpg', file: makeFakeFile(makeJpegWithExif('2022:01:02 03:04:05')), bad: false };
+  const hNoExif = { id: 'n2', name: 'plain.jpg', path: 'C:\\photos\\plain.jpg', file: null, bad: false };
+  const hBad = { id: 'bad1', name: 'bad.jpg', path: 'C:\\photos\\shot.jpg', file: null, bad: true };
 
   const count = await Exif.harvestTimes([hNative, hBrowser, hNoExif, hBad]);
   A.eq('harvestTimes 返回处理列表长度', count, 4);
@@ -133,6 +135,8 @@ async function run() {
   A.eq('harvestTimes 跳过 bad 条目', hBad.shotTs, undefined);
   A.eq('harvestTimes 写入 shotTs 后调用一次 State.touch()', touched, 1);
   A.ok('harvestTimes 对原生条目确实调用了 Native.readHead', readHeadCalls >= 2);
+  A.eq('harvestTimes 将命中与未命中均写入 Loader.recordExif', recorded.length, 3);
+  A.ok('harvestTimes 向 recordExif 传回原生 shotTs', recorded.some((x) => x.id === 'n1' && x.ts === expectedTs));
 
   /* 4. 全无 EXIF 时不应触发 State.touch() */
   touched = 0;

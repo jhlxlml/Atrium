@@ -302,8 +302,8 @@ app.whenReady().then(async () => {
        而不是已经显示出来的转圈。这条比"200ms 时转圈是否隐藏"更硬 ——
        后者在快图（代命中，15ms 就到位）上恒真，什么也证明不了。 */
     const afterSync = {
-      ld: img.classList.contains('ld'),
-      src: !!img.getAttribute('src'),
+      ld: img.classList.contains('ld') || !!(L.holdImg && L.holdImg.classList.contains('ld')),
+      src: !!(img.getAttribute('src') || (L.holdImg && L.holdImg.getAttribute('src'))),
       spinPending: !!L._spinT,
       spinShown: !spin.classList.contains('hide'),
     };
@@ -313,7 +313,10 @@ app.whenReady().then(async () => {
     /* ③ 放大到 2 倍再切：这时候必须清空 */
     L.scale = 2; L.apply(false);
     L.nav(1);
-    const zoomedSync = { ld: img.classList.contains('ld'), scaleWas: 2 };
+    const zoomedSync = {
+      ld: img.classList.contains('ld') || !!(L.holdImg && L.holdImg.classList.contains('ld')),
+      scaleWas: 2,
+    };
     L.scale = 1; L.tx = 0; L.ty = 0; L.apply(false);
     return { before, afterSync, at200, zoomedSync };
   })()`);

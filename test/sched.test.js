@@ -249,6 +249,38 @@ async function testP5() {
   jobs.forEach((p) => p.catch(() => {}));
 }
 
+async function testCancelPrefetch() {
+  installEnv();
+  H.loadScript('js/thumb.js');
+  const T = globalThis.Thumbs;
+
+  T.preloadScreen(mk('stale1'), 800, true);
+  T.cancelPrefetch();
+  await H.tick(60);
+  A.eq('P6 cancelPrefetch 丢弃未开工的过期预取，不浪费解码', started.length, 0);
+
+  /* 已开工的同目录解码不应被翻页 cancelPrefetch 作废，且 screenInflight 应提权并复用在途任务 */
+  const grid = [];
+  for (let i = 0; i < 6; i++) grid.push(T.thumbURL(mk('b' + i), 200, 2));
+  await settle();
+  const target = mk('inflight1');
+  const pPrefetch = T.screenURL(target, 1000, 3);
+  await settle();
+  A.eq('P6 在途任务初始以 3 级排队', ss(T).byPrio[3], 1);
+  T.cancelPrefetch(false);
+  const pJoin = T.screenInflight(target, 1000);
+  await settle();
+  A.ok('P6 screenInflight 命中在途任务且未重新发起解码', !!pJoin && started.filter((x) => x === 'inflight1').length === 0);
+  A.eq('P6 screenInflight 将排队任务提权到 0 级', ss(T).byPrio[0], 1);
+  release('b0');
+  await settle();
+  release('inflight1');
+  const [recPrefetch, recJoin] = await Promise.all([pPrefetch, pJoin]);
+  A.ok('P6 翻页后已开工解码照常落入缓存且与复用结果一致',
+    !!recJoin && recJoin === recPrefetch && !!T.screenPeek(target, 1000) && started.filter((x) => x === 'inflight1').length === 1);
+  grid.forEach((p) => p.catch(() => {}));
+}
+
 /* ============================================================ */
 (async () => {
   await testP1();
@@ -256,6 +288,7 @@ async function testP5() {
   await testP3();
   await testP4();
   await testP5();
+  await testCancelPrefetch();
   const ok = A.finish('调度器（统一优先级）');
   process.exit(ok ? 0 : 1);
 })();

@@ -747,6 +747,12 @@
       it.nw = o.w; it.nh = o.h;
       this._fitWindow(o.w, o.h);
       this._meta(it);
+      if (this.playing && A11y && A11y.liveThrottled) {
+        A11y.liveThrottled('正在播放第 ' + (this.pos + 1) + ' / ' + this.order.length + ' 张：' + (it.n || ''), {
+          key: 'slideshow',
+          intervalMs: Math.max(8000, (this.delay || 4000) * 2),
+        });
+      }
       // 第一张真的画出来了 → 主进程这时才把主窗口藏起来（避免"黑一下"再出图）
       if (this.remote && !this._painted) {
         this._painted = true;
@@ -1003,6 +1009,7 @@
       if (!this.on && !this.el) return;
       this.on = false;
       this._clearTimer();
+      if (A11y && A11y.clearLiveThrottle) A11y.clearLiveThrottle('slideshow');
       this._unbindFocusBar();   // 必须在 _unbindHot 之前：它要用 this.hot 判断焦点去向
       this._unbindHot();
       this._unbindDrag();

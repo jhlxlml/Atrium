@@ -72,7 +72,9 @@
     /** 大图/原图 URL：Electron 下由 vf:// 特权协议流式读盘（不占 JS 内存） */
     url(meta) {
       if (!bridge || !meta || !meta.path) return null;
-      return 'vf://pic/' + b64url(meta.path);
+      const base = 'vf://pic/' + b64url(meta.path);
+      if (meta.size || meta.lastModified) return base + '?v=' + (meta.size || 0) + '_' + (meta.lastModified || 0);
+      return base;
     },
 
     /** 读取文件头 ≤n 字节（EXIF 用）；返回 ArrayBuffer 或 null */

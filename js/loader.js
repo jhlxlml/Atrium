@@ -14,6 +14,7 @@
   const THUMB_STORE = 'thumbs';       // v2：缩略图 blob 落盘（二次打开零解码）
   const DIM_HEAD = 65536;             // 读文件头取尺寸时最多读多少字节（JPEG 的 SOF 多在前 64KB）
   const DIM_PREFIX = 'dim:';          // 尺寸缓存键前缀
+  const EXIF_PREFIX = 'exif:';        // EXIF 拍摄时间缓存键前缀
   let _dbPromise = null;
   function db() {
     if (!_dbPromise) {
@@ -228,6 +229,28 @@
     } catch (e) { /* 落库失败下次再写 */ }
   }
 
+  /* ---------- EXIF 拍摄时间持久缓存（避免重启后重扫大目录文件头） ---------- */
+  const exifMem = new Map();   // id -> { ts, s, m }
+  const exifDirty = new Map();
+  let exifFlushT = 0;
+  function scheduleExifFlush() {
+    if (exifFlushT) return;
+    exifFlushT = setTimeout(() => { exifFlushT = 0; flushExif(); }, 1200);
+  }
+  async function flushExif() {
+    const d = await db();
+    if (!d || !exifDirty.size) return;
+    const batch = Array.from(exifDirty.entries());
+    exifDirty.clear();
+    try {
+      await new Promise((res, rej) => {
+        const t = d.transaction(DB_STORE, 'readwrite');
+        for (const [id, v] of batch) t.objectStore(DB_STORE).put(v, EXIF_PREFIX + id);
+        t.oncomplete = res; t.onerror = () => rej(t.error);
+      });
+    } catch (e) { /* 落库失败下次再写 */ }
+  }
+
   /* ---------- 尺寸缓存的清理（设置面板「清除缓存」用） ----------
      只动 DIM_PREFIX 的键：同一个 store 里可能还残留旧版写入的其它键
      （历史上这里也存过文件夹句柄记忆），清缓存只碰尺寸缓存，别的一律不动。 */
@@ -243,21 +266,26 @@
   }
   async function clearDimsCache() {
     if (dimFlushT) { clearTimeout(dimFlushT); dimFlushT = 0; }
+    if (exifFlushT) { clearTimeout(exifFlushT); exifFlushT = 0; }
     dimDirty.clear();
+    exifDirty.clear();
     const mem = dimsMem.size;
     dimsMem.clear();
+    exifMem.clear();
     const d = await db(); if (!d) return { count: mem };
     let removed = 0;
     try {
-      const rows = await idbScan(DIM_PREFIX);
-      if (rows.length) {
+      const dimRows = await idbScan(DIM_PREFIX);
+      const exifRows = await idbScan(EXIF_PREFIX);
+      if (dimRows.length || exifRows.length) {
         await new Promise((res) => {
           const t = d.transaction(DB_STORE, 'readwrite');
           const os = t.objectStore(DB_STORE);
-          for (const row of rows) os.delete(DIM_PREFIX + row.id);
+          for (const row of dimRows) os.delete(DIM_PREFIX + row.id);
+          for (const row of exifRows) os.delete(EXIF_PREFIX + row.id);
           t.oncomplete = res; t.onerror = res; t.onabort = res;
         });
-        removed = rows.length;
+        removed = dimRows.length;
       }
     } catch (e) { /* 忽略 */ }
     return { count: removed };
@@ -429,6 +457,8 @@
         if (cd.w > 0 && cd.h > 0) { m.w = cd.w; m.h = cd.h; m.ratio = cd.r || cd.w / cd.h; }
         else if (cd.r > 0) m.ratio = cd.r;      // 只有比例（缩略图来源）也够首屏排布用
       }
+      // EXIF 拍摄时间预载：按 size + lastModified 校验有效性，命中即跳过重复读头
+      await this._loadExifFor(all);
       State.bus.emit('index-start', { via });
       const items = [];
       const CHUNK = 220;
@@ -615,6 +645,43 @@
       return map;
     },
 
+    /** 按批预载 EXIF 拍摄时间缓存，并校验文件大小与修改时间未变 */
+    async _loadExifFor(list) {
+      if (!Array.isArray(list) || !list.length) return;
+      const missing = [];
+      for (const m of list) if (m && m.id && !exifMem.has(m.id)) missing.push(m.id);
+      if (missing.length) {
+        const CH = 1500;
+        for (let i = 0; i < missing.length; i += CH) {
+          const got = await idbGetMany(EXIF_PREFIX, missing.slice(i, i + CH));
+          for (const [id, v] of got) {
+            if (v && typeof v.ts === 'number') exifMem.set(id, v);
+          }
+        }
+      }
+      for (const m of list) {
+        if (!m || !m.id) continue;
+        const v = exifMem.get(m.id);
+        if (!v || v.s !== (m.size || 0) || v.m !== (m.lastModified || 0)) continue;
+        if (v.ts > 0) m.shotTs = v.ts;
+        m._shotTried = true;
+      }
+    },
+
+    /** 记录 EXIF 解析结果（含无 EXIF 标记 ts=0，避免下次重启重复读头） */
+    recordExif(meta, res) {
+      if (!meta || !meta.id) return;
+      const ts = (res && res.ok && res.ts > 0) ? res.ts : 0;
+      const s = meta.size || 0;
+      const m = meta.lastModified || 0;
+      const prev = exifMem.get(meta.id);
+      if (prev && prev.ts === ts && prev.s === s && prev.m === m) return;
+      const rec = { ts, s, m };
+      exifMem.set(meta.id, rec);
+      exifDirty.set(meta.id, rec);
+      scheduleExifFlush();
+    },
+
     /**
      * 读文件头拿真实像素尺寸（不解码，见 Util.sizeFromHeader）。
      * 缩略图改成降采样解码后，解码产物已经不是原图尺寸了；这个方法用几十 KB
@@ -658,20 +725,25 @@
       return sz;
     },
 
-    /** 移除来源时按文件夹名前缀清理该来源的尺寸缓存 */
+    /** 移除来源时按文件夹名前缀清理该来源的尺寸与 EXIF 缓存 */
     async clearDimsFor(folderName) {
       const prefix = folderName + '\u2502';
       for (const k of Array.from(dimsMem.keys())) if (k.startsWith(prefix)) dimsMem.delete(k);
-      const rows = await idbScan(DIM_PREFIX);
+      for (const k of Array.from(exifMem.keys())) if (k.startsWith(prefix)) exifMem.delete(k);
+      const dimRows = await idbScan(DIM_PREFIX);
+      const exifRows = await idbScan(EXIF_PREFIX);
       const d = await db();
       if (!d) return;
-      const ids = [];
-      for (const r of rows) if (r.id.startsWith(prefix)) ids.push(r.id);
-      if (!ids.length) return;
+      const dimIds = [];
+      for (const r of dimRows) if (r.id.startsWith(prefix)) dimIds.push(r.id);
+      const exifIds = [];
+      for (const r of exifRows) if (r.id.startsWith(prefix)) exifIds.push(r.id);
+      if (!dimIds.length && !exifIds.length) return;
       try {
         await new Promise((res) => {
           const t = d.transaction(DB_STORE, 'readwrite');
-          for (const id of ids) t.objectStore(DB_STORE).delete(DIM_PREFIX + id);
+          for (const id of dimIds) t.objectStore(DB_STORE).delete(DIM_PREFIX + id);
+          for (const id of exifIds) t.objectStore(DB_STORE).delete(EXIF_PREFIX + id);
           t.oncomplete = res; t.onerror = res;
         });
       } catch (e) { /* 忽略 */ }
@@ -715,11 +787,14 @@
       return { ok: false, reason: 'unsupported' };
     },
 
-    /** 删除后清理该条目的尺寸缓存（内存 + IndexedDB） */
+    /** 删除后清理该条目的尺寸与 EXIF 缓存（内存 + IndexedDB） */
     async forgetDims(id) {
       dimsMem.delete(id);
       dimDirty.delete(id);
+      exifMem.delete(id);
+      exifDirty.delete(id);
       await idbDel(DIM_PREFIX + id);
+      await idbDel(EXIF_PREFIX + id);
     },
 
     /** 缩略图落盘缓存（thumb.js 使用；主进程/探针可读统计） */
@@ -738,9 +813,12 @@
     },
   };
 
-  /* 关窗前把攒着的缩略图落盘（pagehide 里只做「立刻发起」，不等结果） */
+  /* 关窗前把攒着的缩略图与 EXIF 缓存落盘（pagehide 里只做「立刻发起」，不等结果） */
   if (global.addEventListener) {
-    global.addEventListener('pagehide', () => { if (thumbQueue.size) flushThumbCache(); });
+    global.addEventListener('pagehide', () => {
+      if (thumbQueue.size) flushThumbCache();
+      if (exifDirty.size) flushExif();
+    });
   }
 
   global.Loader = Loader;

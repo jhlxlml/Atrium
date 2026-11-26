@@ -105,18 +105,22 @@
 
   const thumbs = new LRU(THUMB_CAP, disposeURL);   // id -> {url, side}
   const bigs = new LRU(BIG_CAP, disposeURL);       // id -> {url}
-  const screens = new LRU(8, disposeURL);          // id -> {url, side, w, h, tw, th, full}（灯箱的"屏幕尺寸代"）
+  const screens = new LRU(32, disposeURL);         // id -> {url, side, w, h, tw, th, full}（灯箱的"屏幕尺寸代"）
+  // 预热过的 <img> 引用（覆盖 +1 / +2 / -1 邻近图，防止刚 decode 完就被 GC 回收）
+  const warmImgs = new LRU(8, (im) => { try { if (im) im.src = ''; } catch (e) { /* 忽略 */ } });
   const pending = new Map();           // id -> Promise<string|null>（缩略图在途）
   /* 屏幕代的在途请求：id -> {side, p}。
      同一张图同尺寸的并发请求必须共用一次解码 —— 否则 ①重复解码抢 CPU；
      ②各自 createObjectURL，后完成的那份覆盖缓存、前一份的 URL 再没人放；
      ③两份结果互相覆盖，可能出现"小档顶掉大档"。 */
   const screenPending = new Map();
-  /* 「代」的版本号。切目录 / 删图 / 清缓存 / 关灯箱都 +1。
-     排队中的旧任务醒来先看版本，对不上就直接放弃 —— 不再往缓存里写、
-     也不再为一张已经不在列表里的图解码。 */
+  /* 两级版本号：
+     - epoch：数据有效代（切目录 / 删图 / 清缓存才 +1）。仍在同目录内已开工的解码结果
+       依然有效，不应因为翻到下一张而被丢弃；
+     - prefetchEpoch：预取队列代（翻页 / 关闭灯箱时 +1），只作废还没开工的排队预取。 */
   let epoch = 0;
-  const bumpEpoch = () => { epoch++; };
+  let prefetchEpoch = 0;
+  const bumpEpoch = () => { epoch++; prefetchEpoch++; };
   /* 「代」的生成串成一条链，一次只跑一个 —— 理由见 preloadScreen 的注释 */
   let screenChain = Promise.resolve();
 
@@ -187,6 +191,19 @@
     return { url, side: Math.max(ow || 0, oh || 0), w: ow || 0, h: oh || 0, tw: ow || 0, th: oh || 0, full: true };
   }
 
+  /** 对 <=16MB 的本地原图预读为内存 blob URL，绕开后续切图时的 vf:// 协议往返与磁盘重扫 */
+  async function fullCachedRec(meta, ow, oh, ep) {
+    if (!meta.file && (meta.size || 0) <= 16 * 1024 * 1024) {
+      const b = await blobOf(meta);
+      if (ep !== epoch) return null;
+      if (b) {
+        const url = global.URL.createObjectURL(b);
+        return { url, side: Math.max(ow || 0, oh || 0), w: ow || 0, h: oh || 0, tw: ow || 0, th: oh || 0, full: true };
+      }
+    }
+    return fullRec(meta, ow, oh);
+  }
+
   /**
    * 把生成结果写进缓存。三道闸门：
    *   ① 代过期（切目录/删图/清缓存/关灯箱之后才跑完）→ 立刻回收，不入缓存；
@@ -251,7 +268,7 @@
     /* 动图 / 矢量：直接给原图（见 noProxy 的注释）。这条也要缓存，
        否则每次 peek 未命中都会新建一个 blob URL 且无人回收。 */
     if (noProxy(meta)) {
-      const rec = fullRec(meta, meta.w | 0, meta.h | 0);
+      const rec = await fullCachedRec(meta, meta.w | 0, meta.h | 0, ep);
       return commitScreen(meta.id, rec, ep);
     }
 
@@ -262,11 +279,12 @@
       const sz = await global.Loader.imageSize(meta).catch(() => null);
       if (sz && sz.w > 0) { ow = sz.w; oh = sz.h; }
       /* imageSize 顺手会把 PNG/WebP 的动画标记写进 meta.anim —— 那时要重新判一次 */
-      if (noProxy(meta)) return commitScreen(meta.id, fullRec(meta, ow, oh), ep);
+      if (noProxy(meta)) return commitScreen(meta.id, await fullCachedRec(meta, ow, oh, ep), ep);
     }
     const maxSide = Math.max(ow, oh);
-    if (maxSide > 0 && maxSide <= side) {
-      return commitScreen(meta.id, fullRec(meta, ow, oh), ep);
+    // 像素不超过 4MP 且长边不超过 2560px 的图片直接走原图（原图解码仅 ~20ms，生成代理反而要 ~100ms 编码）
+    if (maxSide > 0 && (maxSide <= side || (ow * oh <= 4e6 && maxSide <= 2560))) {
+      return commitScreen(meta.id, await fullCachedRec(meta, ow, oh, ep), ep);
     }
 
     const res = await decodeThumb(meta, side, prio);
@@ -376,6 +394,18 @@
       });
     }
   }
+  /** 将队列中指定 id 的待执行解码任务提升至更急优先级 */
+  function promote(id, newPrio) {
+    if (!id) return;
+    let changed = false;
+    for (let i = 0; i < queue.length; i++) {
+      if (queue[i].id === id && queue[i].prio > newPrio) {
+        queue[i].prio = newPrio;
+        changed = true;
+      }
+    }
+    if (changed) pump();
+  }
   /** 调度器状态（探针用）：在跑的、排队的、按优先级分组 */
   function schedStats() {
     const byPrio = [0, 0, 0, 0];
@@ -392,7 +422,8 @@
     if (meta.file && meta.file.type) return meta.file.type;
     return MIME_BY_EXT[meta.ext] || 'image/jpeg';
   };
-  const alphaMime = (meta) => (/png|gif|webp|svg/i.test(mimeOf(meta))) ? 'image/png' : 'image/jpeg';
+  // 带透明通道的源改用 WebP 编码（保留完整 alpha，编码耗时与体积均远低于 PNG）
+  const alphaMime = (meta) => (/png|gif|webp|svg/i.test(mimeOf(meta))) ? 'image/webp' : 'image/jpeg';
   /** 元素可加载的 URL：File → 临时 blob URL；原生条目 → vf:// 磁盘流（无需 revoke） */
   const elURL = (meta) => meta.file
     ? global.URL.createObjectURL(meta.file)
@@ -430,15 +461,16 @@
   function putCanvas(c) { if (cvPool.length < DECODE_CONCURRENCY) cvPool.push(c); }
 
   function encodeBlob(cv, off, mime, q) {
-    return new Promise((resolve) => {
+    const enc = (m, qual) => new Promise((resolve) => {
       try {
         if (off && cv.convertToBlob) {
-          cv.convertToBlob({ type: mime, quality: q }).then((b) => resolve(b || null), () => resolve(null));
+          cv.convertToBlob({ type: m, quality: qual }).then((b) => resolve(b || null), () => resolve(null));
           return;
         }
-        cv.toBlob((b) => resolve(b), mime, q);
+        cv.toBlob((b) => resolve(b), m, qual);
       } catch (e) { resolve(null); }
     });
+    return enc(mime, q).then((b) => (b || mime !== 'image/webp') ? b : enc('image/png'));
   }
 
   /** 把解码结果画进（已按目标尺寸建好的）canvas 并编码为 blob */
@@ -480,7 +512,7 @@
     try {
       stats.decodes++;
       const mime = alphaMime(meta);
-      const q = mime === 'image/jpeg' ? 0.85 : undefined;
+      const q = mime === 'image/jpeg' ? 0.85 : mime === 'image/webp' ? 0.88 : undefined;
 
       // 先要知道原图尺寸才能算准降采样目标。优先用缓存/已知的，
       // 没有再花几十 KB 顺序读一次文件头（比解一张大图便宜太多）。
@@ -683,6 +715,18 @@
       return screenOk(hit, side) ? hit : null;
     },
 
+    /** 若该图已有同档/更大档的屏幕代正在生成，将其提升至 0 级并返回在途 Promise，避免重复解码 */
+    screenInflight(meta, cssW) {
+      if (!meta || meta.bad) return null;
+      const inflight = screenPending.get(meta.id);
+      if (!inflight) return null;
+      const dpr = Math.min(global.devicePixelRatio || 1, 2);
+      const side = screenBucket(Math.max(320, Math.round((cssW || 1200) * dpr)));
+      if (inflight.side < side) return null;
+      promote(meta.id, 0);
+      return inflight.p;
+    },
+
     /**
      * 同步看一眼「缩略图在不在内存里」，命中返回 URL，没命中返回 null。**绝不生成。**
      *
@@ -722,22 +766,39 @@
          以前只检查 meta.bad —— 切目录后排队中的任务照样会为一张已经不在列表里的
          图解码、建 blob URL、写进刚被清空的缓存。 */
       const ep = epoch;
+      const pfEp = prefetchEpoch;
       /* 预取也要标优先级：near=true 是"用户下一步很可能要的"（1 级，与当前张同级梯队），
-         near=false 是隔一张的后备（3 级后台）—— 于是只要前台有活，
+         near=false 是上一张/隔张后备（3 级后台）—— 于是只要前台有活，
          后台预取就自动让出 BG_CONC 个额度以外的那部分槽位，不会把"正在等的那一帧"堵在队列里。 */
       const prio = near ? 1 : 3;
       const run = () => {
-        if (ep !== epoch) { stats.screenDropped++; return Promise.resolve(null); }
+        if (ep !== epoch || pfEp !== prefetchEpoch) { stats.screenDropped++; return Promise.resolve(null); }
         screenChain = screenChain.then(() => {
-          if (ep !== epoch) { stats.screenDropped++; return null; }
+          if (ep !== epoch || pfEp !== prefetchEpoch) { stats.screenDropped++; return null; }
           if (!meta || meta.bad) return null;
-          return screenURL(meta, cssW, prio).catch(() => null);
+          return screenURL(meta, cssW, prio).then((rec) => {
+            // 对预取到的图片做一次轻量 Image.decode() 预热并保留引用，停顿几秒后切换（含 +1/+2/-1）也能直接命中
+            if (ep === epoch && pfEp === prefetchEpoch && rec && rec.url && typeof global.Image === 'function') {
+              try {
+                const im = new global.Image();
+                im.src = rec.url;
+                warmImgs.set(rec.url, im);
+                if (typeof im.decode === 'function') im.decode().catch(() => {});
+              } catch (e) { /* 忽略 */ }
+            }
+            return rec;
+          }).catch(() => null);
         });
         return screenChain;
       };
-      if (near) setTimeout(run, 40);
-      else if (global.requestIdleCallback) global.requestIdleCallback(run, { timeout: 2000 });
-      else setTimeout(run, 400);
+      if (near) setTimeout(run, 16);
+      else if (global.requestIdleCallback) {
+        // 先延迟再进 requestIdleCallback，防止空闲回调在 16ms 内抢在 near=true（下一张）之前占住 screenChain
+        setTimeout(() => {
+          if (ep !== epoch || pfEp !== prefetchEpoch) { stats.screenDropped++; return; }
+          global.requestIdleCallback(run, { timeout: 2000 });
+        }, 220);
+      } else setTimeout(run, 400);
     },
 
     /** 网格把当前可视区条目 id 报进来 → 解码槽优先服务这些图 */
@@ -764,10 +825,10 @@
       if (t && t.url) revoke(t.url);
       thumbs.map.delete(id);
       const b = bigs.get(id);
-      if (b && b.url) revoke(b.url);
+      if (b && b.url) { warmImgs.map.delete(b.url); revoke(b.url); }
       bigs.map.delete(id);
       const s = screens.get(id);
-      if (s && s.url) revoke(s.url);
+      if (s && s.url) { warmImgs.map.delete(s.url); revoke(s.url); }
       screens.map.delete(id);
       pending.delete(id);
     },
@@ -776,12 +837,16 @@
     clearAll() {
       bumpEpoch();                 // 排队中的旧任务全部作废
       screenPending.clear();
+      warmImgs.clear();
       thumbs.clear(); bigs.clear(); screens.clear(); pending.clear();
       desired = new Set();
     },
 
-    /** 灯箱关闭：只作废"还没跑"的后台预取，不动已有缓存（下次打开还要用） */
-    cancelPrefetch() { bumpEpoch(); },
+    /** 翻页/关闭灯箱：只作废"还没开工"的后台预取，保留已在同目录内生成的缓存（传入 clearWarm=true 时顺便释放预热图） */
+    cancelPrefetch(clearWarm) {
+      prefetchEpoch++;
+      if (clearWarm) warmImgs.clear();
+    },
 
     /* ---------- Blob URL 的钉住 / 解钉（灯箱正在显示的那一张） ----------
        被 <img src> 引用的 URL 不能在后台被回收：LRU 淘汰、尺寸升级覆盖都会

@@ -91,9 +91,70 @@ function testDedupe() {
   A.eq('D4 保留的是更大的那份', list[0].size, 200);
 }
 
+async function testExifCache() {
+  const store = new Map();
+  H.useGlobalAsWindow();
+  globalThis.Util = { ext: () => 'jpg', isHeic: () => false, heicSupported: () => true, idle: (cb) => cb() };
+  globalThis.State = { sourcePrefix: (n) => n, commitSource() {}, bus: { emit() {} } };
+  globalThis.Native = { active: false };
+  globalThis.indexedDB = {
+    open() {
+      const req = {
+        result: {
+          objectStoreNames: { contains: () => true },
+          transaction() {
+            const tx = {
+              objectStore() {
+                return {
+                  get(k) {
+                    const r = { result: store.get(k) };
+                    queueMicrotask(() => r.onsuccess && r.onsuccess());
+                    return r;
+                  },
+                  put(v, k) { store.set(k, v); },
+                  delete(k) { store.delete(k); },
+                };
+              },
+            };
+            queueMicrotask(() => tx.oncomplete && tx.oncomplete());
+            return tx;
+          },
+        },
+      };
+      queueMicrotask(() => req.onsuccess && req.onsuccess());
+      return req;
+    },
+  };
+  H.loadScript('js/loader.js');
+  const L = globalThis.Loader;
+
+  store.set('exif:p│shot.jpg', { ts: 1715553045000, s: 100, m: 2000 });
+  store.set('exif:p│noexif.jpg', { ts: 0, s: 50, m: 3000 });
+  store.set('exif:p│changed.jpg', { ts: 1715553045000, s: 100, m: 2000 });
+
+  const list = [
+    { id: 'p│shot.jpg', size: 100, lastModified: 2000 },
+    { id: 'p│noexif.jpg', size: 50, lastModified: 3000 },
+    { id: 'p│changed.jpg', size: 999, lastModified: 2000 },
+  ];
+  await L._loadExifFor(list);
+  A.eq('EXIF 缓存命中恢复 shotTs', list[0].shotTs, 1715553045000);
+  A.eq('EXIF 缓存命中标记 _shotTried', list[0]._shotTried, true);
+  A.eq('EXIF 缓存 ts=0 不写 shotTs 但标记 _shotTried', list[1].shotTs, undefined);
+  A.eq('EXIF 缓存 ts=0 标记 _shotTried', list[1]._shotTried, true);
+  A.eq('EXIF 缓存 size 变化时失效', list[2].shotTs, undefined);
+  A.eq('EXIF 缓存 size 变化时不标记 _shotTried', list[2]._shotTried, undefined);
+
+  L.recordExif({ id: 'p│fresh.jpg', size: 123, lastModified: 456 }, { ok: true, ts: 1700000000000 });
+  const fresh = [{ id: 'p│fresh.jpg', size: 123, lastModified: 456 }];
+  await L._loadExifFor(fresh);
+  A.eq('recordExif 写入内存缓存并可即时命中', fresh[0].shotTs, 1700000000000);
+}
+
 (async () => {
   testBigSize();
   await testDimsPrefix();
   testDedupe();
+  await testExifCache();
   process.exit(A.finish('索引器与尺寸缓存（D）') ? 0 : 1);
 })().catch((e) => { console.error(e); process.exit(1); });

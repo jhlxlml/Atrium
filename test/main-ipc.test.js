@@ -222,6 +222,12 @@ A.ok('main.js: 回收站还原与预览校验 trash-log 记录',
   'vf:restoreFile / vf:restoreFiles / vf:trashPreview 必须校验 matchTrashLog'
 );
 
+A.ok('main.js: 权限处理器仅对 vf://app 放行 fullscreen',
+  /permission === 'fullscreen' && isAppWc\(wc\)/.test(stripped)
+  && /u\.startsWith\('vf:\/\/app\/'\)/.test(SRC),
+  'main.js 必须仅对 vf://app/ 放行 fullscreen 权限'
+);
+
 /* ---------- 汇总 ---------- */
 const ok = A.finish('main.js IPC 安全接线断言');
 process.exit(ok ? 0 : 1);

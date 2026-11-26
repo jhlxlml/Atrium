@@ -73,19 +73,31 @@
         const meta = tile._item;
         if (e.target.closest('.tile-chk')) return;             // 勾选圈自行处理
         if (e.target.closest('.tile-fav')) return;             // 收藏星标自行处理
-        // Ctrl/⌘/Shift + 点击 = 切换选中（不打开大图）
+        // Ctrl/⌘/Shift + 点击 = 切换或连选（不打开大图）
         if (e.ctrlKey || e.metaKey || e.shiftKey) {
           e.preventDefault();
-          this.toggle(meta);
+          if (e.shiftKey && this._selAnchor) this.selectRange(this._selAnchor, meta);
+          else this.toggle(meta);
           return;
         }
         if (this.onOpen) this.onOpen(meta, this.items);
       });
       stage.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
-        if (e.target.closest && e.target.closest('.tile-del')) return; // 删除按钮不触发打开
+        if (e.target.closest && e.target.closest('.tile-del, .tile-fav, .tile-chk')) return; // 子按钮自行响应键盘操作
         const tile = e.target.closest('.tile');
-        if (tile && tile._item) { e.preventDefault(); if (this.onOpen) this.onOpen(tile._item, this.items); }
+        if (!tile || !tile._item) return;
+        e.preventDefault();
+        // Space 或修饰键+Enter：切换/范围多选，并播报当前选中数（无障碍键盘多选）
+        if (e.key === ' ' || e.ctrlKey || e.metaKey || e.shiftKey) {
+          if (e.shiftKey && this._selAnchor) this.selectRange(this._selAnchor, tile._item);
+          else this.toggle(tile._item);
+          if (global.A11y && global.A11y.live) {
+            global.A11y.live(this.sel.size ? `已选中 ${this.sel.size} 张` : '已取消选择');
+          }
+          return;
+        }
+        if (this.onOpen) this.onOpen(tile._item, this.items);
       });
 
       this._wireMarquee();
@@ -123,7 +135,19 @@
       if (!meta) return;
       const on = force === undefined ? !this.sel.has(meta) : !!force;
       if (on) this.sel.add(meta); else this.sel.delete(meta);
+      this._selAnchor = meta;
       this._paintOne(meta);
+      this._emitSel();
+    },
+
+    /** 连续范围选择（Shift+点击 / Shift+Space 键盘连选） */
+    selectRange(fromMeta, toMeta) {
+      const a = this.items.indexOf(fromMeta);
+      const b = this.items.indexOf(toMeta);
+      if (a < 0 || b < 0) { this.toggle(toMeta); return; }
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      for (let i = lo; i <= hi; i++) this.sel.add(this.items[i]);
+      this._paintAll();
       this._emitSel();
     },
 
@@ -162,14 +186,23 @@
     _emitSel() { if (this.onSelect) this.onSelect(this.sel.size, this.selected()); },
 
     _paintOne(meta) {
+      const on = this.sel.has(meta);
       for (const [, el] of this.els) {
-        if (el._item === meta) { el.classList.toggle('is-sel', this.sel.has(meta)); break; }
+        if (el._item === meta) {
+          el.classList.toggle('is-sel', on);
+          el.setAttribute('aria-pressed', String(on));
+          break;
+        }
       }
     },
 
     _paintAll() {
       for (const [, el] of this.els) {
-        if (el._item) el.classList.toggle('is-sel', this.sel.has(el._item));
+        if (el._item) {
+          const on = this.sel.has(el._item);
+          el.classList.toggle('is-sel', on);
+          el.setAttribute('aria-pressed', String(on));
+        }
       }
     },
 
@@ -671,6 +704,7 @@
         + (this.sel.has(meta) ? ' is-sel' : '');
       el.setAttribute('role', 'button');
       el.setAttribute('tabindex', '0');
+      el.setAttribute('aria-pressed', String(this.sel.has(meta)));
       el.setAttribute('aria-label', '查看 ' + meta.name);
       el._item = meta;
       el._job = this._token;

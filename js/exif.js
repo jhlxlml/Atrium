@@ -205,6 +205,9 @@
         try {
           const r = await parse(m);
           if (r && r.ok && r.ts) { m.shotTs = r.ts; changed++; }
+          if (global.Loader && typeof global.Loader.recordExif === 'function') {
+            global.Loader.recordExif(m, r);
+          }
         } catch (e) { /* 单文件失败忽略 */ }
       }
     }

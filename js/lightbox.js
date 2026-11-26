@@ -51,6 +51,14 @@
       this.el = Util.$('#lightbox');
       this.stage = Util.$('#lbStage');
       this.img = Util.$('#lbImg');
+      if (this.stage && this.img && document.createElement) {
+        this.holdImg = document.createElement('img');
+        this.holdImg.className = 'lb-img lb-hold';
+        this.holdImg.alt = '';
+        this.holdImg.setAttribute('aria-hidden', 'true');
+        // 插在主图之后，保证 querySelector('#lightbox img') 仍优先命中 #lbImg，层级由 z-index 控制
+        this.stage.insertBefore(this.holdImg, this.img.nextSibling);
+      }
       this.spin = Util.$('#lbSpin');
       this.errBox = Util.$('#lbErr');
       this.nameEl = Util.$('#lbName');
@@ -108,6 +116,13 @@
       } else if (this.fsBtn) {
         this.fsBtn.hidden = true;
       }
+      if (global.ResizeObserver && this.el) {
+        this._ro = new ResizeObserver(() => {
+          if (!this.openFlag || !this.nw || this.dragging) return;
+          if (Math.abs(this.scale - this.base) < 0.002) this.fit(false);
+        });
+        this._ro.observe(this.el);
+      }
       this.el.addEventListener('click', (e) => {
         if (e.target === this.el || e.target === Util.$('.lb-bg')) this.close();
       });
@@ -134,8 +149,22 @@
         e.preventDefault();
       });
 
-      // 沉浸式：鼠标移动时显现对应区域控件 + 光标，停手自动隐藏
+      // 沉浸式：鼠标移动/操作控件时显现对应区域控件 + 光标，离开控件停手后自动隐藏
       this.el.addEventListener('mousemove', (e) => this._fsActivity(e));
+      this.el.addEventListener('pointerdown', (e) => {
+        if (e.target && e.target.closest && e.target.closest('.lb-hud, .lb-nav, .lb-close, .lb-strip, .lb-info')) {
+          this._fsActivity(e);
+        }
+      }, { passive: true });
+      this.el.addEventListener('mouseleave', () => {
+        this._overUi = false;
+        this._lastPt = null;
+        if (!this.openFlag) return;
+        if (this.idleTimer) clearTimeout(this.idleTimer);
+        this.idleTimer = setTimeout(() => {
+          if (!this._isOverControls()) this.el.classList.add('fs-idle');
+        }, this.IDLE_MS);
+      });
 
       // 键盘（仅打开时生效）
       document.addEventListener('keydown', (e) => this._key(e));
@@ -152,6 +181,8 @@
       this.meta = meta;
       this.openedMeta = meta;
       this.openFlag = true;
+      this._navDir = 1;
+      this._clearHold();
       this.rot = State.rotationOf ? State.rotationOf(meta) : 0;   // P1-4：先取回该图的旋转
       this.el.hidden = false;
       this.el.setAttribute('aria-hidden', 'false');
@@ -172,6 +203,7 @@
          180ms 的淡入叠在解码后面，每次切图都要多等小半秒。 */
       this._fadeIn = true;
       this.render();
+      this._navAt = 0; // 打开灯箱不计入连翻节流起点，避免首次翻页误判为按住连翻
       if (this.infoOn) this._renderInfo();
       // 进入沉浸式：默认隐藏所有控件，仅底部 HUD 短暂提示后自动隐藏
       this.el.classList.add('lb-immersive');
@@ -204,11 +236,12 @@
       this._stripSlots = null;
       /* 关灯箱：把正在显示的那个 URL 解钉（这时才允许缓存层回收它），
          并作废"还没跑"的后台预取 —— 用户已经走了，没必要再为几张图解码。 */
+      this._clearHold();
       if (this._pinnedURL && global.Thumbs && global.Thumbs.unpinURL) {
         global.Thumbs.unpinURL(this._pinnedURL);
         this._pinnedURL = null;
       }
-      if (global.Thumbs && global.Thumbs.cancelPrefetch) global.Thumbs.cancelPrefetch();
+      if (global.Thumbs && global.Thumbs.cancelPrefetch) global.Thumbs.cancelPrefetch(true);
       // 若处于全屏，先退出全屏（异步），再隐藏
       if (document.fullscreenElement === this.el) {
         const done = () => {
@@ -224,6 +257,8 @@
 
     _hide() {
       if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
+      this._overUi = false;
+      this._lastPt = null;
       // 解陷阱必须在隐藏之前：拦截器挂在 document 上，漏解会让 Tab 一直被圈住。
       // 而且"关闭还原焦点"的判断依赖此刻容器状态，顺序反过来会走错分支。
       if (this._releaseTrap) { this._releaseTrap(); this._releaseTrap = null; }
@@ -246,16 +281,20 @@
       if (d.fullscreenElement === this.el) {
         d.exitFullscreen().catch(() => {});
       } else if (!d.fullscreenElement) {
-        this.el.requestFullscreen().catch(() => {});
+        this.el.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
       }
     },
 
-    /** 全屏变化后按当前朝向重新“最大化适应”（进入/退出都要） */
+    /** 全屏变化后立即同步适配视口（消除 80ms 延迟跳变），进入时收起多余控件并按新视口尺寸补全预取 */
     _onFsChange() {
       const fs = document.fullscreenElement === this.el;
       this._setFsIcon();
-      // 全屏尺寸变化后重新“最大化适应”：进入时贴边铺满，退出时恢复常规留白
-      setTimeout(() => { if (this.openFlag && this.nw) this.fit(false); }, 80);
+      if (fs) {
+        this._overUi = false;
+        this.el.classList.remove('fs-top', 'fs-left', 'fs-right', 'fs-bottom', 'fs-idle');
+      }
+      if (this.openFlag && this.nw) this.fit(false);
+      if (this.openFlag && global.Thumbs && global.Thumbs.preloadScreen) this._preloadNeighbors();
       if (fs) this._fsActivity(null);
     },
 
@@ -347,24 +386,52 @@
 
          **放大过的不走这条路**（scale≠1）：旧帧带着旧缩放，新图第一帧会先按旧缩放
          出现一下，看着像跳一下。缩放过就直接清空，和以前完全一样。 */
-      const keepFrame = this.scale === 1 && !this._fadeIn
-        && this.img.classList.contains('ld') && !!this.img.getAttribute('src');
+      // 双缓冲保留上一帧：把上一张快照复制到底层 holdImg（带它自己的 transform），
+      // 主 img 立即摘除 .ld/.anim 并清空，等新图加载、同步算好居中 transform 且 decode() 完成后再同时显形与撤底帧。
+      // 既消除未命中缓存时的黑闪/等待感，又彻底杜绝沿用旧 transform 导致的偏位跳变。
+      const prevUrl = this._pinnedURL || this.img.getAttribute('src');
+      const imgReady = this.img.classList.contains('ld') && !!prevUrl;
+      const keepExistingHold = !imgReady && !!(this.holdImg && this.holdImg.classList.contains('ld') && this._holdPinnedURL);
+      const canHold = !fast && (Math.abs(this.scale - this.base) < 0.002 || Math.abs(this.scale - 1) < 0.002) && !this._fadeIn
+        && (imgReady || keepExistingHold);
+      if (canHold && this.holdImg) {
+        if (imgReady) {
+          if (this._holdPinnedURL && this._holdPinnedURL !== prevUrl && global.Thumbs && global.Thumbs.unpinURL) {
+            global.Thumbs.unpinURL(this._holdPinnedURL);
+          }
+          this._holdPinnedURL = prevUrl;
+          if (prevUrl && global.Thumbs && global.Thumbs.pinURL) global.Thumbs.pinURL(prevUrl);
+          this.holdImg.style.width = this.img.style.width || 'auto';
+          this.holdImg.style.height = this.img.style.height || 'auto';
+          this.holdImg.style.transform = this.img.style.transform || '';
+          if (this.holdImg.getAttribute('src') !== prevUrl) this.holdImg.src = prevUrl;
+          this.holdImg.classList.add('ld');
+        }
+        // keepExistingHold 时继续保留当前已居中的 holdImg，不在连切未就绪图时闪白
+      } else {
+        this._clearHold();
+      }
+      this.img.classList.remove('ld', 'anim');
+      this.img.removeAttribute('src');
       this.img.classList.toggle('fadein', !!this._fadeIn);
       this._fadeIn = false;
       this.errBox.hidden = true;
+      const cssW = this._needPx(meta);
+      const peek = (!meta.bad && global.Thumbs && Thumbs.screenPeek) ? Thumbs.screenPeek(meta, cssW) : null;
       if (this._spinT) { clearTimeout(this._spinT); this._spinT = 0; }
-      if (keepFrame) {
+      if (canHold) {
+        // 缓存未命中时尽早（80ms）给出加载反馈，避免长时间停在旧画面让人感觉卡顿；命中缓存延后 250ms 防闪烁
         this._spinT = setTimeout(() => {
           this._spinT = 0;
           this.spin.classList.remove('hide');
-        }, 250);
+        }, peek ? 250 : 80);
       } else {
-        this.img.classList.remove('ld');
-        this.img.removeAttribute('src');
         this.spin.classList.remove('hide');
       }
       if (this._preT) { clearTimeout(this._preT); this._preT = 0; }
       if (this._settleT) { clearTimeout(this._settleT); this._settleT = 0; }
+      // 翻页时作废尚未开工的旧预取，避免在途任务占住 screenChain 拖慢当前张与新邻张（不清理 warmImgs，让刚预热完的下一张可立即命中）
+      if (global.Thumbs && global.Thumbs.cancelPrefetch) global.Thumbs.cancelPrefetch(false);
       this._updateStripSel();
       this._checkStripEnd();
       /* 条带的填充窗口要跟着当前张走：翻到第 500 张时，第 500±30 这一段才值得解码。
@@ -396,38 +463,37 @@
         this._rec = rec || null;
         this.img.onload = () => {
           if (!still()) return;
-          if (this._spinT) { clearTimeout(this._spinT); this._spinT = 0; }
-          this.spin.classList.add('hide');
           this._adoptNatural(meta);
           /* 这张就是原图（没走代，或者代本来就跟原图一样大）→ 不必再"升级" */
           this._full = !rec || !!rec.full;
-          // 尺寸交给 CSS（left/top:50% + translate(-50%,-50%)）居中，缩放只改 transform
+          // 同步算好新图的居中 transform（此时主 img 仍透明，不会露出未居中的状态）
           this.img.style.width = 'auto'; this.img.style.height = 'auto';
-          this.img.classList.add('ld');
           this.fit(false);
-          /* **停留 900ms 之后**才预取相邻图。
-             为什么不在 onload 里立刻预取：生成一代要 170–900ms（等于把原图完整解一遍），
-             而连续快翻时用户按下一张的间隔往往只有一两百毫秒 —— 立刻开工的话，它永远
-             和"你正在等的那一帧"抢 CPU。实测（真实 exe，24MP）：立刻预取时首次显示
-             188ms，延迟之后回到 89–130ms，也就是 v1.13.0 的水平（v1.13.0 没有任何预取）。
-             阈值取 900ms 而不是 450ms：实测"每 0.5 秒翻一张"时，450ms 的预取正好卡在
-             下一次切图中间，48MP 那张被拖到 378ms（v1.13.0 是 315ms）。900ms 之后，
-             "翻得比这快"就等于完全不做预取（每一帧都是干净的原图解码，不吃亏），
-             "停下来看"才把相邻两张备好 —— 而看照片本来就是停下来的场景。 */
-          /* 连翻时铺上去的是**占位小图**（见下面 fast 分支），它只是一张过渡画面 ——
-             为它去预取相邻两张纯属浪费，而且正好会在用户还在连翻的时候抢 CPU。
-             真图到位后（settle 定时器重新 start）才会走到这里。 */
-          if (!rec || !rec.thumb) {
-            this._preT = setTimeout(() => {
-              this._preT = 0;
-              if (still()) this._preloadNeighbors();
-            }, 900);
-          }
           const dim = this.origW && this.origH ? `${this.origW}×${this.origH}` : '';
           this.countEl.textContent = n > 1
             ? `${this.i + 1} / ${n}${dim ? ' · ' + dim : ''}`
             : dim;
           if (this.infoOn) this._renderInfo();
+          const reveal = () => {
+            if (!still()) return;
+            if (this._spinT) { clearTimeout(this._spinT); this._spinT = 0; }
+            this.spin.classList.add('hide');
+            this.img.classList.add('ld');
+            this._clearHold();
+            /* 占位小图（连翻过渡）不为它预取相邻图；真图解码上屏 120ms（>100ms 连翻判定阈值）
+               后触发定向预取，既不在按住方向键时抢 CPU，也能在手动连点翻页前备好后续图片。 */
+            if (!rec || !rec.thumb) {
+              this._preT = setTimeout(() => {
+                this._preT = 0;
+                if (still()) this._preloadNeighbors();
+              }, 120);
+            }
+          };
+          if (typeof this.img.decode === 'function') {
+            this.img.decode().then(reveal, reveal);
+          } else {
+            reveal();
+          }
         };
         this.img.onerror = () => {
           if (!still()) return;
@@ -440,17 +506,16 @@
       };
 
       this.scale = 1; this.tx = 0; this.ty = 0; this.base = 1;
+      this.nw = 0; this.nh = 0;
       this.img.style.transform = '';
       this.img.style.width = 'auto'; this.img.style.height = 'auto';
 
-      const cssW = this._needPx(meta);
       /* 代已备好 → 直接上（切图 2–15ms）；没备好 → **先上原图**，别让用户等生成。
          生成一代要 130–630ms（48MP 比直接解原图还贵），为了"用上代"先等这一段是本末倒置。
          原图先顶上，相邻两张的代在后台备着，下次翻过去/翻回来就都是 2ms 级了。
          **当前这张不生成代**：它已经在屏幕上了，此刻生成只会在你正等这一帧的时候抢 CPU
          —— 实测把 24MP 的首次显示从 89ms（v1.13.0 的水平）拖到 188ms、48MP 从 288ms 拖到 438ms。
          等真正空闲时再补（见下面的 idle 那一支），供下次翻回来用。 */
-      const peek = Thumbs.screenPeek ? Thumbs.screenPeek(meta, cssW) : null;
       if (peek) {
         start(peek);
       } else if (fast) {
@@ -503,11 +568,17 @@
         this._settleT = setTimeout(() => {
           this._settleT = 0;
           if (!still()) return;
-          if (this._rec && !this._rec.thumb) return;   // 已经是真图了，别重来
+          if (!this._rec || !this._rec.thumb) return;   // 已直接走原图或屏幕代，别重来
           start(Thumbs.screenPeek ? Thumbs.screenPeek(meta, cssW) : null);
         }, 140);
       } else {
-        start(null);
+        // 若上一轮预取已经开始生成当前图的代，直接提权等待它完成，避免丢弃已解码工作并发起重复原图解码
+        const inflight = Thumbs.screenInflight ? Thumbs.screenInflight(meta, cssW) : null;
+        if (inflight) {
+          inflight.then((rec) => { if (still()) start(rec); });
+        } else {
+          start(null);
+        }
       }
       /* 当前这张**不生成代**，一个定时器都不留。
          试过"等空闲再生成"（requestIdleCallback）：它会在页面一闲下来的**下一帧**
@@ -540,6 +611,19 @@
      * 被 revoke 的 blob 一旦需要重新取资源，画面就碎了。
      * pinURL/unpinURL 让"正在显示"的 URL 延后回收，换图/关闭时再补做。
      */
+    /** 清空双缓冲垫底旧帧并释放其 URL 钉住计数 */
+    _clearHold() {
+      if (this.holdImg) {
+        this.holdImg.classList.remove('ld');
+        this.holdImg.removeAttribute('src');
+        this.holdImg.style.transform = '';
+      }
+      if (this._holdPinnedURL && global.Thumbs && global.Thumbs.unpinURL) {
+        global.Thumbs.unpinURL(this._holdPinnedURL);
+      }
+      this._holdPinnedURL = null;
+    },
+
     _setSrc(url) {
       const T = global.Thumbs;
       if (this._pinnedURL && this._pinnedURL !== url && T && T.unpinURL) T.unpinURL(this._pinnedURL);
@@ -629,6 +713,7 @@
       /* 转圈是**延后**出现的（见 render 里 keepFrame 的注释），
          这里必须把那个定时器撤掉，否则报错 250ms 后转圈又冒出来盖住错误提示。 */
       if (this._spinT) { clearTimeout(this._spinT); this._spinT = 0; }
+      this._clearHold();
       this.spin.classList.add('hide');
       this.img.classList.remove('ld');
       this.img.removeAttribute('src');
@@ -645,6 +730,7 @@
       if (n <= 1) return;
       this.i = (this.i + delta + n) % n;
       this.meta = this.list[this.i];
+      this._navDir = delta < 0 ? -1 : 1;
       /* 只有**真正的切图**才打这个点：条带的"连翻让路"看它（见 _fillStrip）。
          render() 里那个 _navAt 是给"连翻判定"用的，打开灯箱时也会被写，
          拿它当"刚切过图"会让条带在打开瞬间白等 140ms。 */
@@ -676,6 +762,7 @@
       if (this.list.length < 2) this.stripBtn.classList.add('disabled');
       this.i = idx < this.list.length ? idx : 0;  // 顺位显示“下一张”，末位则回到首张
       this.meta = this.list[this.i];
+      this._stripCur = -1;
       this.render();
     },
 
@@ -714,13 +801,26 @@
          就是这一下。预取这一步只要 3 秒，远比"停下来才补"划算。 */
       const n = this.list.length;
       if (n < 2) return;
-      const ni = (this.i + 1) % n;
-      const pi = (this.i - 1 + n) % n;
-      const next = this.list[ni];
-      const prev = this.list[pi];
-      if (next && ni !== this.i) Thumbs.preloadScreen(next, this._needPx(next), true);
-      /* pi === ni 只会在 n === 2 时发生（上一张和下一张是同一张），别预取两遍。 */
-      if (prev && pi !== this.i && pi !== ni) Thumbs.preloadScreen(prev, this._needPx(prev), false);
+      const dir = this._navDir === -1 ? -1 : 1;
+      const i1 = (this.i + dir + n) % n;
+      const iPrev = (this.i - dir + n) % n;
+      const i2 = (this.i + dir * 2 + n) % n;
+      const m1 = this.list[i1];
+      const mPrev = this.list[iPrev];
+      const m2 = this.list[i2];
+      // 1) 按当前浏览方向优先预取下一张（1 级优先）
+      if (m1 && i1 !== this.i) Thumbs.preloadScreen(m1, this._needPx(m1), true);
+      // 2) 反方向相邻张仅在未命中缓存时补预取，刚翻过的图已命中缓存则不排队
+      if (mPrev && iPrev !== this.i && iPrev !== i1) {
+        const wPrev = this._needPx(mPrev);
+        if (!Thumbs.screenPeek || !Thumbs.screenPeek(mPrev, wPrev)) {
+          Thumbs.preloadScreen(mPrev, wPrev, false);
+        }
+      }
+      // 3) 沿浏览方向超前预取再下一张（+2），连续手动点击翻页时可直接命中
+      if (n > 2 && m2 && i2 !== this.i && i2 !== i1 && i2 !== iPrev) {
+        Thumbs.preloadScreen(m2, this._needPx(m2), false);
+      }
     },
 
     /* ---------- 缩放（居中 + 尽量放大整张可见） ---------- */
@@ -1013,6 +1113,25 @@
     },
 
     /* ---------- 沉浸式活动检测（光标 / 控件显现与自动隐藏） ---------- */
+    _isOverControls() {
+      if (this._overUi) return true;
+      const el = this.el;
+      if (!el) return false;
+      // .lb-hud 本体为 pointer-events: none，停在文件名与右侧按钮之间的空隙时也应视为悬停在控件区内
+      const pt = this._lastPt;
+      if (pt && el.classList.contains('fs-bottom') && el.querySelector) {
+        const hud = el.querySelector('.lb-hud');
+        if (hud && hud.getBoundingClientRect) {
+          const r = hud.getBoundingClientRect();
+          if (r.width > 0 && pt.x >= r.left && pt.x <= r.right && pt.y >= r.top && pt.y <= r.bottom) return true;
+        }
+      }
+      if (!el.querySelector) return false;
+      try {
+        return !!el.querySelector('.lb-hud:hover, .lb-nav:hover, .lb-close:hover, .lb-strip:hover, .lb-info:hover');
+      } catch (err) { return false; }
+    },
+
     _fsActivity(e) {
       if (!this.openFlag) return;
       const el = this.el;
@@ -1020,14 +1139,21 @@
       if (e) {
         const W = global.innerWidth, H = global.innerHeight;
         const x = e.clientX, y = e.clientY;
-        // 仅当鼠标位于对应热区时才显现该处控件（其余保持隐藏，只留图片）
-        el.classList.toggle('fs-top', y <= 96);                       // 顶部：关闭
-        el.classList.toggle('fs-left', x <= 112 && y > 96);           // 左侧：上一张
-        el.classList.toggle('fs-right', x >= W - 112 && y > 96);      // 右侧：下一张
-        el.classList.toggle('fs-bottom', y >= H - 160);               // 底部：信息条 + 操作栏
+        this._lastPt = (typeof x === 'number' && typeof y === 'number') ? { x, y } : null;
+        const tgt = e.target && e.target.closest ? e.target : null;
+        this._overUi = !!(tgt && tgt.closest('.lb-hud, .lb-nav, .lb-close, .lb-strip, .lb-info'));
+        const bottomEdge = this.stripOn ? 184 : 160;
+        // 鼠标位于热区或直接停在控件按钮本身时保持该处控件显现
+        el.classList.toggle('fs-top', y <= 96 || !!(tgt && tgt.closest('.lb-close')));
+        el.classList.toggle('fs-left', (x <= 112 && y > 96) || !!(tgt && tgt.closest('.lb-prev')));
+        el.classList.toggle('fs-right', (x >= W - 112 && y > 96) || !!(tgt && tgt.closest('.lb-next')));
+        el.classList.toggle('fs-bottom', y >= H - bottomEdge || !!(tgt && tgt.closest('.lb-hud, .lb-strip')));
       }
       if (this.idleTimer) clearTimeout(this.idleTimer);
-      this.idleTimer = setTimeout(() => el.classList.add('fs-idle'), this.IDLE_MS);
+      this.idleTimer = setTimeout(() => {
+        if (this._isOverControls()) return;
+        el.classList.add('fs-idle');
+      }, this.IDLE_MS);
     },
 
     /* ---------- 收藏 ---------- */
@@ -1164,6 +1290,7 @@
       this._stripSlots = slots;
       this._stripGen = (this._stripGen || 0) + 1;   // 世代：旧世代的在途结果不再回写
       this._stripBusy = 0;
+      this._stripCur = -1;
       this._stripWant = new Set();      // 本窗口内"想要"的槽位（按需扩展）
       this._updateStripSel();
       this._checkStripEnd();
@@ -1279,14 +1406,24 @@
 
     _updateStripSel() {
       const items = this.strip.children;
-      for (let k = 0; k < items.length; k++) {
-        const el = items[k];
-        el.classList.toggle('is-cur', k === this.i);
-        const m = this.list[k];
-        el.classList.toggle('is-fav', !!m && State.isFav(m.id));
+      if (this._stripCur >= 0 && this._stripCur < items.length) {
+        items[this._stripCur].classList.remove('is-cur');
+      } else {
+        for (let k = 0; k < items.length; k++) {
+          const el = items[k];
+          el.classList.toggle('is-cur', k === this.i);
+          const m = this.list[k];
+          el.classList.toggle('is-fav', !!m && State.isFav(m.id));
+        }
       }
       const cur = items[this.i];
-      if (cur && this.openFlag && this.strip.hidden === false) cur.scrollIntoView({ inline: 'center', block: 'nearest', behavior: Util.scrollBehavior() });
+      if (cur) {
+        cur.classList.add('is-cur');
+        const m = this.list[this.i];
+        cur.classList.toggle('is-fav', !!m && State.isFav(m.id));
+        if (this.openFlag && this.strip.hidden === false) cur.scrollIntoView({ inline: 'center', block: 'nearest', behavior: Util.scrollBehavior() });
+      }
+      this._stripCur = this.i;
     },
 
     toggleStrip() {

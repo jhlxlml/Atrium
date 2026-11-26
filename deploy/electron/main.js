@@ -439,7 +439,8 @@ async function handleVf(req) {
          配合"读任意路径"就是一个跨源任意文件读取）。 */
       const h = new Headers(resp.headers);
       h.set('Access-Control-Allow-Origin', 'vf://app');
-      h.set('Cache-Control', 'no-store');
+      // 带 ?v=size_mtime 版本戳的请求允许短期私有缓存，让回翻与预热可直接命中；无版本戳保持 no-store
+      h.set('Cache-Control', u.searchParams.has('v') ? 'private, max-age=120' : 'no-store');
       return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: h });
     }
     return new Response('unknown host', { status: 404 });
@@ -2412,12 +2413,20 @@ if (!gotLock) {
        注意 setPermissionCheckHandler 也返回 false：只拒"请求"不拒"检查"的话，
        某些 API 会绕过请求直接查状态（如 navigator.permissions.query），
        两边口径不一致就会出现"看起来允许了但实际用不了"的怪状态。 */
+    const isAppWc = (wc) => {
+      try {
+        const u = wc && typeof wc.getURL === 'function' ? wc.getURL() : '';
+        return u.startsWith('vf://app/');
+      } catch (e) { return false; }
+    };
     const denyPerm = (wc, permission) => {
+      // 仅对 vf://app 页面放行 HTML5 Fullscreen API（灯箱「全屏显示」/ 相框兜底全屏必需）；其余权限一律拒绝
+      if (permission === 'fullscreen' && isAppWc(wc)) return true;
       trace('permission-deny ' + permission);
       return false;
     };
     session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
-      denyPerm(wc, permission);
+      if (denyPerm(wc, permission)) { cb(true); return; }
       cb(false);
     });
     session.defaultSession.setPermissionCheckHandler(denyPerm);

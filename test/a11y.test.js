@@ -33,9 +33,9 @@ function eq(name, got, want) {
 }
 
 /* ---------- 在沙箱里加载 a11y.js ---------- */
-function loadA11y(doc) {
+function loadA11y(doc, extra) {
   const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'a11y.js'), 'utf8');
-  const sandbox = { console, document: doc };
+  const sandbox = Object.assign({ console, document: doc, Map, Date, setTimeout, clearTimeout }, extra || {});
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox, { filename: 'a11y.js' });
@@ -213,6 +213,39 @@ ok('trap(null) 返回可调用的空操作', (() => {
   r(); r();     // 可重复调用，不应抛错
   return true;
 })());
+
+/* ============================================================
+   六、幻灯片节流播报（liveThrottled / clearLiveThrottle）
+   ============================================================ */
+(() => {
+  let fakeNow = 10000;
+  const timers = new Map();
+  let nextTid = 1;
+  const tEl = fakeEl();
+  tEl.id = 'a11yLive';
+  const thA = loadA11y({ getElementById: (id) => (id === 'a11yLive' ? tEl : null) }, {
+    Date: { now: () => fakeNow },
+    setTimeout: (fn, ms) => { const id = nextTid++; timers.set(id, { fn, ms }); return id; },
+    clearTimeout: (id) => { timers.delete(id); },
+  });
+
+  eq('liveThrottled 首条立即播报', thA.liveThrottled('第 1 张', { key: 's', intervalMs: 8000 }), true);
+  eq('首条文本落地', tEl.textContent, '第 1 张');
+  eq('节流窗内第 2 条被节流不立即播报', thA.liveThrottled('第 2 张', { key: 's', intervalMs: 8000 }), false);
+  eq('节流窗内第 3 条覆盖待播消息', thA.liveThrottled('第 3 张', { key: 's', intervalMs: 8000 }), false);
+  eq('此时仍保留第 1 张文本（未被打断）', tEl.textContent, '第 1 张');
+  eq('只挂了一个尾部定时器', timers.size, 1);
+
+  fakeNow += 8000;
+  const pending = Array.from(timers.values())[0];
+  timers.clear();
+  pending.fn();
+  eq('窗口到期后尾部补播最后一条（第 3 张）', tEl.textContent, '第 3 张');
+
+  thA.liveThrottled('第 4 张', { key: 's', intervalMs: 8000 });
+  thA.clearLiveThrottle('s');
+  eq('clearLiveThrottle 取消未触发的尾部定时器', timers.size, 0);
+})();
 
 /* ============================================================
    汇总

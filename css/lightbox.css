@@ -41,8 +41,8 @@
   --lb-ink-2: rgba(60, 60, 67, .80); /* 次级：计数、错误说明 */
   --lb-ink-3: rgba(60, 60, 67, .72); /* 弱化：信息面板标签、脚注 */
   --lb-icon: rgba(60, 60, 67, .80);  /* HUD 里的操作图标 */
-  --lb-surface: rgba(255, 255, 255, .74);   /* HUD / 信息面板 */
-  --lb-surface-2: rgba(255, 255, 255, .88); /* 缩略图条（更实，托住图片） */
+  --lb-surface: rgba(255, 255, 255, .92);   /* HUD / 信息面板（实感半透明，避免大图重绘触发 45ms+ 模糊合成开销） */
+  --lb-surface-2: rgba(255, 255, 255, .95); /* 缩略图条（更实，托住图片） */
   --lb-line: rgba(60, 60, 67, .14);
   --lb-hairline: rgba(60, 60, 67, .09);     /* 信息面板行分隔：比 --lb-line 轻 */
   --lb-hover: rgba(120, 120, 128, .16);
@@ -50,7 +50,7 @@
   --lb-item: rgba(120, 120, 128, .12);      /* 缩略图占位、百分比按钮底 */
   --lb-shadow: 0 18px 50px -22px rgba(0, 0, 0, .30);
   --lb-glow: radial-gradient(120% 80% at 50% -10%, rgba(0, 0, 0, .05) 0%, transparent 60%);
-  --lb-btn-bg: rgba(255, 255, 255, .78);
+  --lb-btn-bg: rgba(255, 255, 255, .90);
   --lb-btn-bg-hover: #fff;
   --lb-btn-ink: #1d1d1f;
   /* 收藏星 / 播放键在浅色底下必须压暗：琥珀 #f5a623 与绿 #34c759 压在
@@ -69,8 +69,8 @@ body[data-theme="dark"] .lightbox {
   --lb-ink-2: rgba(235, 235, 245, .62);  /* 6.3:1 */
   --lb-ink-3: rgba(235, 235, 245, .52);  /* 4.8:1（原 .38 只有 2.7:1） */
   --lb-icon: rgba(235, 235, 245, .82);
-  --lb-surface: rgba(28, 28, 30, .62);
-  --lb-surface-2: rgba(28, 28, 30, .72);
+  --lb-surface: rgba(28, 28, 30, .88);
+  --lb-surface-2: rgba(28, 28, 30, .92);
   --lb-line: rgba(255, 255, 255, .10);
   --lb-hairline: rgba(255, 255, 255, .07);
   --lb-hover: rgba(255, 255, 255, .14);
@@ -78,8 +78,8 @@ body[data-theme="dark"] .lightbox {
   --lb-item: rgba(255, 255, 255, .08);
   --lb-shadow: 0 18px 50px -22px rgba(0, 0, 0, .9);
   --lb-glow: radial-gradient(120% 80% at 50% -10%, rgba(255, 255, 255, .05) 0%, transparent 60%);
-  --lb-btn-bg: rgba(255, 255, 255, .12);
-  --lb-btn-bg-hover: rgba(255, 255, 255, .22);
+  --lb-btn-bg: rgba(38, 38, 42, .84);
+  --lb-btn-bg-hover: rgba(58, 58, 64, .94);
   --lb-btn-ink: #fff;
   --lb-fav: #ffd60a;
   --lb-fav-soft: rgba(255, 214, 10, .16);
@@ -129,6 +129,9 @@ body.lb-open .lightbox { animation: lb-fade .22s var(--ease, cubic-bezier(.25,.1
 /* 必须在 .anim 之后：两者特异性相同（0,2,0），靠源序分胜负。
    目的是让"不可见"这一侧永远没有过渡 —— 淡出会被下一张图的加载抢跑。 */
 .lb-img:not(.ld) { transition: none; }
+#lbImg { z-index: 1; }
+/* 双缓冲垫底旧帧：仅在切图解码等待期间保持上一张居中显示，防止闪烁与错位 */
+.lb-hold { pointer-events: none; z-index: 0; }
 
 /* 镜像图标：逆时针旋转按钮 */
 svg.flip-x { transform: scaleX(-1); }
@@ -173,7 +176,6 @@ svg.flip-x { transform: scaleX(-1); }
   border: .5px solid var(--lb-line);
   background: var(--lb-btn-bg);
   color: var(--lb-btn-ink);
-  -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%);
   display: flex; align-items: center; justify-content: center;
   opacity: .9; transition: opacity .18s var(--ease, ease), background .18s var(--ease, ease), transform .18s var(--ease, ease);
 }
@@ -187,7 +189,6 @@ svg.flip-x { transform: scaleX(-1); }
   width: 44px; height: 44px; border-radius: 50%;
   border: .5px solid var(--lb-line);
   background: var(--lb-btn-bg);
-  -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%);
   color: var(--lb-btn-ink);
   display: flex; align-items: center; justify-content: center;
   opacity: .62;
@@ -207,7 +208,6 @@ svg.flip-x { transform: scaleX(-1); }
   padding: 8px 10px 8px 16px;
   border-radius: var(--r-l);
   background: var(--lb-surface);
-  -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
   border: .5px solid var(--lb-line);
   box-shadow: var(--lb-shadow);
   font-size: var(--fs);
@@ -280,7 +280,6 @@ svg.flip-x { transform: scaleX(-1); }
   overflow-x: auto; overflow-y: hidden;
   border-radius: var(--r-l);
   background: var(--lb-surface-2);
-  -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
   border: .5px solid var(--lb-line);
   scrollbar-width: thin;
 }
@@ -308,7 +307,7 @@ svg.flip-x { transform: scaleX(-1); }
 }
 
 /* ============================================================
-   全屏（幻灯片）状态
+   全屏（幻灯片）状态：画布随浅/深色主题切换
    ============================================================ */
 .lightbox:fullscreen { background: var(--lb-bg); }
 .lightbox:fullscreen .lb-close { top: 20px; right: 20px; }
@@ -328,6 +327,9 @@ svg.flip-x { transform: scaleX(-1); }
    理由 —— 它是鼠标路径上唯一的"退出"入口，若默认不可见，用户得先去顶部边缘
    试探才能关掉大图；把退出入口藏起来不是"沉浸"，是"找不到出口"。 */
 .lightbox.lb-immersive .lb-close { opacity: .9; pointer-events: auto; }
+/* 全屏态下关闭按钮与底部控件一致：默认隐藏，仅移近顶部热区显现，停手后随 idle 隐藏 */
+.lightbox.lb-immersive:fullscreen .lb-close { opacity: 0; pointer-events: none; }
+.lightbox.lb-immersive:fullscreen.fs-top .lb-close { opacity: 1; pointer-events: auto; }
 /* 用户主动打开的信息面板保持可见 */
 .lightbox.lb-immersive.with-info .lb-info { opacity: 1; pointer-events: auto; }
 
@@ -370,7 +372,6 @@ svg.flip-x { transform: scaleX(-1); }
   border-radius: var(--r-l);
   border: .5px solid var(--lb-line);
   background: var(--lb-surface);
-  -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
   box-shadow: var(--lb-shadow);
 }
 .lb-info-body {

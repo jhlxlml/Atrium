@@ -181,6 +181,47 @@
     return true;
   };
 
+  /* 节流播报：用于幻灯片自动轮播等高频切换场景，避免读屏被连续打断 */
+  const throttleMap = new Map();
+  A11y.liveThrottled = function (msg, opts) {
+    const o = opts || {};
+    const key = String(o.key || 'default');
+    const intervalMs = Math.max(0, Number(o.intervalMs) || 8000);
+    let slot = throttleMap.get(key);
+    if (!slot) {
+      slot = { lastAt: 0, timer: 0, pending: null };
+      throttleMap.set(key, slot);
+    }
+    const now = Date.now();
+    const wait = slot.lastAt ? intervalMs - (now - slot.lastAt) : 0;
+    if (wait <= 0) {
+      if (slot.timer) { clearTimeout(slot.timer); slot.timer = 0; }
+      slot.pending = null;
+      slot.lastAt = now;
+      return A11y.live(msg, o);
+    }
+    slot.pending = { msg, opts: o };
+    if (!slot.timer) {
+      slot.timer = setTimeout(() => {
+        slot.timer = 0;
+        const p = slot.pending;
+        slot.pending = null;
+        if (!p) return;
+        slot.lastAt = Date.now();
+        A11y.live(p.msg, p.opts);
+      }, wait);
+    }
+    return false;
+  };
+
+  A11y.clearLiveThrottle = function (key) {
+    const k = String(key || 'default');
+    const slot = throttleMap.get(k);
+    if (!slot) return;
+    if (slot.timer) { clearTimeout(slot.timer); slot.timer = 0; }
+    slot.pending = null;
+  };
+
   /** 探针 / 自检用的只读快照（不参与产品逻辑） */
   A11y.liveState = function () {
     const el = global.document ? document.getElementById('a11yLive') : null;
