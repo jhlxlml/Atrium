@@ -2510,8 +2510,11 @@
           hasPath: !!meta.path,
         },
       });
-      this.ctxTarget = null;
-      if (cmd) this.runCtx(cmd);
+      try {
+        if (cmd) this.runCtx(cmd);
+      } finally {
+        this.ctxTarget = null;
+      }
     },
 
     /** 灯箱大图的原生右键菜单 */
@@ -2531,8 +2534,11 @@
           hasPath: !!meta.path,
         },
       });
-      this.ctxTarget = null;
-      if (cmd) this.runCtx(cmd);
+      try {
+        if (cmd) this.runCtx(cmd);
+      } finally {
+        this.ctxTarget = null;
+      }
     },
 
     /** 执行右键菜单命令。未接线的 id 显式告警（而不是静默无反应）。 */

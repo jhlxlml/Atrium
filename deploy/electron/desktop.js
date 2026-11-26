@@ -426,7 +426,11 @@ function createDesktop(ctx) {
     ipcMain.handle('vf:showInFolder', guard(async (p) => {
       if (!p || typeof p !== 'string') return false;
       if (typeof ctx.canAccessPath === 'function' && !(await ctx.canAccessPath(p))) return false;
-      try { shell.showItemInFolder(p); return true; }
+      try {
+        const target = process.platform === 'win32' ? p.replace(/\//g, '\\') : p;
+        shell.showItemInFolder(target);
+        return true;
+      }
       catch (err) { return false; }
     }));
 
