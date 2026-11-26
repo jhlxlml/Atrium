@@ -93,6 +93,8 @@
       E.selBar = $('#selBar');
       E.sbCount = $('#sbCount');
       E.sbDel = $('#sbDel');
+      E.sbFav = $('#sbFav');
+      E.sbRot = $('#sbRot');
       E.sbExport = $('#sbExport');
 
       this.page = 1;       // 当前页码
@@ -970,8 +972,35 @@
       });
       if (inv) inv.addEventListener('click', () => Grid.invert());
       if (none) none.addEventListener('click', () => Grid.clearSel());
+      if (E.sbFav) E.sbFav.addEventListener('click', () => this.favSelected(Grid.selected()));
+      if (E.sbRot) E.sbRot.addEventListener('click', () => this.rotateSelected(Grid.selected()));
       if (E.sbExport) E.sbExport.addEventListener('click', () => this.exportSelected(Grid.selected()));
       if (E.sbDel) E.sbDel.addEventListener('click', () => this.requestDeleteMany(Grid.selected()));
+    },
+
+    /** 批量顺时针旋转所选图片 90° */
+    rotateSelected(list) {
+      const arr = (Array.isArray(list) && list.length ? list : Grid.selected())
+        .filter((m) => m && !m.bad && m.state !== 'error');
+      if (!arr.length) return;
+      const changed = State.rotateMany(arr, 1);
+      if (!changed) return;
+      this.toast(`已顺时针旋转 ${changed} 张图片`);
+      this.onSelChanged(Grid.selectedCount(), Grid.selected());
+    },
+
+    /** 批量收藏或取消收藏所选图片（全已收藏则取消，否则全部收藏） */
+    favSelected(list) {
+      const arr = (Array.isArray(list) && list.length ? list : Grid.selected())
+        .filter((m) => m && !m.bad && m.state !== 'error');
+      if (!arr.length) return;
+      const wantOn = !arr.every((m) => State.isFav(m.id));
+      const changed = State.setFavs(arr.map((m) => m.id), wantOn);
+      if (!changed) return;
+      this.toast(wantOn ? `已收藏 ${changed} 张图片` : `已取消收藏 ${changed} 张图片`);
+      if (!(State.favOnly && !wantOn)) {
+        this.onSelChanged(Grid.selectedCount(), Grid.selected());
+      }
     },
 
     /** 选中集合变化 → 更新选择条（可删除性按来源能力实时判定） */
@@ -982,12 +1011,26 @@
       E.selBar.hidden = false;
       E.sbCount.textContent = `已选 ${n} 张`;
       const arr = list || Grid.selected();
-      let canDel = false, canExp = false, rot = 0;
+      let canDel = false, canExp = false, rot = 0, valid = 0, faved = 0;
       for (const m of arr) {
         if (!m || m.bad) continue;
+        valid++;
+        if (State.isFav(m.id)) faved++;
         if (global.Loader.canDelete(m)) canDel = true;
         if (m.path || m.file) canExp = true;
         if (State.rotationOf(m)) rot++;
+      }
+      if (E.sbFav) {
+        const allFav = valid > 0 && faved === valid;
+        E.sbFav.disabled = valid === 0;
+        E.sbFav.classList.toggle('is-on', allFav);
+        E.sbFav.innerHTML = `${Util.icon(allFav ? 'i-star-fill' : 'i-star')}<span>${allFav ? '取消收藏' : '收藏所选'}</span>`;
+        E.sbFav.title = valid === 0 ? '没有可收藏的图片'
+          : (allFav ? `取消所选 ${valid} 张图片的收藏` : `将所选 ${valid} 张图片加入收藏`);
+      }
+      if (E.sbRot) {
+        E.sbRot.disabled = valid === 0;
+        E.sbRot.title = valid ? `将所选 ${valid} 张图片顺时针旋转 90°` : '没有可旋转的图片';
       }
       E.sbDel.disabled = !canDel;
       E.sbDel.title = canDel ? '把选中的图片移入回收站' : '这些图片所在来源不支持删除';

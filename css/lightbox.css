@@ -405,3 +405,37 @@ svg.flip-x { transform: scaleX(-1); }
 /* 设置项「过渡动画」关闭时：灯箱内的缩放/切换瞬变 */
 body[data-anim="0"] .lb-img.anim { transition: none; }
 body[data-anim="0"] .lb-btn, body[data-anim="0"] .lb-nav { transition: none; }
+
+/* 双图对比模式（2-up）：左半屏固定参考图，右半屏正常切换与缩放 */
+.lightbox.is-compare .lb-stage { left: 50%; }
+.lb-cmp-pane {
+  position: absolute; inset: 0 50% 0 0; z-index: 1;
+  overflow: hidden;
+  border-right: 1px solid var(--lb-line);
+  pointer-events: none;
+}
+.lb-cmp-pane[hidden] { display: none; }
+.lb-cmp-badge {
+  position: absolute; top: 16px; left: 16px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 5px 10px; border-radius: var(--r-pill);
+  border: .5px solid var(--lb-line);
+  background: var(--lb-surface);
+  color: var(--lb-ink); font-size: var(--fs-s);
+  pointer-events: auto;
+}
+.lb-cmp-tag {
+  flex: none; padding: 1px 6px; border-radius: var(--r-pill);
+  background: var(--accent); color: #fff; font-size: var(--fs-xs); font-weight: 600;
+}
+.lb-cmp-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lb-cmp-btn {
+  flex: none; border: 0; border-radius: var(--r-pill);
+  min-height: 24px; padding: 2px 10px; cursor: pointer;
+  background: var(--fill-2, rgba(128,128,128,.18));
+  color: var(--lb-ink); font-size: var(--fs-xs);
+}
+.lb-cmp-btn:hover { background: var(--fill-3, rgba(128,128,128,.28)); }

@@ -70,6 +70,7 @@ const MAP = [
   ['i-gear', 'settings'],
   ['i-frame', 'images'],
   ['i-shuffle', 'shuffle'],
+  ['i-compare', 'columns-2'],
 ];
 
 /* 删掉的 6 个死图标（定义了但全站没有任何引用）：

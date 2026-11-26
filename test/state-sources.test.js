@@ -147,9 +147,57 @@ function testRemoveItemFav() {
   A.eq('F5 来源计数同步', State.sourceCount(src.id), 0);
 }
 
+function testBatchFavs() {
+  const src = State.commitSource('批量收藏', entries('批量收藏', ['f1.jpg', 'f2.jpg', 'f3.jpg']), 'D:\\F\\批量收藏');
+  const list = State.activeItems().filter((x) => x.sid === src.id);
+  A.eq('F6 有 3 条测试数据', list.length, 3);
+  if (list.length !== 3) return;
+  const ids = list.map((x) => x.id);
+  let evs = 0;
+  let lastEv = null;
+  const off = State.bus.on('favorite-changed', (ev) => { evs++; lastEv = ev; });
+  State.toggleFav(ids[0]);
+  evs = 0;
+  const added = State.setFavs(ids, true);
+  A.eq('F6 批量收藏只统计新增变更数', added, 2);
+  A.eq('F6 批量收藏只发 1 次事件', evs, 1);
+  A.ok('F6 批量事件带 all 标记', !!(lastEv && lastEv.all && lastEv.on === true));
+  A.ok('F6 三条全部已收藏', ids.every((id) => State.isFav(id)));
+  const noop = State.setFavs(ids, true);
+  A.eq('F6 幂等重复收藏变更数为 0', noop, 0);
+  A.eq('F6 无变更时不发事件', evs, 1);
+  const removed = State.setFavs(ids, false);
+  A.eq('F6 批量取消收藏变更数为 3', removed, 3);
+  A.ok('F6 三条全部已取消收藏', ids.every((id) => !State.isFav(id)));
+  if (typeof off === 'function') off();
+}
+
+function testBatchRotate() {
+  const src = State.commitSource('批量旋转', entries('批量旋转', ['r1.jpg', 'r2.jpg']), 'D:\\R\\批量旋转');
+  const list = State.activeItems().filter((x) => x.sid === src.id);
+  A.eq('F7 有 2 条测试数据', list.length, 2);
+  if (list.length !== 2) return;
+  let evs = 0;
+  let lastEv = null;
+  const off = State.bus.on('rotation-changed', (ev) => { evs++; lastEv = ev; });
+  const c1 = State.rotateMany(list, 1);
+  A.eq('F7 批量旋转返回变更数 2', c1, 2);
+  A.eq('F7 批量旋转只发 1 次事件', evs, 1);
+  A.ok('F7 批量旋转事件带 all 标记', !!(lastEv && lastEv.all));
+  A.ok('F7 两条均为 90°', list.every((m) => State.rotationOf(m) === 90));
+  State.rotateMany(list, 1);
+  State.rotateMany(list, 1);
+  State.rotateMany(list, 1);
+  A.ok('F7 转满 360° 归零清除', list.every((m) => State.rotationOf(m) === 0));
+  A.eq('F7 空数组返回 0', State.rotateMany([], 1), 0);
+  if (typeof off === 'function') off();
+}
+
 /* ============================================================ */
 testSameNameDifferentDir();
 testNoDirStillMerges();
 testRemoveSourceFavs();
 testRemoveItemFav();
+testBatchFavs();
+testBatchRotate();
 process.exit(A.finish('来源与收藏归属（E/F）') ? 0 : 1);

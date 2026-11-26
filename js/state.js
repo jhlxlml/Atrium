@@ -314,6 +314,24 @@
       Events.emit('favorite-changed', { id, on: !has });
       return !has;
     },
+    /** 批量设置收藏状态（只写盘与递增 favRev 一次）；返回实际发生变更的条数 */
+    setFavs(ids, on) {
+      if (!Array.isArray(ids) || !ids.length) return 0;
+      const want = !!on;
+      let changed = 0;
+      for (const id of ids) {
+        if (!id) continue;
+        const has = favs.has(id);
+        if (want && !has) { favs.add(id); changed++; }
+        else if (!want && has) { favs.delete(id); changed++; }
+      }
+      if (changed) {
+        saveFavs();
+        favRev++;
+        Events.emit('favorite-changed', { id: null, on: want, all: true, count: changed });
+      }
+      return changed;
+    },
 
     /**
      * 外部原地修改了条目上「参与筛选/排序」的字段时调用（如 EXIF 回填 shotTs），
@@ -338,6 +356,26 @@
     /** 顺时针/逆时针步进 90°（dir = +1 / -1）；返回新角度 */
     rotateBy(meta, dir) {
       return this.setRotation(meta, this.rotationOf(meta) + (dir < 0 ? -90 : 90));
+    },
+    /** 批量步进旋转 90°（只写盘与广播一次）；返回发生变更的条数 */
+    rotateMany(metas, dir) {
+      if (!Array.isArray(metas) || !metas.length) return 0;
+      const step = dir < 0 ? -90 : 90;
+      let changed = 0;
+      for (const meta of metas) {
+        const k = rotKeyOf(meta);
+        if (!k) continue;
+        const cur = rots.get(k) || 0;
+        const d = ((Math.round((cur + step) / 90) * 90) % 360 + 360) % 360;
+        rots.delete(k);
+        if (d) rots.set(k, d);
+        changed++;
+      }
+      if (changed) {
+        saveRots();
+        Events.emit('rotation-changed', { meta: null, deg: 0, all: true, count: changed });
+      }
+      return changed;
     },
     /** 清空全部旋转记录（设置面板「恢复默认」用）；返回清掉的条数 */
     clearRotations() {

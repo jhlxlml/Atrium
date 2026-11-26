@@ -78,6 +78,7 @@
   <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /><circle cx="12" cy="12" r="3" /></symbol>
   <symbol id="i-frame" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 11-1.296-1.296a2.4 2.4 0 0 0-3.408 0L11 16" /><path d="M4 8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2" /><circle cx="13" cy="7" r="1" fill="currentColor" /><rect x="8" y="2" width="14" height="14" rx="2" /></symbol>
   <symbol id="i-shuffle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 14 4 4-4 4" /><path d="m18 2 4 4-4 4" /><path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22" /><path d="M2 6h1.972a4 4 0 0 1 3.6 2.2" /><path d="M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45" /></symbol>
+  <symbol id="i-compare" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M12 3v18" /></symbol>
   <!-- SPRITE:END -->
 </svg>
 
@@ -341,6 +342,8 @@
     <button class="btn btn-ghost btn-sm" id="sbAll">全选本页</button>
     <button class="btn btn-ghost btn-sm" id="sbInv">反选</button>
     <button class="btn btn-ghost btn-sm" id="sbNone">取消</button>
+    <button class="btn btn-ghost btn-sm" id="sbFav"><svg><use href="#i-star"/></svg><span>收藏所选</span></button>
+    <button class="btn btn-ghost btn-sm" id="sbRot"><svg><use href="#i-rotate"/></svg><span>旋转 90°</span></button>
     <button class="btn btn-ghost btn-sm" id="sbExport"><svg><use href="#i-download"/></svg><span>导出所选</span></button>
     <button class="btn btn-danger btn-sm" id="sbDel"><svg><use href="#i-trash"/></svg><span>删除所选</span></button>
   </div>
@@ -374,6 +377,14 @@
       <p>无法解码这张图片<br><span id="lbErrName"></span><span class="lb-err-why" id="lbErrWhy"></span></p>
     </div>
   </div>
+  <div class="lb-cmp-pane" id="lbCmpPane" hidden aria-label="对比参考图">
+    <img class="lb-img lb-cmp-img" id="lbCmpImg" alt="" draggable="false">
+    <div class="lb-cmp-badge" id="lbCmpBadge">
+      <span class="lb-cmp-tag">参考</span>
+      <span class="lb-cmp-name" id="lbCmpName"></span>
+      <button type="button" class="lb-cmp-btn" id="lbCmpSwap" title="交换左右图片（X）">交换</button>
+    </div>
+  </div>
 
   <button class="lb-close" id="lbClose" aria-label="关闭"><svg><use href="#i-x"/></svg></button>
   <button class="lb-nav lb-prev" id="lbPrev" aria-label="上一张"><svg><use href="#i-left"/></svg></button>
@@ -394,10 +405,11 @@
       <button class="ico-btn" id="lbFit" title="适应窗口（整张装进窗口）" aria-label="适应窗口"><svg><use href="#i-fit"/></svg></button>
       <button class="ico-btn" id="lbRotR" title="顺时针旋转 90°（R）· 逆时针按 Shift+R · 旋转会被记住，按 Z 复原" aria-label="顺时针旋转"><svg><use href="#i-rotate"/></svg></button>
       <span class="lb-sep"></span>
-      <!-- 视图组：信息 / 收藏 / 缩略条 / 滚轮行为 -->
+      <!-- 视图组：信息 / 收藏 / 缩略条 / 双图对比 / 滚轮行为 -->
       <button class="ico-btn" id="lbInfo" title="图片信息（I）" aria-label="图片信息"><svg><use href="#i-info"/></svg></button>
       <button class="ico-btn" id="lbFav" title="收藏（F）" aria-label="收藏"><svg><use href="#i-star"/></svg></button>
       <button class="ico-btn" id="lbStripBtn" title="缩略图条（H）" aria-label="缩略图条"><svg><use href="#i-film"/></svg></button>
+      <button class="ico-btn" id="lbCompare" title="双图对比（C）" aria-label="双图对比" aria-pressed="false"><svg><use href="#i-compare"/></svg></button>
       <button class="ico-btn" id="lbWheel" title="滚轮：缩放图片（点击切换为切换图片）" aria-label="滚轮模式：缩放"><svg><use href="#i-wheel"/></svg></button>
       <span class="lb-sep"></span>
       <!-- 播放组 -->

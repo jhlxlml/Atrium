@@ -238,7 +238,12 @@
         「只看收藏」开启时，被取消收藏的那张要移出列表（否则会留在页面上自相矛盾）。
         列表归属 App 的分页视图，所以这里只发信号请它重算，绝不自己改 items。 */
     _onFavChanged(ev) {
-      const { id, on } = ev || {};
+      const { id, on, all } = ev || {};
+      if (all) {
+        this._paintAllFav();
+        if (State.favOnly && on === false && this.onFavRemoved) this.onFavRemoved();
+        return;
+      }
       let hit = null;
       for (const [, el] of this.els) {
         if (el._item && el._item.id === id) { hit = el._item; break; }

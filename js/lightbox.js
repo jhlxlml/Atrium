@@ -23,7 +23,9 @@
   const Lightbox = {
     el: null, stage: null, img: null, spin: null, errBox: null,
     nameEl: null, countEl: null, pctEl: null, favBtn: null, stripBtn: null, strip: null,
-    fsBtn: null, playBtn: null,
+    fsBtn: null, playBtn: null, cmpBtn: null,
+    cmpPane: null, cmpImg: null, cmpNameEl: null, cmpSwapBtn: null,
+    compareOn: false, cmpMeta: null, _cmpPinnedURL: null, _cmpNw: 0, _cmpNh: 0,
     fsSupported: false,
     list: [],          // 快照（打开时的展示列表）
     i: -1,
@@ -73,6 +75,11 @@
       this.infoPane = Util.$('#lbInfoPane');
       this.infoBody = Util.$('#lbInfoBody');
       this.rotRBtn = Util.$('#lbRotR');
+      this.cmpBtn = Util.$('#lbCompare');
+      this.cmpPane = Util.$('#lbCmpPane');
+      this.cmpImg = Util.$('#lbCmpImg');
+      this.cmpNameEl = Util.$('#lbCmpName');
+      this.cmpSwapBtn = Util.$('#lbCmpSwap');
       this.wheelBtn = Util.$('#lbWheel');
       /* v1.20.3：这一行以前**漏了**。`#lbDel` 在 index.html 里存在、可点、可聚焦、
          标题还写着「删除（Delete）」，但 `this.delBtn` 从未被赋值，于是下面
@@ -89,6 +96,8 @@
       Util.$('#lbZoomOut').addEventListener('click', () => { const c = this._center(); this.zoomAt(1 / 1.4, c.x, c.y); });
       Util.$('#lbFit').addEventListener('click', () => this.fit(true));
       if (this.rotRBtn) this.rotRBtn.addEventListener('click', () => this.rotate(1));
+      if (this.cmpBtn) this.cmpBtn.addEventListener('click', () => this.toggleCompare());
+      if (this.cmpSwapBtn) this.cmpSwapBtn.addEventListener('click', () => this.swapCompare());
       if (this.wheelBtn) this.wheelBtn.addEventListener('click', () => this.toggleWheel());
       this.pctEl.addEventListener('click', () => this.toggleScale());
       this.favBtn.addEventListener('click', () => this.toggleFav());
@@ -183,6 +192,7 @@
       this.openFlag = true;
       this._navDir = 1;
       this._clearHold();
+      this._clearCompare();
       this.rot = State.rotationOf ? State.rotationOf(meta) : 0;   // P1-4：先取回该图的旋转
       this.el.hidden = false;
       this.el.setAttribute('aria-hidden', 'false');
@@ -237,6 +247,7 @@
       /* 关灯箱：把正在显示的那个 URL 解钉（这时才允许缓存层回收它），
          并作废"还没跑"的后台预取 —— 用户已经走了，没必要再为几张图解码。 */
       this._clearHold();
+      this._clearCompare();
       if (this._pinnedURL && global.Thumbs && global.Thumbs.unpinURL) {
         global.Thumbs.unpinURL(this._pinnedURL);
         this._pinnedURL = null;
@@ -372,6 +383,10 @@
       Util.$('#lbPrev').classList.toggle('disabled', n <= 1);
       Util.$('#lbNext').classList.toggle('disabled', n <= 1);
       this.playBtn && this.playBtn.classList.toggle('disabled', n <= 1);
+      if (this.cmpBtn) {
+        this.cmpBtn.disabled = n <= 1;
+        this.cmpBtn.classList.toggle('disabled', n <= 1);
+      }
 
       /* ---- 切图时**留住上一帧**，不要先清空 ----
          从 v1.13.0 到 v1.20.5，每次切图都是先 `removeAttribute('src')` 再把 .ld 摘掉：
@@ -833,6 +848,11 @@
       return Math.max(200, global.innerWidth - 56 - (this.infoOn ? INFO_W + 30 : 0));
     },
     availW() {
+      if (this.compareOn) {
+        const half = Math.floor(global.innerWidth / 2);
+        if (this.isFs()) return Math.max(140, half);
+        return Math.max(140, this.availX1() - half - 24);
+      }
       if (this.isFs()) return Math.max(140, global.innerWidth);  // 全屏：占满整宽
       return Math.max(140, this.availX1() - this.BOX_L());
     },
@@ -847,8 +867,12 @@
      */
     _stageGeom() {
       if (this.isFs()) {
-        const w = global.innerWidth, h = global.innerHeight;
-        return { x: w / 2, y: h / 2, w, h, left: 0, top: 0 };
+        const fw = global.innerWidth, h = global.innerHeight;
+        if (this.compareOn) {
+          const left = Math.floor(fw / 2), w = fw - left;
+          return { x: left + w / 2, y: h / 2, w, h, left, top: 0 };
+        }
+        return { x: fw / 2, y: h / 2, w: fw, h, left: 0, top: 0 };
       }
       const r = this.stage && this.stage.getBoundingClientRect ? this.stage.getBoundingClientRect() : null;
       const w = (r && r.width) || global.innerWidth;
@@ -922,7 +946,126 @@
         originX: g.left, originY: g.top,   // 舞台原点：transform 是相对包含块左上角的
       });
       this.img.style.transform = t.transform;
+      if (this.compareOn) this._syncCompareTransform();
       this._updPct();
+    },
+
+    /* ---------- 双图对比模式（2-up） ---------- */
+    toggleCompare() {
+      if (!this.openFlag || this.list.length < 2) return;
+      this.compareOn = !this.compareOn;
+      if (this.el) this.el.classList.toggle('is-compare', this.compareOn);
+      if (this.cmpBtn) {
+        this.cmpBtn.classList.toggle('is-on', this.compareOn);
+        this.cmpBtn.setAttribute('aria-pressed', String(this.compareOn));
+      }
+      if (this.compareOn) {
+        this._loadCompare(this.meta);
+        if (this.nw) this.fit(false);
+      } else {
+        this._clearCompare();
+        if (this.nw) this.fit(false);
+      }
+    },
+
+    /** 交换左侧参考图与右侧当前图 */
+    swapCompare() {
+      if (!this.openFlag || !this.compareOn || !this.cmpMeta || !this.meta) return;
+      const oldCmp = this.cmpMeta;
+      const oldCur = this.meta;
+      if (oldCmp === oldCur) return;
+      const idx = this.list.indexOf(oldCmp);
+      this._loadCompare(oldCur);
+      if (idx >= 0) {
+        this.i = idx;
+        this.meta = this.list[idx];
+        this._stripCur = -1;
+        this.render();
+      }
+    },
+
+    _loadCompare(meta) {
+      if (!meta || !this.cmpPane || !this.cmpImg) return;
+      this.cmpMeta = meta;
+      this.cmpPane.hidden = false;
+      if (this.cmpNameEl) this.cmpNameEl.textContent = meta.name || '';
+      const T = global.Thumbs;
+      const cssW = this._needPx(meta);
+      const rec = (!meta.bad && T && T.screenPeek) ? T.screenPeek(meta, cssW) : null;
+      const url = (rec && rec.url) || (T && T.bigURL ? T.bigURL(meta) : '');
+      if (!url) return;
+      if (this._cmpPinnedURL && this._cmpPinnedURL !== url && T && T.unpinURL) T.unpinURL(this._cmpPinnedURL);
+      this._cmpPinnedURL = url;
+      if (T && T.pinURL) T.pinURL(url);
+      this._cmpNw = (rec && rec.tw) || meta.w || 0;
+      this._cmpNh = (rec && rec.th) || meta.h || 0;
+      this.cmpImg.classList.remove('ld');
+      this.cmpImg.onload = () => {
+        if (!this.compareOn || this.cmpMeta !== meta) return;
+        this._cmpNw = this._cmpNw || this.cmpImg.naturalWidth || 0;
+        this._cmpNh = this._cmpNh || this.cmpImg.naturalHeight || 0;
+        this.cmpImg.classList.add('ld');
+        this._syncCompareTransform();
+      };
+      this.cmpImg.src = url;
+      if (this.cmpImg.complete && this.cmpImg.naturalWidth > 0) {
+        this._cmpNw = this._cmpNw || this.cmpImg.naturalWidth;
+        this._cmpNh = this._cmpNh || this.cmpImg.naturalHeight;
+        this.cmpImg.classList.add('ld');
+        this._syncCompareTransform();
+      }
+    },
+
+    _syncCompareTransform() {
+      if (!this.compareOn || !this.cmpPane || !this.cmpImg || !this.cmpMeta) return;
+      const cw = this.cmpImg.offsetWidth || this._cmpNw || 0;
+      const ch = this.cmpImg.offsetHeight || this._cmpNh || 0;
+      if (!cw || !ch) return;
+      const cmpRot = State.rotationOf ? State.rotationOf(this.cmpMeta) : 0;
+      const cmpBase = T.fitScale({
+        baseW: cw, baseH: ch, rot: cmpRot,
+        availW: this.availW(), availH: this.availH(),
+        min: 0.05, max: MAX_FIT,
+      });
+      const ratio = this.base ? (this.scale / this.base) : 1;
+      const r = this.isFs() ? null : (this.cmpPane.getBoundingClientRect ? this.cmpPane.getBoundingClientRect() : null);
+      const fw = global.innerWidth, fh = global.innerHeight;
+      const cg = this.isFs()
+        ? { x: Math.floor(fw / 2) / 2, y: fh / 2, left: 0, top: 0 }
+        : {
+            x: (r ? r.left : 0) + ((r && r.width) || Math.floor(fw / 2)) / 2,
+            y: (r ? r.top : 0) + ((r && r.height) || fh) / 2,
+            left: r ? r.left : 0,
+            top: r ? r.top : 0,
+          };
+      const t = T.computeTransform({
+        baseW: cw, baseH: ch, scale: cmpBase * ratio, rot: cmpRot,
+        tx: this.tx, ty: this.ty, stageCx: cg.x, stageCy: cg.y,
+        originX: cg.left, originY: cg.top,
+      });
+      this.cmpImg.style.transform = t.transform;
+    },
+
+    _clearCompare() {
+      this.compareOn = false;
+      this.cmpMeta = null;
+      this._cmpNw = 0;
+      this._cmpNh = 0;
+      if (this.el) this.el.classList.remove('is-compare');
+      if (this.cmpBtn) {
+        this.cmpBtn.classList.remove('is-on');
+        this.cmpBtn.setAttribute('aria-pressed', 'false');
+      }
+      if (this.cmpPane) this.cmpPane.hidden = true;
+      if (this.cmpImg) {
+        this.cmpImg.classList.remove('ld');
+        this.cmpImg.removeAttribute('src');
+        this.cmpImg.style.transform = '';
+      }
+      if (this._cmpPinnedURL && global.Thumbs && global.Thumbs.unpinURL) {
+        global.Thumbs.unpinURL(this._cmpPinnedURL);
+      }
+      this._cmpPinnedURL = null;
     },
 
     /** 当前图片显示中心（舞台坐标系）；未平移时即舞台中心 */
@@ -1455,6 +1598,8 @@
         case 'f': case 'F': this.toggleFav(); break;
         case 'i': case 'I': this.toggleInfo(); break;
         case 'h': case 'H': this.toggleStrip(); break;
+        case 'c': case 'C': this.toggleCompare(); break;
+        case 'x': case 'X': if (this.compareOn) this.swapCompare(); break;
         case 'p': case 'P': this.togglePlay(); break;
         case 'r': case 'R': this.rotate(e.shiftKey ? -1 : 1); break;
         /* Delete / Backspace：删除当前这张。按钮的 title 一直写着「删除（Delete）」，

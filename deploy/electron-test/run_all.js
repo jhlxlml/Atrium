@@ -1437,7 +1437,7 @@ const SUITES = [
       const btns = n0.buttons || [];
       const icons = btns.map(function (b) { return b.icon; });
       const dup = icons.filter(function (v, i) { return icons.indexOf(v) !== i; });
-      check('操作栏按钮已全部采到（11 颗）', btns.length === 11, 'n=' + btns.length);
+      check('操作栏按钮已全部采到（12 颗）', btns.length === 12, 'n=' + btns.length);
       check('操作栏没有重复图标', btns.length > 0 && dup.length === 0,
         'dup=' + JSON.stringify(dup) + ' icons=' + JSON.stringify(icons));
       check('每颗按钮都有 aria-label', btns.length > 0 && btns.every(function (b) { return !!b.label; }),
@@ -2694,8 +2694,8 @@ const SUITES = [
 
       /* symbol 总数固定：加图标要改 deploy/gen_sprite.js 的 MAP 再重跑，
          而不是在 index.html 里手写一个 <symbol>。 */
-      check('sprite 里有 36 个 symbol（新增图标走 deploy/gen_sprite.js）',
-        d.symbols === 36, '实际 ' + d.symbols);
+      check('sprite 里有 37 个 symbol（新增图标走 deploy/gen_sprite.js）',
+        d.symbols === 37, '实际 ' + d.symbols);
 
       /* 抽查：线性图标必须 fill:none，实心变体必须 fill:currentColor */
       const S = d.sample || [];
