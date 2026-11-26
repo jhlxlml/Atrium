@@ -65,8 +65,28 @@ function isNewer(latest, current) {
   return false;
 }
 
+/** 从 release.assets 里挑选符合白名单的 x64 便携包资产与 SHA-256 摘要 */
+function pickReleaseAsset(assets) {
+  if (!Array.isArray(assets)) return null;
+  for (const a of assets) {
+    if (!a || typeof a !== 'object') continue;
+    const name = typeof a.name === 'string' ? a.name : '';
+    const dl = typeof a.browser_download_url === 'string' ? a.browser_download_url : '';
+    if (!/^Atrium_Electron_v.+_x64\.zip$/i.test(name)) continue;
+    if (!isAllowedExternal(dl)) continue;
+    const m = /^sha256:([a-f0-9]{64})$/i.exec(typeof a.digest === 'string' ? a.digest.trim() : '');
+    return {
+      assetName: name,
+      assetUrl: dl,
+      assetSize: typeof a.size === 'number' && a.size > 0 ? a.size : 0,
+      sha256: m ? m[1].toLowerCase() : '',
+    };
+  }
+  return null;
+}
+
 /**
- * 从 releases/latest 的响应体里取 { latest, url }。
+ * 从 releases/latest 的响应体里取 { latest, url, ...asset }。
  * 形状不对（没有可解析的 tag_name）→ 返回 null，由调用方判为 'bad-response'。
  * html_url 缺失时回落到仓库的 releases 页 —— 不编造链接。
  */
@@ -77,7 +97,8 @@ function latestFromRelease(data) {
   const url = (typeof data.html_url === 'string' && data.html_url)
     ? data.html_url
     : (REPO_URL + '/releases');
-  return { latest: tag.replace(/^v/i, ''), url: url };
+  const asset = pickReleaseAsset(data.assets);
+  return Object.assign({ latest: tag.replace(/^v/i, ''), url: url }, asset || {});
 }
 
 module.exports = {
@@ -86,5 +107,6 @@ module.exports = {
   isAllowedExternal: isAllowedExternal,
   parseVer: parseVer,
   isNewer: isNewer,
+  pickReleaseAsset: pickReleaseAsset,
   latestFromRelease: latestFromRelease,
 };

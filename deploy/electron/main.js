@@ -881,6 +881,9 @@ function wireIpc() {
         latest: got.latest,
         hasUpdate: updateLib.isNewer(got.latest, cur),
         url: got.url,
+        assetUrl: got.assetUrl || '',
+        assetName: got.assetName || '',
+        sha256: got.sha256 || '',
       };
     } catch (err) {
       const aborted = !!(err && (err.name === 'AbortError' || err.code === 'ABORT_ERR'));

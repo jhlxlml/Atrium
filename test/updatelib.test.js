@@ -136,6 +136,34 @@ eq('空对象 → null', U.latestFromRelease({}), null);
 eq('null → null', U.latestFromRelease(null), null);
 eq("字符串 → null", U.latestFromRelease('1.14.0'), null);
 
+{
+  const sha = 'a'.repeat(64);
+  const g4 = U.latestFromRelease({
+    tag_name: 'v1.23.0',
+    html_url: REPO + '/releases/tag/v1.23.0',
+    assets: [
+      {
+        name: 'Atrium_Electron_v1.23.0_x64.zip',
+        browser_download_url: REPO + '/releases/download/v1.23.0/Atrium_Electron_v1.23.0_x64.zip',
+        size: 161900000,
+        digest: 'sha256:' + sha,
+      },
+      {
+        name: 'Atrium_Electron_v1.23.0_x64.zip',
+        browser_download_url: 'https://evil.example.com/payload.zip',
+        size: 100,
+      },
+    ],
+  });
+  ok('extracts verified release asset & sha256',
+    !!g4 && g4.assetName === 'Atrium_Electron_v1.23.0_x64.zip' && g4.sha256 === sha,
+    JSON.stringify(g4));
+  const evil = U.pickReleaseAsset([
+    { name: 'Atrium_Electron_v1.23.0_x64.zip', browser_download_url: 'https://evil.example.com/a.zip' },
+  ]);
+  eq('rejects non-repo asset download url', evil, null);
+}
+
 /* ============================================================
    5) 跨文件一致性 —— 渲染层那份 REPO_URL 必须与这里逐字相同
       （settings.js 里写着「查看新版本」的回落地址；写歪了，

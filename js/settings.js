@@ -760,7 +760,7 @@
       }
       if (!r.hasUpdate) { say('已是最新版本（v' + r.current + '）'); return; }
       say('发现新版本 v' + r.latest + '（当前 v' + r.current + '）', 'is-new');
-      // 就地补一个「查看」外链：走同一条白名单 IPC，不在窗口内导航
+      // 就地补「查看新版本」与白名单直链「下载便携包」：走同一条白名单 IPC，不在窗口内导航
       const a = document.createElement('a');
       a.className = 'vf-about-link';
       a.setAttribute('data-ext', '1');
@@ -768,6 +768,23 @@
       a.textContent = '查看新版本';
       out.appendChild(document.createTextNode(' '));
       out.appendChild(a);
+      if (r.assetUrl) {
+        const dl = document.createElement('a');
+        dl.className = 'vf-about-link';
+        dl.setAttribute('data-ext', '1');
+        dl.href = r.assetUrl;
+        dl.textContent = '下载便携包';
+        if (r.sha256) dl.title = 'SHA-256: ' + r.sha256;
+        out.appendChild(document.createTextNode(' · '));
+        out.appendChild(dl);
+      }
+      if (r.sha256) {
+        const h = document.createElement('span');
+        h.className = 'vf-about-sha';
+        h.title = 'SHA-256: ' + r.sha256;
+        h.textContent = '（SHA-256: ' + r.sha256.slice(0, 12) + '…）';
+        out.appendChild(h);
+      }
     },
 
     resetAll() {
