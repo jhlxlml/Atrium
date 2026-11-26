@@ -63,6 +63,7 @@
       E.sortKey = $('#sortKey');
       E.sortDir = $('#sortDir');
       E.orientFilter = $('#orientFilter');
+      E.kindFilter = $('#kindFilter');
       E.searchInput = $('#searchInput');
       E.searchBox = $('#searchBox');
       E.searchToggle = $('#searchToggle');
@@ -767,15 +768,30 @@
         });
       }
 
+      if (E.kindFilter) {
+        E.kindFilter.addEventListener('change', () => {
+          State.kindFilter = E.kindFilter.value || 'all';
+          if (E.kindFilter.parentElement) {
+            E.kindFilter.parentElement.classList.toggle('is-on', State.kindFilter !== 'all');
+          }
+          this.applyView(true);
+        });
+      }
+
       // 清除过滤
       E.clearFilters.addEventListener('click', () => {
         E.searchInput.value = '';
         State.filterText = '';
         State.favOnly = false;
         State.orientFilter = 'all';
+        State.kindFilter = 'all';
         if (E.orientFilter) {
           E.orientFilter.value = 'all';
           if (E.orientFilter.parentElement) E.orientFilter.parentElement.classList.remove('is-on');
+        }
+        if (E.kindFilter) {
+          E.kindFilter.value = 'all';
+          if (E.kindFilter.parentElement) E.kindFilter.parentElement.classList.remove('is-on');
         }
         E.favOnlyBtn.classList.remove('is-active', 'is-on');
         if (E.searchClear) E.searchClear.hidden = true;
@@ -2265,7 +2281,7 @@
     updateNoResult() {
       const total = State.items.length;
       const viewed = this._view ? this._view.length : State.viewList().length;
-      const hasFilter = !!(State.filterText || State.favOnly || (State.orientFilter && State.orientFilter !== 'all'));
+      const hasFilter = !!(State.filterText || State.favOnly || (State.orientFilter && State.orientFilter !== 'all') || (State.kindFilter && State.kindFilter !== 'all'));
       if (total === 0 || viewed === 0) {
         this.el.noResult.hidden = false;
         this.el.clearFilters.hidden = !hasFilter;

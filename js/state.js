@@ -295,6 +295,7 @@
     filterText: '',       // 文件名过滤
     favOnly: false,       // 只看收藏
     orientFilter: 'all',  // 画面方向筛选：all / land / port / sq
+    kindFilter: 'all',    // 文件类型筛选：all / raw / anim
     errCount: 0,          // 无法解码计数（展示用）
 
     settings,             // 会话/持久设置
@@ -619,11 +620,20 @@
       return w > h ? 'land' : 'port';
     },
 
+    /** 按扩展名与动图标记判定类型：raw / anim / std */
+    kindOf(it) {
+      if (!it) return 'std';
+      if (global.Util && Util.isRawExt && Util.isRawExt(it.name)) return 'raw';
+      if (it.anim === true || (global.Util && Util.ext && Util.ext(it.name) === 'gif')) return 'anim';
+      return 'std';
+    },
+
     viewList() {
       const s = this.settings;
       const q = this.filterText.trim().toLowerCase();
       const of = this.orientFilter || 'all';
-      const key = [this.active, q, this.favOnly ? 1 : 0, of, s.sortKey, s.sortDir, rev, favRev].join('\u0000');
+      const kf = this.kindFilter || 'all';
+      const key = [this.active, q, this.favOnly ? 1 : 0, of, kf, s.sortKey, s.sortDir, rev, favRev].join('\u0000');
       if (this._vlKey === key && this._vlList) return this._vlList;
 
       const srcList = this.activeItems();
@@ -631,6 +641,7 @@
       for (const it of srcList) {
         if (this.favOnly && !favs.has(it.id)) continue;
         if (of !== 'all' && this.orientOf(it) !== of) continue;
+        if (kf !== 'all' && this.kindOf(it) !== kf) continue;
         if (q && !it.name.toLowerCase().includes(q)) continue;
         list.push(it);
       }

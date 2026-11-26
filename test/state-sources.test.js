@@ -216,6 +216,24 @@ function testOrientFilter() {
   State.active = 'all';
 }
 
+function testKindFilter() {
+  const src = State.commitSource('类型筛选', [
+    { name: 'a.jpg', rel: 'a.jpg', size: 100, lastModified: 1 },
+    { name: 'b.dng', rel: 'b.dng', size: 100, lastModified: 2 },
+    { name: 'c.raf', rel: 'c.raf', size: 100, lastModified: 3 },
+    { name: 'd.gif', rel: 'd.gif', size: 100, lastModified: 4 },
+    { name: 'e.webp', rel: 'e.webp', size: 100, lastModified: 5, anim: true },
+  ], 'D:\\K\\类型筛选');
+  State.active = src.id;
+  State.kindFilter = 'raw';
+  A.eq('F9 仅 RAW 命中 2 张', State.viewList().map((x) => x.name).join(','), 'b.dng,c.raf');
+  State.kindFilter = 'anim';
+  A.eq('F9 仅动图命中 2 张', State.viewList().map((x) => x.name).join(','), 'd.gif,e.webp');
+  State.kindFilter = 'all';
+  A.eq('F9 全部类型命中 5 张', State.viewList().length, 5);
+  State.active = 'all';
+}
+
 /* ============================================================ */
 testSameNameDifferentDir();
 testNoDirStillMerges();
@@ -224,4 +242,5 @@ testRemoveItemFav();
 testBatchFavs();
 testBatchRotate();
 testOrientFilter();
+testKindFilter();
 process.exit(A.finish('来源与收藏归属（E/F）') ? 0 : 1);

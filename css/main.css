@@ -1696,8 +1696,15 @@ body.privacy-blur .tile::after {
   .search.is-open input { width: 150px; max-width: 150px; }
 }
 @media (max-width: 900px) {
-  .sizectl input[type="range"] { width: 72px; }
-  .select-wrap select { padding-left: 8px; padding-right: 22px; }
+  .topbar-in { padding: 0 10px; gap: 6px; }
+  .ctrls { gap: 2px; }
+  .sizectl input[type="range"] { width: 54px; }
+  .select-wrap select { padding-left: 7px; padding-right: 18px; font-size: var(--fs-s); }
+  .select-wrap::after { right: 7px; }
+}
+@media (max-width: 820px) {
+  .topbar .ico-btn { width: 28px; height: 28px; }
+  .topbar .seg-btn { padding: 0 7px; height: 26px; }
 }
 @media (max-width: 720px) {
   :root { --gutter: 12px; }
