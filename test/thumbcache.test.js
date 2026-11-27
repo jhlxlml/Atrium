@@ -308,6 +308,25 @@ async function testIExif() {
   A.eq('I5 认出来后记在条目上（下次不用再读）', fromBlob.orient, 6);
 }
 
+async function testJRawDragBigURL() {
+  const T = globalThis.Thumbs;
+  T.clearAll();
+  const prevUtil = globalThis.Util;
+  globalThis.Util = {
+    isRawExt: (n) => /\.dng$/i.test(n || ''),
+    extractRawJpegBlob: async () => new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' }),
+  };
+  try {
+    const rawMeta = { id: 'raw-drag-1', name: 'sample.dng', ext: 'dng', file: new Blob([new Uint8Array(64)]), w: 4000, h: 3000 };
+    A.eq('J1 拖拽 RAW 未提取前同步 bigURL 返回 null（不喂原始字节）', T.bigURL(rawMeta), null);
+    const u = await T.bigURLAsync(rawMeta);
+    A.ok('J2 拖拽 RAW 异步 bigURLAsync 返回提取后的 blob URL', typeof u === 'string' && u.startsWith('blob:'));
+    A.eq('J3 提取缓存后同步 bigURL 命中同一个 URL', T.bigURL(rawMeta), u);
+  } finally {
+    globalThis.Util = prevUtil;
+  }
+}
+
 /* ============================================================ */
 (async () => {
   await testA();
@@ -319,5 +338,6 @@ async function testIExif() {
   await testGFormats();
   await testHAlpha();
   await testIExif();
+  await testJRawDragBigURL();
   process.exit(A.finish('thumb 缓存层（A/B/C/G/I）') ? 0 : 1);
 })().catch((e) => { console.error(e); process.exit(1); });

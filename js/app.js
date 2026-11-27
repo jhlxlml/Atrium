@@ -2347,10 +2347,18 @@
           this._harvestPending = 0;
           /* 还有没送出去的 —— 重新走一遍 applyView，它会再调一次本函数，
              把下一批 2000 条接上。每轮都盖一批章，所以一定会收敛。 */
-          if (State.settings.sortKey === 'shot') this.applyView(false);
+          if (State.settings.sortKey === 'shot') {
+          this.applyView(false);
+        } else if (this.el && this.el.footNote && this.el.footNote.textContent === '正在后台补全拍摄时间…') {
+          this.applyView(false);
+        }
           return;
         }
-        if (State.settings.sortKey === 'shot') this.applyView(false);
+        if (State.settings.sortKey === 'shot') {
+          this.applyView(false);
+        } else if (this.el && this.el.footNote && this.el.footNote.textContent === '正在后台补全拍摄时间…') {
+          this.applyView(false);
+        }
       });
     },
 

@@ -266,6 +266,9 @@ app.whenReady().then(async () => {
     if (favBtn) favBtn.click();
     const favToggled = !!(favBtn && favBtn.classList.contains('is-fav'));
     if (favBtn) favBtn.click();
+    L.toggleFav();
+    const sameSideFavSync = L.cmpMeta !== L.meta || !!(favBtn && favBtn.classList.contains('is-fav'));
+    if (L.meta && window.State.isFav(L.meta.id)) L.toggleFav();
     const curBeforeSwap = L.meta;
     if (swapBtn) swapBtn.click();
     await new Promise((r) => setTimeout(r, 150));

@@ -480,6 +480,14 @@
       const start = (rec) => {
         if (!still()) return;
         const url = (rec && rec.url) || Thumbs.bigURL(meta);
+        if (!url && meta.file && global.Util && Util.isRawExt && Util.isRawExt(meta.name) && Thumbs.bigURLAsync) {
+          Thumbs.bigURLAsync(meta).then((u) => {
+            if (!still()) return;
+            if (!u) { this._showErr('无法读取该文件'); return; }
+            start({ url: u, full: true });
+          });
+          return;
+        }
         if (!url) { this._showErr('无法读取该文件'); return; }
         this._rec = rec || null;
         this.img.onload = () => {
@@ -693,28 +701,34 @@
     _upgradeToFull() {
       const meta = this.meta;
       if (!meta || this._full || this._upgrading || !this.nw) return;
-      const url = Thumbs.bigURL(meta);
-      if (!url) return;
-      const oldNat = this.nw, oldScale = this.scale, oldBase = this.base;
-      const prev = this.img.onload;
-      this._upgrading = true;
-      this.img.onload = () => {
-        this.img.onload = prev;
-        this._upgrading = false;
-        if (!this.openFlag || this.meta !== meta) return;
-        const newNat = this.img.naturalWidth;
-        if (!newNat || !oldNat) return;
-        const k = oldNat / newNat;
-        this.nw = newNat; this.nh = this.img.naturalHeight;
-        this.origW = newNat; this.origH = this.nh;
-        this.scale = oldScale * k;
-        this.base = oldBase * k;
-        this._full = true;
-        this._rec = null;
-        if (Loader && Loader.recordDims) Loader.recordDims(meta, newNat, this.nh);
-        this.apply();          // 只重算 transform：不动类名、不动 src 之外的东西 → 视觉零跳变
+      const runWith = (url) => {
+        if (!url || !this.openFlag || this.meta !== meta) { this._upgrading = false; return; }
+        const oldNat = this.nw, oldScale = this.scale, oldBase = this.base;
+        const prev = this.img.onload;
+        this.img.onload = () => {
+          this.img.onload = prev;
+          this._upgrading = false;
+          if (!this.openFlag || this.meta !== meta) return;
+          const newNat = this.img.naturalWidth;
+          if (!newNat || !oldNat) return;
+          const k = oldNat / newNat;
+          this.nw = newNat; this.nh = this.img.naturalHeight;
+          this.origW = newNat; this.origH = this.nh;
+          this.scale = oldScale * k;
+          this.base = oldBase * k;
+          this._full = true;
+          this._rec = null;
+          if (Loader && Loader.recordDims) Loader.recordDims(meta, newNat, this.nh);
+          this.apply();          // 只重算 transform：不动类名、不动 src 之外的东西 → 视觉零跳变
+        };
+        this._setSrc(url);
       };
-      this._setSrc(url);
+      const url = Thumbs.bigURL(meta);
+      if (url) { this._upgrading = true; runWith(url); return; }
+      if (meta.file && global.Util && Util.isRawExt && Util.isRawExt(meta.name) && Thumbs.bigURLAsync) {
+        this._upgrading = true;
+        Thumbs.bigURLAsync(meta).then(runWith, () => { this._upgrading = false; });
+      }
     },
 
     /** 灯箱里「为什么打不开」的人话解释（P1-2：区分格式不支持 / 文件损坏 / 环境缺解码器） */
@@ -780,9 +794,16 @@
         }
       }
       if (!this.list.length) { this.close(); return; }
-      if (this.list.length < 2) this.stripBtn.classList.add('disabled');
+      if (this.list.length < 2) {
+        this.stripBtn.classList.add('disabled');
+        if (this.cmpBtn) { this.cmpBtn.disabled = true; this.cmpBtn.classList.add('disabled'); }
+      }
       this.i = idx < this.list.length ? idx : 0;  // 顺位显示“下一张”，末位则回到首张
       this.meta = this.list[this.i];
+      if (this.compareOn) {
+        if (this.list.length < 2) this._clearCompare();
+        else if (this.cmpMeta === meta) this._loadCompare(this.meta);
+      }
       this._stripCur = -1;
       this.render();
     },
@@ -1000,26 +1021,32 @@
       const cssW = this._needPx(meta);
       const rec = (!meta.bad && T && T.screenPeek) ? T.screenPeek(meta, cssW) : null;
       const url = (rec && rec.url) || (T && T.bigURL ? T.bigURL(meta) : '');
-      if (!url) return;
-      if (this._cmpPinnedURL && this._cmpPinnedURL !== url && T && T.unpinURL) T.unpinURL(this._cmpPinnedURL);
-      this._cmpPinnedURL = url;
-      if (T && T.pinURL) T.pinURL(url);
-      this._cmpNw = (rec && rec.tw) || meta.w || 0;
-      this._cmpNh = (rec && rec.th) || meta.h || 0;
-      this.cmpImg.classList.remove('ld');
-      this.cmpImg.onload = () => {
-        if (!this.compareOn || this.cmpMeta !== meta) return;
-        this._cmpNw = this._cmpNw || this.cmpImg.naturalWidth || 0;
-        this._cmpNh = this._cmpNh || this.cmpImg.naturalHeight || 0;
-        this.cmpImg.classList.add('ld');
-        this._syncCompareTransform();
+      const applyUrl = (u) => {
+        if (!u || !this.compareOn || this.cmpMeta !== meta) return;
+        if (this._cmpPinnedURL && this._cmpPinnedURL !== u && T && T.unpinURL) T.unpinURL(this._cmpPinnedURL);
+        this._cmpPinnedURL = u;
+        if (T && T.pinURL) T.pinURL(u);
+        this._cmpNw = (rec && rec.tw) || meta.w || 0;
+        this._cmpNh = (rec && rec.th) || meta.h || 0;
+        this.cmpImg.classList.remove('ld');
+        this.cmpImg.onload = () => {
+          if (!this.compareOn || this.cmpMeta !== meta) return;
+          this._cmpNw = this._cmpNw || this.cmpImg.naturalWidth || 0;
+          this._cmpNh = this._cmpNh || this.cmpImg.naturalHeight || 0;
+          this.cmpImg.classList.add('ld');
+          this._syncCompareTransform();
+        };
+        this.cmpImg.src = u;
+        if (this.cmpImg.complete && this.cmpImg.naturalWidth > 0) {
+          this._cmpNw = this._cmpNw || this.cmpImg.naturalWidth;
+          this._cmpNh = this._cmpNh || this.cmpImg.naturalHeight;
+          this.cmpImg.classList.add('ld');
+          this._syncCompareTransform();
+        }
       };
-      this.cmpImg.src = url;
-      if (this.cmpImg.complete && this.cmpImg.naturalWidth > 0) {
-        this._cmpNw = this._cmpNw || this.cmpImg.naturalWidth;
-        this._cmpNh = this._cmpNh || this.cmpImg.naturalHeight;
-        this.cmpImg.classList.add('ld');
-        this._syncCompareTransform();
+      if (url) { applyUrl(url); return; }
+      if (meta.file && global.Util && Util.isRawExt && Util.isRawExt(meta.name) && T && T.bigURLAsync) {
+        T.bigURLAsync(meta).then(applyUrl);
       }
     },
 
@@ -1350,6 +1377,7 @@
       const on = State.toggleFav(this.meta.id);
       this.favBtn.classList.toggle('is-fav', on);
       this.favBtn.innerHTML = Util.icon(on ? 'i-star-fill' : 'i-star');
+      if (this.compareOn && this.cmpMeta === this.meta) this._syncCompareFav();
       this._updateStripSel();
       this._checkStripEnd();
     },

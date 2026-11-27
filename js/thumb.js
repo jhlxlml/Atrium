@@ -489,13 +489,25 @@
     finally { putCanvas(c); }
   }
 
-  function loadImageEl(meta) {
+  async function loadImageEl(meta) {
+    let url = elURL(meta);
+    let tempBlob = false;
+    if (meta.file && global.Util && Util.isRawExt && Util.isRawExt(meta.name)) {
+      const hit = bigs.get(meta.id);
+      if (hit && hit.url) {
+        url = hit.url;
+      } else if (Util.extractRawJpegBlob) {
+        const b = await Util.extractRawJpegBlob(meta.file);
+        if (!b) throw new Error('decode-fail');
+        url = global.URL.createObjectURL(b);
+        tempBlob = true;
+      }
+    }
     return new Promise((resolve, reject) => {
-      const url = elURL(meta);
       if (!url) { reject(new Error('decode-fail')); return; }
       const img = new Image();
-      img.onload = () => { if (meta.file) global.URL.revokeObjectURL(url); resolve(img); };
-      img.onerror = () => { if (meta.file) global.URL.revokeObjectURL(url); reject(new Error('decode-fail')); };
+      img.onload = () => { if (meta.file && (!global.Util || !Util.isRawExt || !Util.isRawExt(meta.name) || tempBlob)) global.URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { if (meta.file && (!global.Util || !Util.isRawExt || !Util.isRawExt(meta.name) || tempBlob)) global.URL.revokeObjectURL(url); reject(new Error('decode-fail')); };
       img.src = url;
     });
   }
@@ -684,11 +696,27 @@
 
     /** 原图 URL（Lightbox / 单列大图共用缓存） */
     bigURL(meta) {
-      if (meta.bad) return null;
+      if (!meta || meta.bad) return null;
       const hit = bigs.get(meta.id);
       if (hit) return hit.url;
+      if (meta.file && global.Util && Util.isRawExt && Util.isRawExt(meta.name)) return null;
       const url = elURL(meta); // File → blob URL；原生条目 → vf:// 磁盘流
       if (!url) return null;
+      bigs.set(meta.id, { url });
+      return url;
+    },
+
+    /** 异步原图 URL：为拖拽进来的 RAW File 异步提取内嵌 JPEG 后再缓存 */
+    async bigURLAsync(meta) {
+      const sync = this.bigURL(meta);
+      if (sync) return sync;
+      if (!meta || meta.bad || !meta.file) return null;
+      if (!global.Util || !Util.isRawExt || !Util.isRawExt(meta.name) || !Util.extractRawJpegBlob) return null;
+      const b = await Util.extractRawJpegBlob(meta.file);
+      if (!b) return null;
+      const hit = bigs.get(meta.id);
+      if (hit) return hit.url;
+      const url = global.URL.createObjectURL(b);
       bigs.set(meta.id, { url });
       return url;
     },
